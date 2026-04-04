@@ -49,5 +49,5 @@ T_cooling_trigger = ${units 100 degC -> K}
 []
 
 [Outputs]
-  file_base = test
+  file_base = heating-response-time
 []
