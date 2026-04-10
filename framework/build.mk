@@ -60,8 +60,12 @@ libmesh_LDFLAGS  := $(shell METHOD=$(METHOD) $(libmesh_config) --ldflags)
 libmesh_PREFIX   := $(patsubst %/include,%,$(firstword $(patsubst -I%,%,$(libmesh_INCLUDE))))
 LIBMESH_CONFIG_H := $(libmesh_PREFIX)/include/libmesh/libmesh_config.h
 LIBMESH_HAVE_KOKKOS := $(shell grep -c 'define LIBMESH_HAVE_KOKKOS' $(LIBMESH_CONFIG_H) 2>/dev/null)
+
+# The libmesh kokkos headers use "kokkos/..." includes internally.
+# After installation they live under installed/include/libmesh/kokkos/, so
+# we need installed/include/libmesh on the search path to resolve them.
 ifeq ($(LIBMESH_HAVE_KOKKOS),1)
-  libmesh_LIBS += $(libmesh_PREFIX)/lib/libkokkos_fe_types.a
+  libmesh_INCLUDE += -I$(libmesh_PREFIX)/include/libmesh
 endif
 
 # In the event that we're using something like mpicxx, query it for

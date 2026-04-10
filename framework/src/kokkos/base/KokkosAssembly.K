@@ -499,10 +499,6 @@ Assembly::initShape()
       auto fe_type = FEType(elem->default_order(), LAGRANGE);
       auto shape_deriv_ptr = libMesh::FEInterface::shape_deriv_function(fe_type, elem);
 
-<<<<<<< HEAD
-      std::unique_ptr<FEBase> fe(FEBase::build(_dimension, fe_type));
-      std::unique_ptr<FEBase> fe_face(FEBase::build(_dimension, fe_type));
-=======
 #ifdef MOOSE_KOKKOS_ONDEMAND_FE
       // Phase 6: precompute face qp parent-reference coordinates so on-device
       // shape evaluators can look up (xi, eta, zeta) without calling mapFaceQpToParent
@@ -535,7 +531,6 @@ Assembly::initShape()
           FEBase::build(_dimension, FEType(elem->default_order(), LAGRANGE)));
       std::unique_ptr<FEBase> fe_face(
           FEBase::build(_dimension, FEType(elem->default_order(), LAGRANGE)));
->>>>>>> 33a4291664 (first step of porting libmesh with kokkos)
 
       fe->attach_quadrature_rule(qrule);
       fe_face->attach_quadrature_rule(qrule_face);
@@ -803,6 +798,8 @@ Assembly::initMapNative(unsigned int sid,
   _map_grad_phi_face(sid, etid).create(n_sides);
   _map_psi_face(sid, etid).create(n_sides);
   _map_grad_psi_face(sid, etid).create(n_sides);
+  _normal_dx_dxi(sid, etid).create(n_sides);
+  _normal_dx_deta(sid, etid).create(n_sides);
 
   // Number of map nodes equals the Lagrange DOFs of the parent topology
   const unsigned int n_map = nDofs(libMesh::Kokkos::FEFamily::LAGRANGE, topo);
@@ -827,6 +824,22 @@ Assembly::initMapNative(unsigned int sid,
                       _map_phi_face(sid, etid)(side),
                       _map_grad_phi_face(sid, etid)(side));
       }
+
+    // _normal_dx_dxi / _normal_dx_deta: dphidxi and dphideta of parent LAGRANGE
+    // shapes at face QPs, used by computePhysicalMap for normal computation.
+    // Extract from the already-computed _map_grad_phi_face entries.
+    _normal_dx_dxi(sid, etid)(side).create(n_map, n_face_qps);
+    _normal_dx_deta(sid, etid)(side).create(n_map, n_face_qps);
+    if (parent_dim < 3)
+      for (unsigned int i = 0; i < n_map; ++i)
+        for (unsigned int qp = 0; qp < n_face_qps; ++qp)
+          _normal_dx_dxi(sid, etid)(side)(i, qp) =
+              _map_grad_phi_face(sid, etid)(side)(i, qp).v[0];
+    if (parent_dim == 2)
+      for (unsigned int i = 0; i < n_map; ++i)
+        for (unsigned int qp = 0; qp < n_face_qps; ++qp)
+          _normal_dx_deta(sid, etid)(side)(i, qp) =
+              _map_grad_phi_face(sid, etid)(side)(i, qp).v[1];
 
     // _map_psi_face / _map_grad_psi_face: side LAGRANGE shapes at face qps
     // in the side element's own reference coordinate system.

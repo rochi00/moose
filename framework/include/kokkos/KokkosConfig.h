@@ -23,5 +23,8 @@
 #    ifndef MOOSE_KOKKOS_NATIVE_FE
 #      define MOOSE_KOKKOS_NATIVE_FE
 #    endif
+#    ifndef MOOSE_KOKKOS_ONDEMAND_FE
+#      define MOOSE_KOKKOS_ONDEMAND_FE
+#    endif
 #  endif
 #endif

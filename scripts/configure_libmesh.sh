@@ -46,6 +46,14 @@ function configure_libmesh()
   if [[ $(uname) == Linux ]] && [[ -d ${CONDA_PREFIX}/include/tirpc ]]; then
     EXTRA_ARGS+=("--with-xdr-include=${CONDA_PREFIX}/include/tirpc")
   fi
+  # Enable native Kokkos FE math headers if Kokkos is available via PETSc.
+  # Default to OpenMP backend unless CUDA is explicitly available.
+  if [[ -n "$PETSC_DIR" ]] && [[ -f "${PETSC_DIR}/include/Kokkos_Core.hpp" ]]; then
+    EXTRA_ARGS+=("--with-kokkos=${PETSC_DIR}")
+    if ! command -v nvcc &>/dev/null; then
+      EXTRA_ARGS+=("--with-kokkos-backend=openmp")
+    fi
+  fi
 
   # Allow unbound variable for when EXTRA_ARGS is empty
   set +u
