@@ -19,7 +19,7 @@ InputParameters
 LinearFVMomentumSurfaceTensionForce::validParams()
 {
   InputParameters params = LinearFVElementalKernel::validParams();
-  params.addClassDescription("Voumetric force imposed by the surface tension.");
+  params.addClassDescription("Volumetric force imposed by the surface tension.");
   MooseEnum momentum_component("x=0 y=1 z=2");
   params.addRequiredParam<MooseEnum>(
       "momentum_component",
@@ -27,6 +27,10 @@ LinearFVMomentumSurfaceTensionForce::validParams()
       "The component of the momentum equation that this kernel applies to.");
   params.addRequiredParam<MooseFunctorName>("sigma", "The value of the surface tension.");
   params.addRequiredParam<VariableName>("alpha", "The phase fraction");
+  params.addParam<MooseFunctorName>(
+      "curvature",
+      "Optional precomputed curvature (e.g. from a level-set field). When provided, "
+      "this value is used instead of computing curvature inline from alpha gradients.");
   return params;
 }
 
@@ -35,7 +39,8 @@ LinearFVMomentumSurfaceTensionForce::LinearFVMomentumSurfaceTensionForce(const I
     _dim(_subproblem.mesh().dimension()),
     _index(getParam<MooseEnum>("momentum_component")),
     _sigma(getFunctor<Real>("sigma")),
-    _alpha(getAlphaVariable("alpha"))
+    _alpha(getAlphaVariable("alpha")),
+    _curvature_functor(isParamValid("curvature") ? &getFunctor<Real>("curvature") : nullptr)
 {
   _alpha.computeCellGradients();
 }
@@ -47,7 +52,7 @@ LinearFVMomentumSurfaceTensionForce::getAlphaVariable(const std::string & vname)
       &_fe_problem.getVariable(_tid, getParam<VariableName>(vname)));
 
   if (!ptr)
-    paramError(NS::pressure, "The pressure variable should be of type MooseLinearVariableFVReal!");
+    paramError("alpha", "The alpha variable should be of type MooseLinearVariableFVReal!");
 
   return *ptr;
 }
@@ -66,7 +71,6 @@ LinearFVMomentumSurfaceTensionForce::computeRightHandSideContribution()
   const auto rz_radial_coord = _subproblem.mesh().getAxisymmetricRadialCoord();
 
   Real curvature = 0.0;
-  RealVectorValue gradient_elem(0.0);
 
   std::vector<RealVectorValue> A_sys;
   std::vector<Real> rhs_sys;
@@ -75,7 +79,6 @@ LinearFVMomentumSurfaceTensionForce::computeRightHandSideContribution()
   auto action_functor = [this,
                          &elem_arg,
                          &curvature,
-                         &gradient_elem,
                          &A_sys,
                          &rhs_sys,
                          &nrow](const Elem & elem,
@@ -94,19 +97,20 @@ LinearFVMomentumSurfaceTensionForce::computeRightHandSideContribution()
                                                this->_current_elem_info->elem(),
                                                nullptr};
 
-      const auto grad_alpha = MetaPhysicL::raw_value(this->_alpha.gradient(face_arg, this->determineState()));
-      constexpr Real tiny = 1.0e-14;
-      const auto grad_alpha_norm = grad_alpha / (grad_alpha.norm() + tiny);
-      curvature += grad_alpha_norm * surface_vector;
+      // Compute inline curvature from alpha gradients only when no external curvature is provided
+      if (!this->_curvature_functor)
+      {
+        const auto grad_alpha = MetaPhysicL::raw_value(this->_alpha.gradient(face_arg, this->determineState()));
+        constexpr Real tiny = 1.0e-14;
+        const auto grad_alpha_norm = grad_alpha / (grad_alpha.norm() + tiny);
+        curvature += grad_alpha_norm * surface_vector;
+      }
 
-      const auto dfp = fi->faceCentroid() - elem.vertex_average();
-      const auto projection_face = surface_vector * dfp;
-      gradient_elem += projection_face * grad_alpha;
-
+      // Always reconstruct grad(alpha) via SVD for the force localization
       A_sys.push_back(fi->faceCentroid() - elem.vertex_average());
 
       const auto alpha_face = MetaPhysicL::raw_value(_alpha(face_arg, determineState()));
-      const auto alpha_elem =MetaPhysicL::raw_value(_alpha(elem_arg, determineState()));
+      const auto alpha_elem = MetaPhysicL::raw_value(_alpha(elem_arg, determineState()));
       rhs_sys.push_back(alpha_face - alpha_elem);
 
       ++nrow;
@@ -115,35 +119,24 @@ LinearFVMomentumSurfaceTensionForce::computeRightHandSideContribution()
   Moose::FV::loopOverElemFaceInfo(
       *_current_elem_info->elem(), _subproblem.mesh(), action_functor, coord_type, rz_radial_coord);
 
-  curvature = curvature / _current_elem_volume;
-  gradient_elem = gradient_elem / _current_elem_volume;
+  // Use external curvature if provided, otherwise use inline computation
+  if (_curvature_functor)
+    curvature = (*_curvature_functor)(elem_arg, determineState());
+  else
+    curvature = curvature / _current_elem_volume;
 
-  DenseMatrix<Real> A(nrow,_dim), AT(_dim,nrow);
+  // Reconstruct grad(alpha) at cell center via least-squares (SVD)
+  DenseMatrix<Real> A(nrow, _dim);
   DenseVector<Real> b(nrow), x(_dim);
 
-  for(unsigned int i = 0; i < nrow; ++i)
+  for (unsigned int i = 0; i < nrow; ++i)
   {
-    for(unsigned int j = 0; j < _dim; ++j)
-      A(i,j) = A_sys[i](j);
+    for (unsigned int j = 0; j < _dim; ++j)
+      A(i, j) = A_sys[i](j);
     b(i) = rhs_sys[i];
   }
 
-  // A.get_transpose(AT);
-  // AT.vector_mult(x, b);
-  // A.left_multiply(AT);
-  // A.lu_solve(b, x);
-
   A.svd_solve(b, x);
 
-  // DenseMatrix<Real> AT = A;
-  // DenseVector<Real> b(_dim), x(_dim);
-
-  // A.get_transpose(AT);
-  // AT.vector_mult(b, rhs);
-  // A.left_multiply(AT);
-  // A.lu_solve(b, x);
-
-  // return -_sigma(elem_arg, determineState()) * curvature * gradient_elem(_index);
-
-  return -_sigma(elem_arg, determineState()) * curvature * x(_index);
+  return -_sigma(elem_arg, determineState()) * curvature * x(_index) * _current_elem_volume;
 }

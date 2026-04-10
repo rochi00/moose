@@ -13,18 +13,18 @@
 #include "FaceArgInterface.h"
 
 /**
- * Kernel that adds the component of the pressure gradient in the momentum
- * equations to the right hand side.
+ * Kernel that adds the surface tension force component to the momentum equation RHS.
+ * Computes F = -sigma * kappa * grad(alpha), where kappa is the interface curvature
+ * and grad(alpha) localizes the force to the interface.
+ *
+ * When an external curvature variable is provided (e.g. from a level-set field),
+ * that precomputed curvature is used instead of computing it inline from alpha gradients.
  */
 class LinearFVMomentumSurfaceTensionForce : public LinearFVElementalKernel
 {
 public:
   static InputParameters validParams();
 
-  /**
-   * Class constructor.
-   * @param params The InputParameters for the kernel.
-   */
   LinearFVMomentumSurfaceTensionForce(const InputParameters & params);
 
   virtual Real computeMatrixContribution() override;
@@ -44,8 +44,10 @@ protected:
   /// The surface tension value
   const Moose::Functor<Real> & _sigma;
 
-  /// The phase fraction
+  /// The phase fraction (used for grad(alpha) localization and inline curvature)
   MooseLinearVariableFV<Real> & _alpha;
 
-  /// Reconstruction approach
+  /// Optional external curvature functor (e.g. from level-set). When provided,
+  /// skips inline curvature computation from alpha.
+  const Moose::Functor<Real> * const _curvature_functor;
 };
