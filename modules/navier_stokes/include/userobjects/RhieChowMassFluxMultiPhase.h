@@ -15,6 +15,8 @@
 #include "VectorComponentFunctor.h"
 #include "LinearFVAnisotropicDiffusion.h"
 #include <unordered_map>
+
+class BalancedForceSurfaceTension;
 #include <set>
 #include <unordered_set>
 
@@ -80,7 +82,7 @@ public:
    * @param momentum_system_numbers The numbers of these systems
    */
   void linkMomentumPressureSystems(const std::vector<LinearSystem *> & momentum_systems,
-                                   const LinearSystem & pressure_system,
+                                   LinearSystem & pressure_system,
                                    const std::vector<unsigned int> & momentum_system_numbers);
 
   /**
@@ -191,7 +193,7 @@ protected:
   std::vector<libMesh::LinearImplicitSystem *> _momentum_implicit_systems;
 
   /// Pointer to the pressure system
-  const LinearSystem * _pressure_system;
+  LinearSystem * _pressure_system;
 
   /// Global number of the pressure system
   unsigned int _global_pressure_system_number;
@@ -201,6 +203,9 @@ protected:
 
   /// Enumerator for the method used for pressure projection
   const MooseEnum _pressure_projection_method;
+
+  /// Balanced-force surface tension user object
+  const BalancedForceSurfaceTension * const _plic_st;
 
 private:
   /// The subset of the FaceInfo objects that actually cover the subdomains which the

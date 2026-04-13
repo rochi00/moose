@@ -18,6 +18,7 @@
 #include "PetscVectorReader.h"
 #include "LinearSystem.h"
 #include "LinearFVBoundaryCondition.h"
+#include "BalancedForceSurfaceTension.h"
 
 // libMesh includes
 #include "libmesh/mesh_base.h"
@@ -60,6 +61,12 @@ RhieChowMassFluxMultiPhase::validParams()
                              "The method to use in the pressure projection for Ainv - "
                              "standard (SIMPLE) or consistent (SIMPLEC)");
 
+  params.addParam<UserObjectName>(
+      "plic_surface_tension",
+      "PLICSurfaceTension user object for integral surface tension. "
+      "When provided, the face flux includes a balanced surface tension correction "
+      "computed from PLIC geometry, using the same face stencil as the pressure gradient.");
+
   params.addParam<bool>("check_executioner", true, "Whether to check the type of the executioner");
   params.addParam<std::string>("property_suffix", "A property suffix to add to the RC created objects.");
   params.addParamNamesToGroup("check_executioner property_suffix", "Advanced");
@@ -84,7 +91,10 @@ RhieChowMassFluxMultiPhase::RhieChowMassFluxMultiPhase(const InputParameters & p
             "face_flux", _moose_mesh, blockIDs(), "face_values")),
     _rho(getFunctor<Real>(NS::density)),
     _alpha(getFunctor<Real>("alpha")),
-    _pressure_projection_method(getParam<MooseEnum>("pressure_projection_method"))
+    _pressure_projection_method(getParam<MooseEnum>("pressure_projection_method")),
+    _plic_st(isParamValid("plic_surface_tension")
+                 ? &getUserObject<BalancedForceSurfaceTension>("plic_surface_tension")
+                 : nullptr)
 {
   if (!_p)
     paramError(NS::pressure, "the pressure must be a MooseLinearVariableFVReal.");
@@ -118,7 +128,7 @@ RhieChowMassFluxMultiPhase::RhieChowMassFluxMultiPhase(const InputParameters & p
 void
 RhieChowMassFluxMultiPhase::linkMomentumPressureSystems(
     const std::vector<LinearSystem *> & momentum_systems,
-    const LinearSystem & pressure_system,
+    LinearSystem & pressure_system,
     const std::vector<unsigned int> & momentum_system_numbers)
 {
   _momentum_systems = momentum_systems;
@@ -338,8 +348,8 @@ RhieChowMassFluxMultiPhase::computeFaceMassFlux()
       const auto neighbor_dof = neighbor_info.dofIndices()[_global_pressure_system_number][0];
 
       // Fetching the values of the pressure for the element and the neighbor
-      const auto p_elem_value = p_reader(elem_dof);
-      const auto p_neighbor_value = p_reader(neighbor_dof);
+      auto p_elem_value = p_reader(elem_dof);
+      auto p_neighbor_value = p_reader(neighbor_dof);
 
       // Compute the elem matrix contributions for the face
       const auto elem_matrix_contribution = _p_diffusion_kernel->computeElemMatrixContribution();
@@ -362,7 +372,8 @@ RhieChowMassFluxMultiPhase::computeFaceMassFlux()
 
       const ElemInfo & elem_info =
           hasBlocks(fi->elemPtr()->subdomain_id()) ? *fi->elemInfo() : *fi->neighborInfo();
-      const auto p_elem_value = _p->getElemValue(elem_info, time_arg);
+      auto p_elem_value = _p->getElemValue(elem_info, time_arg);
+
       const auto matrix_contribution =
           _p_diffusion_kernel->computeBoundaryMatrixContribution(*bc_pointer);
       const auto rhs_contribution =
@@ -371,7 +382,13 @@ RhieChowMassFluxMultiPhase::computeFaceMassFlux()
       // On the boundary, only the element side has a contribution
       p_grad_flux = (p_elem_value * matrix_contribution - rhs_contribution);
     }
-    // Compute the new face flux
+    // Compute the new face flux.
+    // Note: when PLIC surface tension is active, _HbyA_flux already includes
+    // the surface tension contribution (added in computeHbyA), using the same
+    // discrete diffusion operator as p_grad_flux. At equilibrium:
+    //   _HbyA_flux = st_flux (velocity HbyA is zero, only ST remains)
+    //   p_grad_flux = st_flux (pressure adjusts to balance ST)
+    //   → face_mass_flux = -st_flux + st_flux = 0
     _face_mass_flux[fi->id()] = -_HbyA_flux[fi->id()] + p_grad_flux;
   }
 }
@@ -708,6 +725,42 @@ RhieChowMassFluxMultiPhase::computeHbyA(const bool with_updated_pressure, bool v
   // We fill the 1/A and H/A functors
   populateCouplingFunctors(_HbyA_raw, _Ainv_raw);
 
+  // Add PLIC surface tension flux to HbyA so the pressure Poisson equation
+  // includes the surface tension source term. The face flux is:
+  //   phi_f = -HbyA_flux + Ainv*grad(p) - Ainv*sigma*kappa*grad(alpha)
+  // For div(phi) = 0:
+  //   div(Ainv*grad(p)) = div(HbyA_flux) + div(Ainv*sigma*kappa*grad(alpha))
+  // By adding the ST flux to HbyA_flux, the existing pressure equation
+  // div(Ainv*grad(p)) = div(HbyA_flux_modified) captures both terms.
+  if (_plic_st)
+  {
+    for (auto & fi : _flow_face_info)
+    {
+      if (!_p->isInternalFace(*fi))
+        continue;
+
+      const Real kappa_f = _plic_st->getFaceCurvature(*fi);
+      if (std::abs(kappa_f) < 1e-30)
+        continue;
+
+      const Real alpha_elem = _plic_st->getAlpha(fi->elemInfo()->elem()->id());
+      const Real alpha_neigh = _plic_st->getAlpha(fi->neighborInfo()->elem()->id());
+      const Real sigma = _plic_st->sigma();
+
+      const Real psi_elem = sigma * kappa_f * alpha_elem;
+      const Real psi_neigh = sigma * kappa_f * alpha_neigh;
+
+      // Use the same diffusion operator as the pressure gradient
+      _p_diffusion_kernel->setupFaceData(fi);
+      _p_diffusion_kernel->setCurrentFaceArea(1.0);
+
+      const auto elem_mc = _p_diffusion_kernel->computeElemMatrixContribution();
+      const auto neigh_mc = _p_diffusion_kernel->computeNeighborMatrixContribution();
+
+      _HbyA_flux[fi->id()] += psi_neigh * neigh_mc + psi_elem * elem_mc;
+    }
+  }
+
   if (verbose)
   {
     _console << "************************************" << std::endl;
@@ -728,3 +781,4 @@ RhieChowMassFluxMultiPhase::selectPressureGradient(const bool updated_pressure)
 
   return _grad_p_current;
 }
+
