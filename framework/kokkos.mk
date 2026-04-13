@@ -76,7 +76,7 @@ ifneq ($(PETSC_HAVE_CUDA),)
   KOKKOS_CXXFLAGS    = -arch=sm_$(CUDA_ARCH) --extended-lambda
   KOKKOS_CXXFLAGS   += --forward-unknown-to-host-compiler --disable-warnings -x cu -ccbin $(word 1, $(libmesh_CXX))
   KOKKOS_CXXFLAGS   += $(filter-out -Werror=return-type,$(CXXFLAGS) $(libmesh_CXXFLAGS)) # Incompatible with NVCC
-  KOKKOS_CPPFLAGS    = $(subst -Werror,-Werror=all-warnings,$(libmesh_CPPFLAGS) $(ADDITIONAL_CPPFLAGS) ${ADDITIONAL_KOKKOS_CPPFLAGS})
+  KOKKOS_CPPFLAGS    = $(subst -Werror,-Werror=all-warnings,$(libmesh_CPPFLAGS) $(ADDITIONAL_CPPFLAGS) ${ADDITIONAL_KOKKOS_CPPFLAGS}) -DLIBMESH_KOKKOS_COMPILATION
   KOKKOS_LDFLAGS     = --forward-unknown-to-host-compiler -arch=sm_$(CUDA_ARCH)
 else ifneq ($(PETSC_HAVE_HIP),) # To be determined for HIP
   KOKKOS_DEVICE     := HIP
@@ -84,7 +84,7 @@ else ifneq ($(PETSC_HAVE_HIP),) # To be determined for HIP
   KOKKOS_COMPILER   := GPU
   KOKKOS_CXX         = $(HIP_COMPILER)
   KOKKOS_CXXFLAGS    =
-  KOKKOS_CPPFLAGS    =
+  KOKKOS_CPPFLAGS    = -DLIBMESH_KOKKOS_COMPILATION
   KOKKOS_LDFLAGS     =
 else ifneq ($(PETSC_HAVE_SYCL),) # To be determined for SYCL
   KOKKOS_DEVICE     := SYCL
@@ -92,13 +92,13 @@ else ifneq ($(PETSC_HAVE_SYCL),) # To be determined for SYCL
   KOKKOS_COMPILER   := GPU
   KOKKOS_CXX         = $(SYCL_COMPILER)
   KOKKOS_CXXFLAGS    = -fsycl
-  KOKKOS_CPPFLAGS    =
+  KOKKOS_CPPFLAGS    = -DLIBMESH_KOKKOS_COMPILATION
   KOKKOS_LDFLAGS     =
 else
   KOKKOS_COMPILER   := CPU
   KOKKOS_CXX         = $(libmesh_CXX)
   KOKKOS_CXXFLAGS    = $(CXXFLAGS) $(libmesh_CXXFLAGS) -x c++
-  KOKKOS_CPPFLAGS    = $(libmesh_CPPFLAGS) $(ADDITIONAL_CPPFLAGS) ${ADDITIONAL_KOKKOS_CPPFLAGS}
+  KOKKOS_CPPFLAGS    = $(libmesh_CPPFLAGS) $(ADDITIONAL_CPPFLAGS) ${ADDITIONAL_KOKKOS_CPPFLAGS} -DLIBMESH_KOKKOS_COMPILATION
   KOKKOS_LDFLAGS     =
   ENABLE_KOKKOS_GPU := false
 endif
