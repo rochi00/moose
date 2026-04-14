@@ -10,10 +10,10 @@
 #pragma once
 
 #include "KokkosArray.h"
-#include "libmesh/kokkos/fe_types.h"
-#include "libmesh/kokkos/fe_lagrange_1d.h"
-#include "libmesh/kokkos/fe_lagrange_2d.h"
-#include "libmesh/kokkos/fe_lagrange_3d.h"
+#include "libmesh/gpu/kokkos_fe_types.h"
+#include "libmesh/gpu/kokkos_fe_lagrange_1d.h"
+#include "libmesh/gpu/kokkos_fe_lagrange_2d.h"
+#include "libmesh/gpu/kokkos_fe_lagrange_3d.h"
 
 namespace Moose::Kokkos
 {

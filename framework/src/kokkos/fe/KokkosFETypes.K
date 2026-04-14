@@ -14,7 +14,7 @@
 // second time or the linker will see duplicate symbols.
 #ifndef LIBMESH_HAVE_KOKKOS
 
-#include "libmesh/kokkos/fe_types.h"
+#include "libmesh/gpu/kokkos_fe_types.h"
 
 #include "libmesh/libmesh_common.h"
 

@@ -20,7 +20,7 @@
 
 // Real3 and Real33 now live in libMesh::Kokkos (libmesh/kokkos/scalar_types.h).
 // Pull them into Moose::Kokkos for backward compatibility with existing MOOSE code.
-#include "libmesh/kokkos/scalar_types.h"
+#include "libmesh/gpu/kokkos_scalar_types.h"
 
 namespace Moose::Kokkos
 {

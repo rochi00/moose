@@ -11,7 +11,7 @@
 
 #include <cmath>
 #include "KokkosArray.h"
-#include "libmesh/kokkos/fe_types.h"
+#include "libmesh/gpu/kokkos_fe_types.h"
 #include "KokkosTypes.h"
 
 namespace Moose::Kokkos
@@ -212,7 +212,7 @@ struct GaussLegendre1D
 // ─────────────────────────────────────────────────────────────────────────────
 
 static inline void
-fillQuadrature(FEElemTopology topo,
+fillQuadrature(libMesh::ElemType topo,
                unsigned int order,
                Array<Real3> & qpts,
                Array<Real> & weights)
@@ -220,8 +220,8 @@ fillQuadrature(FEElemTopology topo,
   switch (topo)
   {
     // ── 1-D elements ────────────────────────────────────────────────────────
-    case FEElemTopology::EDGE2:
-    case FEElemTopology::EDGE3:
+    case libMesh::EDGE2:
+    case libMesh::EDGE3:
     {
       const unsigned int n = GaussLegendre1D::n_points(order);
       qpts.create(n);
@@ -235,9 +235,9 @@ fillQuadrature(FEElemTopology topo,
     }
 
     // ── 2-D quadrilateral elements (tensor product) ──────────────────────────
-    case FEElemTopology::QUAD4:
-    case FEElemTopology::QUAD8:
-    case FEElemTopology::QUAD9:
+    case libMesh::QUAD4:
+    case libMesh::QUAD8:
+    case libMesh::QUAD9:
     {
       const unsigned int n  = GaussLegendre1D::n_points(order);
       const unsigned int n2 = n * n;
@@ -257,9 +257,9 @@ fillQuadrature(FEElemTopology topo,
     }
 
     // ── 3-D hexahedral elements (tensor product) ─────────────────────────────
-    case FEElemTopology::HEX8:
-    case FEElemTopology::HEX20:
-    case FEElemTopology::HEX27:
+    case libMesh::HEX8:
+    case libMesh::HEX20:
+    case libMesh::HEX27:
     {
       const unsigned int n  = GaussLegendre1D::n_points(order);
       const unsigned int n3 = n * n * n;
@@ -285,8 +285,8 @@ fillQuadrature(FEElemTopology topo,
     //  Rules from libMesh quadrature_gauss_2D.C (QGauss::init_2D, TRI cases).
     //  Coordinates are on the unit triangle {(0,0),(1,0),(0,1)}.
     //  Weights sum to 0.5 (the area of the unit triangle).
-    case FEElemTopology::TRI3:
-    case FEElemTopology::TRI6:
+    case libMesh::TRI3:
+    case libMesh::TRI6:
     {
       switch (order)
       {
@@ -470,8 +470,8 @@ fillQuadrature(FEElemTopology topo,
     //  Rules from libMesh quadrature_gauss_3D.C (QGauss::init_3D, TET cases).
     //  Coordinates are on the unit tet {(0,0,0),(1,0,0),(0,1,0),(0,0,1)}.
     //  Weights sum to 1/6 (the volume of the unit tetrahedron).
-    case FEElemTopology::TET4:
-    case FEElemTopology::TET10:
+    case libMesh::TET4:
+    case libMesh::TET10:
     {
       switch (order)
       {

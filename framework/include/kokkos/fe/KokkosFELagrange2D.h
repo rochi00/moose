@@ -11,7 +11,7 @@
 
 #pragma once
 
-#include "libmesh/kokkos/fe_lagrange_2d.h"
+#include "libmesh/gpu/kokkos_fe_lagrange_2d.h"
 
 namespace Moose::Kokkos
 {

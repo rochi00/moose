@@ -13,12 +13,12 @@
 //
 //   A. FEEvaluator vs libMesh FEBase  (cross-validation)
 //      For every (element type, quadrature order) pair, evaluate
-//      FEEvaluator<LagrangeTag, ElemTag>::shape/grad_shape at the native
+//      FEEvaluator<LAGRANGE, ElemType>::shape/grad_shape at the native
 //      quadrature points and compare point-for-point against
 //      libMesh FEBase::reinit() output.
 //
-//   B. nativeShape / nativeGradShape dispatch parity
-//      The runtime-dispatch functions in KokkosFEReinit.h must produce
+//   B. nativeMapShape dispatch parity
+//      The runtime-dispatch functions in kokkos_fe_evaluator.h must produce
 //      bit-identical results to direct FEEvaluator calls because they
 //      evaluate the same expression at the same coordinates.
 //
@@ -31,12 +31,12 @@
 
 #include "gtest_include.h"
 
-#include "libmesh/kokkos/fe_lagrange_1d.h"
-#include "libmesh/kokkos/fe_lagrange_2d.h"
-#include "libmesh/kokkos/fe_lagrange_3d.h"
-#include "libmesh/kokkos/fe_monomial.h"
-#include "libmesh/kokkos/fe_evaluator.h"
-#include "libmesh/kokkos/fe_face_map.h"
+#include "libmesh/gpu/kokkos_fe_lagrange_1d.h"
+#include "libmesh/gpu/kokkos_fe_lagrange_2d.h"
+#include "libmesh/gpu/kokkos_fe_lagrange_3d.h"
+#include "libmesh/gpu/kokkos_fe_monomial.h"
+#include "libmesh/gpu/kokkos_fe_evaluator.h"
+#include "libmesh/gpu/kokkos_fe_face_map.h"
 #include "KokkosTypes.h"
 
 #include "libmesh/fe_base.h"
@@ -60,7 +60,6 @@ static constexpr double TOL = 1.0e-13;
 
 struct ElemEntry
 {
-  FEElemTopology topo;
   libMesh::ElemType lm_type;
   libMesh::Order    lm_order;   // default Lagrange order for this elem type
   unsigned int      dim;
@@ -69,50 +68,20 @@ struct ElemEntry
 };
 
 static const ElemEntry ELEMS[] = {
-  { FEElemTopology::EDGE2,  libMesh::EDGE2,  libMesh::FIRST,  1,  2, "EDGE2"  },
-  { FEElemTopology::EDGE3,  libMesh::EDGE3,  libMesh::SECOND, 1,  3, "EDGE3"  },
-  { FEElemTopology::TRI3,   libMesh::TRI3,   libMesh::FIRST,  2,  3, "TRI3"   },
-  { FEElemTopology::TRI6,   libMesh::TRI6,   libMesh::SECOND, 2,  6, "TRI6"   },
-  { FEElemTopology::QUAD4,  libMesh::QUAD4,  libMesh::FIRST,  2,  4, "QUAD4"  },
-  { FEElemTopology::QUAD8,  libMesh::QUAD8,  libMesh::SECOND, 2,  8, "QUAD8"  },
-  { FEElemTopology::QUAD9,  libMesh::QUAD9,  libMesh::SECOND, 2,  9, "QUAD9"  },
-  { FEElemTopology::TET4,   libMesh::TET4,   libMesh::FIRST,  3,  4, "TET4"   },
-  { FEElemTopology::TET10,  libMesh::TET10,  libMesh::SECOND, 3, 10, "TET10"  },
-  { FEElemTopology::HEX8,   libMesh::HEX8,   libMesh::FIRST,  3,  8, "HEX8"   },
-  { FEElemTopology::HEX20,  libMesh::HEX20,  libMesh::SECOND, 3, 20, "HEX20"  },
-  { FEElemTopology::HEX27,  libMesh::HEX27,  libMesh::SECOND, 3, 27, "HEX27"  },
+  { libMesh::EDGE2,  libMesh::FIRST,  1,  2, "EDGE2"  },
+  { libMesh::EDGE3,  libMesh::SECOND, 1,  3, "EDGE3"  },
+  { libMesh::TRI3,   libMesh::FIRST,  2,  3, "TRI3"   },
+  { libMesh::TRI6,   libMesh::SECOND, 2,  6, "TRI6"   },
+  { libMesh::QUAD4,  libMesh::FIRST,  2,  4, "QUAD4"  },
+  { libMesh::QUAD8,  libMesh::SECOND, 2,  8, "QUAD8"  },
+  { libMesh::QUAD9,  libMesh::SECOND, 2,  9, "QUAD9"  },
+  { libMesh::TET4,   libMesh::FIRST,  3,  4, "TET4"   },
+  { libMesh::TET10,  libMesh::SECOND, 3, 10, "TET10"  },
+  { libMesh::HEX8,   libMesh::FIRST,  3,  8, "HEX8"   },
+  { libMesh::HEX20,  libMesh::SECOND, 3, 20, "HEX20"  },
+  { libMesh::HEX27,  libMesh::SECOND, 3, 27, "HEX27"  },
 };
 static constexpr unsigned int N_ELEMS = sizeof(ELEMS) / sizeof(ELEMS[0]);
-
-// Evaluate FEEvaluator::shape/grad_shape for all (elem, topo, i, qp) via the
-// topology switch, writing into pre-allocated raw arrays.
-//   phi[i * nqp + qp]
-//   grad_phi[i * nqp + qp] component c → grad_phi[(i * nqp + qp) * 3 + c]
-static void evalAllNative(FEElemTopology topo,
-                           unsigned int n,
-                           const Array<Real3> & qpts,
-                           std::vector<double> & phi,
-                           std::vector<double> & gphi)
-{
-  unsigned int nqp = qpts.size();
-  phi.assign(n * nqp, 0.0);
-  gphi.assign(n * nqp * 3, 0.0);
-
-  for (unsigned int i = 0; i < n; ++i)
-    for (unsigned int q = 0; q < nqp; ++q)
-    {
-      Real xi   = qpts[q].v[0];
-      Real eta  = qpts[q].v[1];
-      Real zeta = qpts[q].v[2];
-
-      phi[i * nqp + q] = nativeShape(topo, i, xi, eta, zeta);
-
-      Real3 g = nativeGradShape(topo, i, xi, eta, zeta);
-      gphi[(i * nqp + q) * 3 + 0] = g.v[0];
-      gphi[(i * nqp + q) * 3 + 1] = g.v[1];
-      gphi[(i * nqp + q) * 3 + 2] = g.v[2];
-    }
-}
 
 // ── A. FEEvaluator vs libMesh FEBase ─────────────────────────────────────────
 
@@ -142,7 +111,7 @@ TEST_P(KokkosNativeFECrossValTest, PhiMatchesLibMesh)
 
   // Build native quadrature at this order
   Array<Real3> q_pts; Array<Real> wts;
-  fillQuadrature(e.topo, p.order, q_pts, wts);
+  fillQuadrature(e.lm_type, p.order, q_pts, wts);
   const unsigned int nqp = q_pts.size();
 
   // Build libMesh FE object and attach a QGauss rule at the same order
@@ -164,22 +133,22 @@ TEST_P(KokkosNativeFECrossValTest, PhiMatchesLibMesh)
   for (unsigned int i = 0; i < e.n_dofs; ++i)
     for (unsigned int q = 0; q < nqp; ++q)
     {
-      Real xi   = q_pts[q].v[0];
-      Real eta  = q_pts[q].v[1];
-      Real zeta = q_pts[q].v[2];
+      Real xi   = q_pts[q](0);
+      Real eta  = q_pts[q](1);
+      Real zeta = q_pts[q](2);
 
-      double native_phi = nativeShape(e.topo, i, xi, eta, zeta);
+      double native_phi = nativeMapShape(libMesh::LAGRANGE_MAP, e.lm_type, i, xi, eta, zeta);
       EXPECT_NEAR(native_phi, phi_lm[i][q], TOL)
           << p.label << " phi i=" << i << " q=" << q;
 
-      Real3 ng = nativeGradShape(e.topo, i, xi, eta, zeta);
-      EXPECT_NEAR(ng.v[0], dphi_lm[i][q](0), TOL)
+      Real3 ng = nativeGradMapShape(libMesh::LAGRANGE_MAP, e.lm_type, i, xi, eta, zeta);
+      EXPECT_NEAR(ng(0), dphi_lm[i][q](0), TOL)
           << p.label << " dphi/dxi i=" << i << " q=" << q;
       if (e.dim >= 2)
-        EXPECT_NEAR(ng.v[1], dphi_lm[i][q](1), TOL)
+        EXPECT_NEAR(ng(1), dphi_lm[i][q](1), TOL)
             << p.label << " dphi/deta i=" << i << " q=" << q;
       if (e.dim >= 3)
-        EXPECT_NEAR(ng.v[2], dphi_lm[i][q](2), TOL)
+        EXPECT_NEAR(ng(2), dphi_lm[i][q](2), TOL)
             << p.label << " dphi/dzeta i=" << i << " q=" << q;
     }
 }
@@ -189,7 +158,7 @@ INSTANTIATE_TEST_SUITE_P(AllElemsOrders,
                          ::testing::ValuesIn(crossValParams()),
                          [](const auto & info) { return info.param.label; });
 
-// ── B. nativeShape dispatch is bit-identical to direct FEEvaluator calls ─────
+// ── B. nativeMapShape dispatch is bit-identical to direct FEEvaluator calls ──
 //
 // Since both paths evaluate the same inline function at the same coordinates,
 // results must be bit-identical (not just within tolerance).
@@ -197,14 +166,14 @@ INSTANTIATE_TEST_SUITE_P(AllElemsOrders,
 TEST(KokkosNativeFETest, NativeShapeDispatch_BitIdentical_Quad4)
 {
   Array<Real3> q_pts; Array<Real> wts;
-  fillQuadrature(FEElemTopology::QUAD4, 4, q_pts, wts);
+  fillQuadrature(libMesh::QUAD4, 4, q_pts, wts);
 
   for (unsigned int i = 0; i < 4; ++i)
     for (unsigned int q = 0; q < q_pts.size(); ++q)
     {
-      Real xi = q_pts[q].v[0], eta = q_pts[q].v[1];
-      Real direct   = FEEvaluator<LagrangeTag, Quad4Tag>::shape(i, xi, eta, 0.0);
-      Real dispatch = nativeShape(FEElemTopology::QUAD4, i, xi, eta, 0.0);
+      Real xi = q_pts[q](0), eta = q_pts[q](1);
+      Real direct   = FEEvaluator<libMesh::LAGRANGE, libMesh::QUAD4>::shape(i, xi, eta, 0.0);
+      Real dispatch = nativeMapShape(libMesh::LAGRANGE_MAP, libMesh::QUAD4, i, xi, eta, 0.0);
       EXPECT_EQ(direct, dispatch) << "i=" << i << " q=" << q;
     }
 }
@@ -212,14 +181,14 @@ TEST(KokkosNativeFETest, NativeShapeDispatch_BitIdentical_Quad4)
 TEST(KokkosNativeFETest, NativeShapeDispatch_BitIdentical_Tet4)
 {
   Array<Real3> q_pts; Array<Real> wts;
-  fillQuadrature(FEElemTopology::TET4, 5, q_pts, wts);
+  fillQuadrature(libMesh::TET4, 5, q_pts, wts);
 
   for (unsigned int i = 0; i < 4; ++i)
     for (unsigned int q = 0; q < q_pts.size(); ++q)
     {
-      Real xi = q_pts[q].v[0], eta = q_pts[q].v[1], zeta = q_pts[q].v[2];
-      Real direct   = FEEvaluator<LagrangeTag, Tet4Tag>::shape(i, xi, eta, zeta);
-      Real dispatch = nativeShape(FEElemTopology::TET4, i, xi, eta, zeta);
+      Real xi = q_pts[q](0), eta = q_pts[q](1), zeta = q_pts[q](2);
+      Real direct   = FEEvaluator<libMesh::LAGRANGE, libMesh::TET4>::shape(i, xi, eta, zeta);
+      Real dispatch = nativeMapShape(libMesh::LAGRANGE_MAP, libMesh::TET4, i, xi, eta, zeta);
       EXPECT_EQ(direct, dispatch) << "i=" << i << " q=" << q;
     }
 }
@@ -227,14 +196,14 @@ TEST(KokkosNativeFETest, NativeShapeDispatch_BitIdentical_Tet4)
 TEST(KokkosNativeFETest, NativeShapeDispatch_BitIdentical_Hex27)
 {
   Array<Real3> q_pts; Array<Real> wts;
-  fillQuadrature(FEElemTopology::HEX27, 3, q_pts, wts);
+  fillQuadrature(libMesh::HEX27, 3, q_pts, wts);
 
   for (unsigned int i = 0; i < 27; ++i)
     for (unsigned int q = 0; q < q_pts.size(); ++q)
     {
-      Real xi = q_pts[q].v[0], eta = q_pts[q].v[1], zeta = q_pts[q].v[2];
-      Real direct   = FEEvaluator<LagrangeTag, Hex27Tag>::shape(i, xi, eta, zeta);
-      Real dispatch = nativeShape(FEElemTopology::HEX27, i, xi, eta, zeta);
+      Real xi = q_pts[q](0), eta = q_pts[q](1), zeta = q_pts[q](2);
+      Real direct   = FEEvaluator<libMesh::LAGRANGE, libMesh::HEX27>::shape(i, xi, eta, zeta);
+      Real dispatch = nativeMapShape(libMesh::LAGRANGE_MAP, libMesh::HEX27, i, xi, eta, zeta);
       EXPECT_EQ(direct, dispatch) << "i=" << i << " q=" << q;
     }
 }
@@ -242,16 +211,16 @@ TEST(KokkosNativeFETest, NativeShapeDispatch_BitIdentical_Hex27)
 TEST(KokkosNativeFETest, NativeGradShapeDispatch_BitIdentical_Tri6)
 {
   Array<Real3> q_pts; Array<Real> wts;
-  fillQuadrature(FEElemTopology::TRI6, 4, q_pts, wts);
+  fillQuadrature(libMesh::TRI6, 4, q_pts, wts);
 
   for (unsigned int i = 0; i < 6; ++i)
     for (unsigned int q = 0; q < q_pts.size(); ++q)
     {
-      Real xi = q_pts[q].v[0], eta = q_pts[q].v[1];
-      Real3 direct   = FEEvaluator<LagrangeTag, Tri6Tag>::grad_shape(i, xi, eta, 0.0);
-      Real3 dispatch = nativeGradShape(FEElemTopology::TRI6, i, xi, eta, 0.0);
-      EXPECT_EQ(direct.v[0], dispatch.v[0]) << "v[0] i=" << i << " q=" << q;
-      EXPECT_EQ(direct.v[1], dispatch.v[1]) << "v[1] i=" << i << " q=" << q;
+      Real xi = q_pts[q](0), eta = q_pts[q](1);
+      Real3 direct   = FEEvaluator<libMesh::LAGRANGE, libMesh::TRI6>::grad_shape(i, xi, eta, 0.0);
+      Real3 dispatch = nativeGradMapShape(libMesh::LAGRANGE_MAP, libMesh::TRI6, i, xi, eta, 0.0);
+      EXPECT_EQ(direct(0), dispatch(0)) << "v[0] i=" << i << " q=" << q;
+      EXPECT_EQ(direct(1), dispatch(1)) << "v[1] i=" << i << " q=" << q;
     }
 }
 
@@ -259,20 +228,19 @@ TEST(KokkosNativeFETest, NativeGradShapeDispatch_BitIdentical_Tri6)
 //
 // For a given face side, the parent-reference coordinates produced by
 // mapFaceQpToParent must give the same phi values as libMesh's face reinit.
-// We test this indirectly: evaluate phi at parent coords via nativeShape and
-// compare against the libMesh phi from face reinit.
+// We test this indirectly: evaluate phi at parent coords via nativeMapShape
+// and compare against the libMesh phi from face reinit.
 //
 // The test covers QUAD4 (2D), HEX8 (3D), and TRI3 (simplex face).
 
-static void checkFaceMapping(FEElemTopology parent_topo,
-                              libMesh::ElemType lm_type,
+static void checkFaceMapping(libMesh::ElemType parent_topo,
                               libMesh::Order lm_order,
                               unsigned int parent_dim,
                               unsigned int n_dofs,
                               unsigned int quad_order,
                               const std::string & label)
 {
-  const libMesh::Elem * ref = &libMesh::ReferenceElem::get(lm_type);
+  const libMesh::Elem * ref = &libMesh::ReferenceElem::get(parent_topo);
   const auto side_topo = getSideTopology(parent_topo);
 
   libMesh::QGauss qrule_face(parent_dim - 1,
@@ -300,26 +268,24 @@ static void checkFaceMapping(FEElemTopology parent_topo,
     auto side_elem = ref->side_ptr(side);
     for (unsigned int q = 0; q < nqp; ++q)
     {
-      // Reproduce mapFaceQpToParent logic inline
-      // (the actual helper lives inside KokkosAssembly.K as a static function
-      //  and is not exposed in a testable header; we replicate it here)
+      // Reproduce mapFaceQpToParent logic inline using nativeMapShape
       const Real3 face_pt = face_qpts[q];
       Real3 parent_pt;
       for (unsigned int k = 0; k < side_elem->n_nodes(); ++k)
       {
-        Real psi = nativeShape(side_topo, k,
-                               face_pt.v[0], face_pt.v[1], face_pt.v[2]);
+        Real psi = nativeMapShape(libMesh::LAGRANGE_MAP, side_topo, k,
+                                  face_pt(0), face_pt(1), face_pt(2));
         const auto & node = side_elem->point(k);
-        parent_pt.v[0] += psi * node(0);
-        parent_pt.v[1] += psi * node(1);
-        parent_pt.v[2] += psi * node(2);
+        parent_pt(0) += psi * node(0);
+        parent_pt(1) += psi * node(1);
+        parent_pt(2) += psi * node(2);
       }
 
       // Now evaluate parent shape functions at parent_pt and compare to libMesh
       for (unsigned int i = 0; i < n_dofs; ++i)
       {
-        double native_phi = nativeShape(parent_topo, i,
-                                        parent_pt.v[0], parent_pt.v[1], parent_pt.v[2]);
+        double native_phi = nativeMapShape(libMesh::LAGRANGE_MAP, parent_topo, i,
+                                           parent_pt(0), parent_pt(1), parent_pt(2));
         EXPECT_NEAR(native_phi, phi_lm[i][q], TOL)
             << label << " side=" << side << " i=" << i << " q=" << q;
       }
@@ -329,32 +295,27 @@ static void checkFaceMapping(FEElemTopology parent_topo,
 
 TEST(KokkosNativeFETest, FaceMapping_Quad4)
 {
-  checkFaceMapping(FEElemTopology::QUAD4, libMesh::QUAD4,
-                   libMesh::FIRST, 2, 4, 3, "QUAD4");
+  checkFaceMapping(libMesh::QUAD4, libMesh::FIRST, 2, 4, 3, "QUAD4");
 }
 
 TEST(KokkosNativeFETest, FaceMapping_Tri3)
 {
-  checkFaceMapping(FEElemTopology::TRI3, libMesh::TRI3,
-                   libMesh::FIRST, 2, 3, 3, "TRI3");
+  checkFaceMapping(libMesh::TRI3, libMesh::FIRST, 2, 3, 3, "TRI3");
 }
 
 TEST(KokkosNativeFETest, FaceMapping_Hex8)
 {
-  checkFaceMapping(FEElemTopology::HEX8, libMesh::HEX8,
-                   libMesh::FIRST, 3, 8, 3, "HEX8");
+  checkFaceMapping(libMesh::HEX8, libMesh::FIRST, 3, 8, 3, "HEX8");
 }
 
 TEST(KokkosNativeFETest, FaceMapping_Tet4)
 {
-  checkFaceMapping(FEElemTopology::TET4, libMesh::TET4,
-                   libMesh::FIRST, 3, 4, 3, "TET4");
+  checkFaceMapping(libMesh::TET4, libMesh::FIRST, 3, 4, 3, "TET4");
 }
 
 TEST(KokkosNativeFETest, FaceMapping_Hex8_HighOrder)
 {
-  checkFaceMapping(FEElemTopology::HEX8, libMesh::HEX8,
-                   libMesh::FIRST, 3, 8, 5, "HEX8_o5");
+  checkFaceMapping(libMesh::HEX8, libMesh::FIRST, 3, 8, 5, "HEX8_o5");
 }
 
 // ── D. nDofs matches libMesh DOF count ───────────────────────────────────────
@@ -364,12 +325,13 @@ TEST(KokkosNativeFETest, NDofs_MatchesLibMesh)
   for (unsigned int e = 0; e < N_ELEMS; ++e)
   {
     const auto & entry = ELEMS[e];
-    unsigned int native_n = nDofs(Moose::Kokkos::FEFamily::LAGRANGE, entry.topo);
+    const unsigned int order = static_cast<unsigned int>(entry.lm_order);
+    unsigned int native_n = nDofs(FEShapeKey{libMesh::LAGRANGE, classFromTopology(entry.lm_type), order});
     EXPECT_EQ(native_n, entry.n_dofs) << entry.name;
   }
 }
 
-// ── E. All FEElemTopology values handled by nativeShape (no default branch) ──
+// ── E. All ElemType values handled by nativeMapShape (no default branch) ─────
 //
 // Passing each topology with i=0 at the centroid should return a finite,
 // non-NaN value. This guards against accidentally missing a switch case.
@@ -395,8 +357,8 @@ TEST(KokkosNativeFETest, NativeShape_NoUnhandledTopology)
 
   for (unsigned int e = 0; e < N_ELEMS; ++e)
   {
-    Real val = nativeShape(ELEMS[e].topo, 0,
-                           centroids[e].v[0], centroids[e].v[1], centroids[e].v[2]);
+    Real val = nativeMapShape(libMesh::LAGRANGE_MAP, ELEMS[e].lm_type, 0,
+                              centroids[e](0), centroids[e](1), centroids[e](2));
     EXPECT_TRUE(std::isfinite(val)) << ELEMS[e].name << " returned non-finite";
   }
 }
@@ -411,7 +373,7 @@ TEST(KokkosNativeFETest, NativeShape_NoUnhandledTopology)
 
 struct MonomialParityParam
 {
-  FEElemClass          kk_cls;
+  libMesh::FEElemClass kk_cls;
   unsigned int         order;
   libMesh::ElemType    lm_type;  // representative reference element
   unsigned int         dim;
@@ -422,26 +384,26 @@ static std::vector<MonomialParityParam> monomialParityParams()
 {
   return {
     // 1-D
-    { FEElemClass::EDGE, 0, libMesh::EDGE2, 1, "EDGE_p0" },
-    { FEElemClass::EDGE, 1, libMesh::EDGE2, 1, "EDGE_p1" },
-    { FEElemClass::EDGE, 2, libMesh::EDGE2, 1, "EDGE_p2" },
-    { FEElemClass::EDGE, 3, libMesh::EDGE2, 1, "EDGE_p3" },
+    { libMesh::FEElemClass::EDGE, 0, libMesh::EDGE2, 1, "EDGE_p0" },
+    { libMesh::FEElemClass::EDGE, 1, libMesh::EDGE2, 1, "EDGE_p1" },
+    { libMesh::FEElemClass::EDGE, 2, libMesh::EDGE2, 1, "EDGE_p2" },
+    { libMesh::FEElemClass::EDGE, 3, libMesh::EDGE2, 1, "EDGE_p3" },
     // 2-D — QUAD reference element (xi,eta ∈ [-1,1]²)
-    { FEElemClass::QUAD, 0, libMesh::QUAD4, 2, "QUAD_p0" },
-    { FEElemClass::QUAD, 1, libMesh::QUAD4, 2, "QUAD_p1" },
-    { FEElemClass::QUAD, 2, libMesh::QUAD4, 2, "QUAD_p2" },
-    { FEElemClass::QUAD, 3, libMesh::QUAD4, 2, "QUAD_p3" },
+    { libMesh::FEElemClass::QUAD, 0, libMesh::QUAD4, 2, "QUAD_p0" },
+    { libMesh::FEElemClass::QUAD, 1, libMesh::QUAD4, 2, "QUAD_p1" },
+    { libMesh::FEElemClass::QUAD, 2, libMesh::QUAD4, 2, "QUAD_p2" },
+    { libMesh::FEElemClass::QUAD, 3, libMesh::QUAD4, 2, "QUAD_p3" },
     // 2-D — TRI reference element (xi,eta on unit simplex)
-    { FEElemClass::TRI,  1, libMesh::TRI3,  2, "TRI_p1"  },
-    { FEElemClass::TRI,  2, libMesh::TRI3,  2, "TRI_p2"  },
+    { libMesh::FEElemClass::TRI,  1, libMesh::TRI3,  2, "TRI_p1"  },
+    { libMesh::FEElemClass::TRI,  2, libMesh::TRI3,  2, "TRI_p2"  },
     // 3-D — HEX reference element
-    { FEElemClass::HEX,  0, libMesh::HEX8,  3, "HEX_p0"  },
-    { FEElemClass::HEX,  1, libMesh::HEX8,  3, "HEX_p1"  },
-    { FEElemClass::HEX,  2, libMesh::HEX8,  3, "HEX_p2"  },
-    { FEElemClass::HEX,  3, libMesh::HEX8,  3, "HEX_p3"  },
+    { libMesh::FEElemClass::HEX,  0, libMesh::HEX8,  3, "HEX_p0"  },
+    { libMesh::FEElemClass::HEX,  1, libMesh::HEX8,  3, "HEX_p1"  },
+    { libMesh::FEElemClass::HEX,  2, libMesh::HEX8,  3, "HEX_p2"  },
+    { libMesh::FEElemClass::HEX,  3, libMesh::HEX8,  3, "HEX_p3"  },
     // 3-D — TET reference element
-    { FEElemClass::TET,  1, libMesh::TET4,  3, "TET_p1"  },
-    { FEElemClass::TET,  2, libMesh::TET4,  3, "TET_p2"  },
+    { libMesh::FEElemClass::TET,  1, libMesh::TET4,  3, "TET_p1"  },
+    { libMesh::FEElemClass::TET,  2, libMesh::TET4,  3, "TET_p2"  },
   };
 }
 
@@ -454,9 +416,8 @@ TEST_P(KokkosMonomialParityTest, PhiMatchesLibMesh)
 
   // Build native quadrature points (order p+1 is exact for P_p)
   const unsigned int quad_order = p.order + 1;
-  FEElemTopology ref_topo = toKokkosTopology(p.lm_type);
   Array<Real3> q_pts; Array<Real> wts;
-  fillQuadrature(ref_topo, quad_order, q_pts, wts);
+  fillQuadrature(p.lm_type, quad_order, q_pts, wts);
   const unsigned int nqp = q_pts.size();
 
   // Build libMesh MONOMIAL FE at the same polynomial order
@@ -473,29 +434,29 @@ TEST_P(KokkosMonomialParityTest, PhiMatchesLibMesh)
 
   ASSERT_EQ(qrule.n_points(), nqp) << p.name << ": qp count mismatch";
 
-  const unsigned int n = nDofs(FEShapeKey{FEFamily::MONOMIAL, p.kk_cls, p.order});
+  const unsigned int n = nDofs(FEShapeKey{libMesh::MONOMIAL, p.kk_cls, p.order});
   ASSERT_EQ(phi_lm.size(), n) << p.name << ": DOF count mismatch with libMesh";
 
-  const FEShapeKey key{FEFamily::MONOMIAL, p.kk_cls, p.order};
+  const FEShapeKey key{libMesh::MONOMIAL, p.kk_cls, p.order};
 
   for (unsigned int i = 0; i < n; ++i)
     for (unsigned int q = 0; q < nqp; ++q)
     {
-      Real xi   = q_pts[q].v[0];
-      Real eta  = q_pts[q].v[1];
-      Real zeta = q_pts[q].v[2];
+      Real xi   = q_pts[q](0);
+      Real eta  = q_pts[q](1);
+      Real zeta = q_pts[q](2);
 
       EXPECT_NEAR(nativeShape(key, i, xi, eta, zeta), phi_lm[i][q], TOL)
           << p.name << " phi i=" << i << " q=" << q;
 
       Real3 ng = nativeGradShape(key, i, xi, eta, zeta);
-      EXPECT_NEAR(ng.v[0], dphi_lm[i][q](0), TOL)
+      EXPECT_NEAR(ng(0), dphi_lm[i][q](0), TOL)
           << p.name << " dphi/dxi i=" << i << " q=" << q;
       if (p.dim >= 2)
-        EXPECT_NEAR(ng.v[1], dphi_lm[i][q](1), TOL)
+        EXPECT_NEAR(ng(1), dphi_lm[i][q](1), TOL)
             << p.name << " dphi/deta i=" << i << " q=" << q;
       if (p.dim >= 3)
-        EXPECT_NEAR(ng.v[2], dphi_lm[i][q](2), TOL)
+        EXPECT_NEAR(ng(2), dphi_lm[i][q](2), TOL)
             << p.name << " dphi/dzeta i=" << i << " q=" << q;
     }
 }
@@ -513,15 +474,15 @@ INSTANTIATE_TEST_SUITE_P(MonomialAllCases,
 TEST(KokkosNativeFETest, MonomialKeyDispatch_BitIdentical_Dim2_Order2_Quad)
 {
   Array<Real3> q_pts; Array<Real> wts;
-  fillQuadrature(FEElemTopology::QUAD4, 3, q_pts, wts);
-  const FEShapeKey key{FEFamily::MONOMIAL, FEElemClass::QUAD, 2};
-  const unsigned int n = FEEvaluator<MonomialTag, Dim2Tag, 2>::n_dofs();
+  fillQuadrature(libMesh::QUAD4, 3, q_pts, wts);
+  const FEShapeKey key{libMesh::MONOMIAL, libMesh::FEElemClass::QUAD, 2};
+  const unsigned int n = MonomialImpl2D<2>::n_dofs();
 
   for (unsigned int i = 0; i < n; ++i)
     for (unsigned int q = 0; q < q_pts.size(); ++q)
     {
-      Real xi = q_pts[q].v[0], eta = q_pts[q].v[1];
-      Real direct   = FEEvaluator<MonomialTag, Dim2Tag, 2>::shape(i, xi, eta, 0.0);
+      Real xi = q_pts[q](0), eta = q_pts[q](1);
+      Real direct   = MonomialImpl2D<2>::shape(i, xi, eta, 0.0);
       Real dispatch = nativeShape(key, i, xi, eta, 0.0);
       EXPECT_EQ(direct, dispatch) << "i=" << i << " q=" << q;
     }
@@ -530,18 +491,18 @@ TEST(KokkosNativeFETest, MonomialKeyDispatch_BitIdentical_Dim2_Order2_Quad)
 TEST(KokkosNativeFETest, MonomialKeyDispatch_BitIdentical_Dim3_Order1_Hex)
 {
   Array<Real3> q_pts; Array<Real> wts;
-  fillQuadrature(FEElemTopology::HEX8, 2, q_pts, wts);
-  const FEShapeKey key{FEFamily::MONOMIAL, FEElemClass::HEX, 1};
-  const unsigned int n = FEEvaluator<MonomialTag, Dim3Tag, 1>::n_dofs();
+  fillQuadrature(libMesh::HEX8, 2, q_pts, wts);
+  const FEShapeKey key{libMesh::MONOMIAL, libMesh::FEElemClass::HEX, 1};
+  const unsigned int n = MonomialImpl3D<1>::n_dofs();
 
   for (unsigned int i = 0; i < n; ++i)
     for (unsigned int q = 0; q < q_pts.size(); ++q)
     {
-      Real xi = q_pts[q].v[0], eta = q_pts[q].v[1], zeta = q_pts[q].v[2];
-      Real3 direct   = FEEvaluator<MonomialTag, Dim3Tag, 1>::grad_shape(i, xi, eta, zeta);
+      Real xi = q_pts[q](0), eta = q_pts[q](1), zeta = q_pts[q](2);
+      Real3 direct   = MonomialImpl3D<1>::grad_shape(i, xi, eta, zeta);
       Real3 dispatch = nativeGradShape(key, i, xi, eta, zeta);
-      EXPECT_EQ(direct.v[0], dispatch.v[0]) << "v[0] i=" << i << " q=" << q;
-      EXPECT_EQ(direct.v[1], dispatch.v[1]) << "v[1] i=" << i << " q=" << q;
-      EXPECT_EQ(direct.v[2], dispatch.v[2]) << "v[2] i=" << i << " q=" << q;
+      EXPECT_EQ(direct(0), dispatch(0)) << "v[0] i=" << i << " q=" << q;
+      EXPECT_EQ(direct(1), dispatch(1)) << "v[1] i=" << i << " q=" << q;
+      EXPECT_EQ(direct(2), dispatch(2)) << "v[2] i=" << i << " q=" << q;
     }
 }

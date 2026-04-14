@@ -11,7 +11,7 @@
 #include "KokkosNodalBCBase.h"
 
 #ifdef MOOSE_KOKKOS_ONDEMAND_FE
-#include "libmesh/kokkos/fe_evaluator.h"
+#include "libmesh/gpu/kokkos_fe_evaluator.h"
 #endif
 
 #include "MooseMesh.h"
@@ -561,8 +561,8 @@ System::operator()(const ThreadID tid) const
     {
       auto vector = getVectorDofValue(getElemLocalDofIndex(elem, i, var), tag);
 
-      value += vector * nativeShape(key, i, ref.v[0], ref.v[1], ref.v[2]);
-      grad += vector * (jacobian * nativeGradShape(key, i, ref.v[0], ref.v[1], ref.v[2]));
+      value += vector * nativeShape(key, i, ref(0), ref(1), ref(2));
+      grad += vector * (jacobian * nativeGradShape(key, i, ref(0), ref(1), ref(2)));
     }
   }
   else

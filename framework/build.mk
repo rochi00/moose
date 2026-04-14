@@ -61,8 +61,8 @@ libmesh_PREFIX   := $(patsubst %/include,%,$(firstword $(patsubst -I%,%,$(libmes
 LIBMESH_CONFIG_H := $(libmesh_PREFIX)/include/libmesh/libmesh_config.h
 LIBMESH_HAVE_KOKKOS := $(shell grep -c 'define LIBMESH_HAVE_KOKKOS' $(LIBMESH_CONFIG_H) 2>/dev/null)
 
-# The libmesh kokkos headers use "kokkos/..." includes internally.
-# After installation they live under installed/include/libmesh/kokkos/, so
+# The libmesh GPU/Kokkos headers use "gpu/..." includes internally.
+# After installation they live under installed/include/libmesh/gpu/, so
 # we need installed/include/libmesh on the search path to resolve them.
 ifeq ($(LIBMESH_HAVE_KOKKOS),1)
   libmesh_INCLUDE += -I$(libmesh_PREFIX)/include/libmesh

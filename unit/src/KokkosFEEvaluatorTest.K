@@ -20,10 +20,10 @@
 
 #include "gtest_include.h"
 
-#include "libmesh/kokkos/fe_lagrange_1d.h"
-#include "libmesh/kokkos/fe_lagrange_2d.h"
-#include "libmesh/kokkos/fe_lagrange_3d.h"
-#include "libmesh/kokkos/fe_monomial.h"
+#include "libmesh/gpu/kokkos_fe_lagrange_1d.h"
+#include "libmesh/gpu/kokkos_fe_lagrange_2d.h"
+#include "libmesh/gpu/kokkos_fe_lagrange_3d.h"
+#include "libmesh/gpu/kokkos_fe_monomial.h"
 
 using namespace libMesh::Kokkos;
 
@@ -34,7 +34,7 @@ static constexpr double TOL = 1.0e-14;
 
 TEST(KokkosFEEvaluatorTest, Edge2_NdofsAndPartitionOfUnity)
 {
-  using FE = FEEvaluator<LagrangeTag, Edge2Tag>;
+  using FE = FEEvaluator<libMesh::LAGRANGE, libMesh::EDGE2>;
   EXPECT_EQ(FE::n_dofs(), 2u);
 
   // Partition of unity: sum of shape functions = 1 at any xi
@@ -49,7 +49,7 @@ TEST(KokkosFEEvaluatorTest, Edge2_NdofsAndPartitionOfUnity)
 
 TEST(KokkosFEEvaluatorTest, Edge2_NodalValues)
 {
-  using FE = FEEvaluator<LagrangeTag, Edge2Tag>;
+  using FE = FEEvaluator<libMesh::LAGRANGE, libMesh::EDGE2>;
   // phi_i(node_j) = delta_ij
   EXPECT_NEAR(FE::shape(0, -1.0, 0.0, 0.0), 1.0, TOL); // node 0 at xi=-1
   EXPECT_NEAR(FE::shape(0,  1.0, 0.0, 0.0), 0.0, TOL);
@@ -59,20 +59,20 @@ TEST(KokkosFEEvaluatorTest, Edge2_NodalValues)
 
 TEST(KokkosFEEvaluatorTest, Edge2_GradConst)
 {
-  using FE = FEEvaluator<LagrangeTag, Edge2Tag>;
+  using FE = FEEvaluator<libMesh::LAGRANGE, libMesh::EDGE2>;
   // Gradients are constant for linear elements
   auto g0 = FE::grad_shape(0, 0.3, 0.0, 0.0);
-  EXPECT_NEAR(g0.v[0], -0.5, TOL);
-  EXPECT_NEAR(g0.v[1],  0.0, TOL);
+  EXPECT_NEAR(g0(0), -0.5, TOL);
+  EXPECT_NEAR(g0(1),  0.0, TOL);
   auto g1 = FE::grad_shape(1, 0.3, 0.0, 0.0);
-  EXPECT_NEAR(g1.v[0],  0.5, TOL);
+  EXPECT_NEAR(g1(0),  0.5, TOL);
 }
 
 // ── EDGE3 ─────────────────────────────────────────────────────────────────────
 
 TEST(KokkosFEEvaluatorTest, Edge3_NdofsAndPartitionOfUnity)
 {
-  using FE = FEEvaluator<LagrangeTag, Edge3Tag>;
+  using FE = FEEvaluator<libMesh::LAGRANGE, libMesh::EDGE3>;
   EXPECT_EQ(FE::n_dofs(), 3u);
 
   for (double xi : {-1.0, -0.5, 0.0, 0.5, 1.0})
@@ -86,7 +86,7 @@ TEST(KokkosFEEvaluatorTest, Edge3_NdofsAndPartitionOfUnity)
 
 TEST(KokkosFEEvaluatorTest, Edge3_NodalValues)
 {
-  using FE = FEEvaluator<LagrangeTag, Edge3Tag>;
+  using FE = FEEvaluator<libMesh::LAGRANGE, libMesh::EDGE3>;
   // node 0 at xi=-1, node 1 at xi=+1, node 2 at xi=0
   EXPECT_NEAR(FE::shape(0, -1.0, 0.0, 0.0), 1.0, TOL);
   EXPECT_NEAR(FE::shape(0,  1.0, 0.0, 0.0), 0.0, TOL);
@@ -101,21 +101,21 @@ TEST(KokkosFEEvaluatorTest, Edge3_NodalValues)
 
 TEST(KokkosFEEvaluatorTest, Edge3_GradAtMidpoint)
 {
-  using FE = FEEvaluator<LagrangeTag, Edge3Tag>;
+  using FE = FEEvaluator<libMesh::LAGRANGE, libMesh::EDGE3>;
   // At xi=0: dL_0/dxi = -0.5, dL_1/dxi = 0.5, dL_2/dxi = 0
   auto g0 = FE::grad_shape(0, 0.0, 0.0, 0.0);
-  EXPECT_NEAR(g0.v[0], -0.5, TOL);
+  EXPECT_NEAR(g0(0), -0.5, TOL);
   auto g1 = FE::grad_shape(1, 0.0, 0.0, 0.0);
-  EXPECT_NEAR(g1.v[0],  0.5, TOL);
+  EXPECT_NEAR(g1(0),  0.5, TOL);
   auto g2 = FE::grad_shape(2, 0.0, 0.0, 0.0);
-  EXPECT_NEAR(g2.v[0],  0.0, TOL);
+  EXPECT_NEAR(g2(0),  0.0, TOL);
 }
 
 // ── TRI3 ──────────────────────────────────────────────────────────────────────
 
 TEST(KokkosFEEvaluatorTest, Tri3_NdofsAndPartitionOfUnity)
 {
-  using FE = FEEvaluator<LagrangeTag, Tri3Tag>;
+  using FE = FEEvaluator<libMesh::LAGRANGE, libMesh::TRI3>;
   EXPECT_EQ(FE::n_dofs(), 3u);
 
   // Interior and boundary points of the unit triangle
@@ -131,7 +131,7 @@ TEST(KokkosFEEvaluatorTest, Tri3_NdofsAndPartitionOfUnity)
 
 TEST(KokkosFEEvaluatorTest, Tri3_NodalValues)
 {
-  using FE = FEEvaluator<LagrangeTag, Tri3Tag>;
+  using FE = FEEvaluator<libMesh::LAGRANGE, libMesh::TRI3>;
   EXPECT_NEAR(FE::shape(0, 0.0, 0.0, 0.0), 1.0, TOL); // node 0 at (0,0)
   EXPECT_NEAR(FE::shape(1, 0.0, 0.0, 0.0), 0.0, TOL);
   EXPECT_NEAR(FE::shape(2, 0.0, 0.0, 0.0), 0.0, TOL);
@@ -141,23 +141,23 @@ TEST(KokkosFEEvaluatorTest, Tri3_NodalValues)
 
 TEST(KokkosFEEvaluatorTest, Tri3_GradConst)
 {
-  using FE = FEEvaluator<LagrangeTag, Tri3Tag>;
+  using FE = FEEvaluator<libMesh::LAGRANGE, libMesh::TRI3>;
   auto g0 = FE::grad_shape(0, 0.25, 0.25, 0.0);
-  EXPECT_NEAR(g0.v[0], -1.0, TOL);
-  EXPECT_NEAR(g0.v[1], -1.0, TOL);
+  EXPECT_NEAR(g0(0), -1.0, TOL);
+  EXPECT_NEAR(g0(1), -1.0, TOL);
   auto g1 = FE::grad_shape(1, 0.25, 0.25, 0.0);
-  EXPECT_NEAR(g1.v[0],  1.0, TOL);
-  EXPECT_NEAR(g1.v[1],  0.0, TOL);
+  EXPECT_NEAR(g1(0),  1.0, TOL);
+  EXPECT_NEAR(g1(1),  0.0, TOL);
   auto g2 = FE::grad_shape(2, 0.25, 0.25, 0.0);
-  EXPECT_NEAR(g2.v[0],  0.0, TOL);
-  EXPECT_NEAR(g2.v[1],  1.0, TOL);
+  EXPECT_NEAR(g2(0),  0.0, TOL);
+  EXPECT_NEAR(g2(1),  1.0, TOL);
 }
 
 // ── TRI6 ──────────────────────────────────────────────────────────────────────
 
 TEST(KokkosFEEvaluatorTest, Tri6_NdofsAndPartitionOfUnity)
 {
-  using FE = FEEvaluator<LagrangeTag, Tri6Tag>;
+  using FE = FEEvaluator<libMesh::LAGRANGE, libMesh::TRI6>;
   EXPECT_EQ(FE::n_dofs(), 6u);
 
   for (auto [xi, eta] : std::initializer_list<std::pair<double,double>>{
@@ -172,7 +172,7 @@ TEST(KokkosFEEvaluatorTest, Tri6_NdofsAndPartitionOfUnity)
 
 TEST(KokkosFEEvaluatorTest, Tri6_NodalValues)
 {
-  using FE = FEEvaluator<LagrangeTag, Tri6Tag>;
+  using FE = FEEvaluator<libMesh::LAGRANGE, libMesh::TRI6>;
   // Corner nodes: 0→(0,0), 1→(1,0), 2→(0,1)
   // Mid-edge nodes: 3→(0.5,0), 4→(0.5,0.5), 5→(0,0.5)
   const double nodes[6][2] = {{0,0},{1,0},{0,1},{0.5,0},{0.5,0.5},{0,0.5}};
@@ -189,7 +189,7 @@ TEST(KokkosFEEvaluatorTest, Tri6_NodalValues)
 
 TEST(KokkosFEEvaluatorTest, Quad4_NdofsAndPartitionOfUnity)
 {
-  using FE = FEEvaluator<LagrangeTag, Quad4Tag>;
+  using FE = FEEvaluator<libMesh::LAGRANGE, libMesh::QUAD4>;
   EXPECT_EQ(FE::n_dofs(), 4u);
 
   for (auto [xi, eta] : std::initializer_list<std::pair<double,double>>{
@@ -204,7 +204,7 @@ TEST(KokkosFEEvaluatorTest, Quad4_NdofsAndPartitionOfUnity)
 
 TEST(KokkosFEEvaluatorTest, Quad4_NodalValues)
 {
-  using FE = FEEvaluator<LagrangeTag, Quad4Tag>;
+  using FE = FEEvaluator<libMesh::LAGRANGE, libMesh::QUAD4>;
   const double nodes[4][2] = {{-1,-1},{1,-1},{1,1},{-1,1}};
   for (unsigned int i = 0; i < 4; ++i)
     for (unsigned int j = 0; j < 4; ++j)
@@ -219,7 +219,7 @@ TEST(KokkosFEEvaluatorTest, Quad4_NodalValues)
 
 TEST(KokkosFEEvaluatorTest, Quad8_NdofsAndPartitionOfUnity)
 {
-  using FE = FEEvaluator<LagrangeTag, Quad8Tag>;
+  using FE = FEEvaluator<libMesh::LAGRANGE, libMesh::QUAD8>;
   EXPECT_EQ(FE::n_dofs(), 8u);
 
   for (auto [xi, eta] : std::initializer_list<std::pair<double,double>>{
@@ -234,7 +234,7 @@ TEST(KokkosFEEvaluatorTest, Quad8_NdofsAndPartitionOfUnity)
 
 TEST(KokkosFEEvaluatorTest, Quad8_NodalValues)
 {
-  using FE = FEEvaluator<LagrangeTag, Quad8Tag>;
+  using FE = FEEvaluator<libMesh::LAGRANGE, libMesh::QUAD8>;
   const double nodes[8][2] = {{-1,-1},{1,-1},{1,1},{-1,1},{0,-1},{1,0},{0,1},{-1,0}};
   for (unsigned int i = 0; i < 8; ++i)
     for (unsigned int j = 0; j < 8; ++j)
@@ -249,7 +249,7 @@ TEST(KokkosFEEvaluatorTest, Quad8_NodalValues)
 
 TEST(KokkosFEEvaluatorTest, Quad9_NdofsAndPartitionOfUnity)
 {
-  using FE = FEEvaluator<LagrangeTag, Quad9Tag>;
+  using FE = FEEvaluator<libMesh::LAGRANGE, libMesh::QUAD9>;
   EXPECT_EQ(FE::n_dofs(), 9u);
 
   for (auto [xi, eta] : std::initializer_list<std::pair<double,double>>{
@@ -264,7 +264,7 @@ TEST(KokkosFEEvaluatorTest, Quad9_NdofsAndPartitionOfUnity)
 
 TEST(KokkosFEEvaluatorTest, Quad9_NodalValues)
 {
-  using FE = FEEvaluator<LagrangeTag, Quad9Tag>;
+  using FE = FEEvaluator<libMesh::LAGRANGE, libMesh::QUAD9>;
   // libMesh node ordering: corners(-1±1), then midsides at 0, then center
   const double nodes[9][2] = {
     {-1,-1},{1,-1},{1,1},{-1,1},   // corners
@@ -284,7 +284,7 @@ TEST(KokkosFEEvaluatorTest, Quad9_NodalValues)
 
 TEST(KokkosFEEvaluatorTest, Tet4_NdofsAndPartitionOfUnity)
 {
-  using FE = FEEvaluator<LagrangeTag, Tet4Tag>;
+  using FE = FEEvaluator<libMesh::LAGRANGE, libMesh::TET4>;
   EXPECT_EQ(FE::n_dofs(), 4u);
 
   for (auto [xi,eta,zeta] : std::initializer_list<std::tuple<double,double,double>>{
@@ -299,7 +299,7 @@ TEST(KokkosFEEvaluatorTest, Tet4_NdofsAndPartitionOfUnity)
 
 TEST(KokkosFEEvaluatorTest, Tet4_NodalValues)
 {
-  using FE = FEEvaluator<LagrangeTag, Tet4Tag>;
+  using FE = FEEvaluator<libMesh::LAGRANGE, libMesh::TET4>;
   const double nodes[4][3] = {{0,0,0},{1,0,0},{0,1,0},{0,0,1}};
   for (unsigned int i = 0; i < 4; ++i)
     for (unsigned int j = 0; j < 4; ++j)
@@ -314,7 +314,7 @@ TEST(KokkosFEEvaluatorTest, Tet4_NodalValues)
 
 TEST(KokkosFEEvaluatorTest, Tet10_NdofsAndPartitionOfUnity)
 {
-  using FE = FEEvaluator<LagrangeTag, Tet10Tag>;
+  using FE = FEEvaluator<libMesh::LAGRANGE, libMesh::TET10>;
   EXPECT_EQ(FE::n_dofs(), 10u);
 
   for (auto [xi,eta,zeta] : std::initializer_list<std::tuple<double,double,double>>{
@@ -331,7 +331,7 @@ TEST(KokkosFEEvaluatorTest, Tet10_NdofsAndPartitionOfUnity)
 
 TEST(KokkosFEEvaluatorTest, Tet10_NodalValues)
 {
-  using FE = FEEvaluator<LagrangeTag, Tet10Tag>;
+  using FE = FEEvaluator<libMesh::LAGRANGE, libMesh::TET10>;
   // Corners: 0→(0,0,0), 1→(1,0,0), 2→(0,1,0), 3→(0,0,1)
   // Edge midpoints: 4→(0.5,0,0), 5→(0.5,0.5,0), 6→(0,0.5,0),
   //                 7→(0,0,0.5), 8→(0.5,0,0.5), 9→(0,0.5,0.5)
@@ -352,7 +352,7 @@ TEST(KokkosFEEvaluatorTest, Tet10_NodalValues)
 
 TEST(KokkosFEEvaluatorTest, Hex8_NdofsAndPartitionOfUnity)
 {
-  using FE = FEEvaluator<LagrangeTag, Hex8Tag>;
+  using FE = FEEvaluator<libMesh::LAGRANGE, libMesh::HEX8>;
   EXPECT_EQ(FE::n_dofs(), 8u);
 
   for (auto [xi,eta,zeta] : std::initializer_list<std::tuple<double,double,double>>{
@@ -368,7 +368,7 @@ TEST(KokkosFEEvaluatorTest, Hex8_NdofsAndPartitionOfUnity)
 
 TEST(KokkosFEEvaluatorTest, Hex8_NodalValues)
 {
-  using FE = FEEvaluator<LagrangeTag, Hex8Tag>;
+  using FE = FEEvaluator<libMesh::LAGRANGE, libMesh::HEX8>;
   const double nodes[8][3] = {
     {-1,-1,-1},{1,-1,-1},{1,1,-1},{-1,1,-1},
     {-1,-1,1},{1,-1,1},{1,1,1},{-1,1,1}
@@ -386,7 +386,7 @@ TEST(KokkosFEEvaluatorTest, Hex8_NodalValues)
 
 TEST(KokkosFEEvaluatorTest, Hex20_NdofsAndPartitionOfUnity)
 {
-  using FE = FEEvaluator<LagrangeTag, Hex20Tag>;
+  using FE = FEEvaluator<libMesh::LAGRANGE, libMesh::HEX20>;
   EXPECT_EQ(FE::n_dofs(), 20u);
 
   for (auto [xi,eta,zeta] : std::initializer_list<std::tuple<double,double,double>>{
@@ -401,7 +401,7 @@ TEST(KokkosFEEvaluatorTest, Hex20_NdofsAndPartitionOfUnity)
 
 TEST(KokkosFEEvaluatorTest, Hex20_NodalValues)
 {
-  using FE = FEEvaluator<LagrangeTag, Hex20Tag>;
+  using FE = FEEvaluator<libMesh::LAGRANGE, libMesh::HEX20>;
   const double nodes[20][3] = {
     // corners
     {-1,-1,-1},{1,-1,-1},{1,1,-1},{-1,1,-1},
@@ -451,7 +451,7 @@ TEST(KokkosFEEvaluatorTest, Hex20_NodalValues)
 
 TEST(KokkosFEEvaluatorTest, Hex27_NdofsAndPartitionOfUnity)
 {
-  using FE = FEEvaluator<LagrangeTag, Hex27Tag>;
+  using FE = FEEvaluator<libMesh::LAGRANGE, libMesh::HEX27>;
   EXPECT_EQ(FE::n_dofs(), 27u);
 
   for (auto [xi,eta,zeta] : std::initializer_list<std::tuple<double,double,double>>{
@@ -466,7 +466,7 @@ TEST(KokkosFEEvaluatorTest, Hex27_NdofsAndPartitionOfUnity)
 
 TEST(KokkosFEEvaluatorTest, Hex27_NodalValues)
 {
-  using FE = FEEvaluator<LagrangeTag, Hex27Tag>;
+  using FE = FEEvaluator<libMesh::LAGRANGE, libMesh::HEX27>;
   // Node coordinates derived from i0/i1/i2 tables and L_k evaluation:
   // index 0→t=-1, index 1→t=+1, index 2→t=0
   static const int idx_to_coord[] = {-1, 1, 0}; // index 0→-1, 1→+1, 2→0
@@ -499,27 +499,27 @@ TEST(KokkosFEEvaluatorTest, Hex27_NodalValues)
 
 TEST(KokkosFEEvaluatorTest, GradSumZero_Edge2)
 {
-  using FE = FEEvaluator<LagrangeTag, Edge2Tag>;
+  using FE = FEEvaluator<libMesh::LAGRANGE, libMesh::EDGE2>;
   for (double xi : {-0.7, 0.0, 0.4})
   {
     double gsum = 0.0;
     for (unsigned int i = 0; i < FE::n_dofs(); ++i)
-      gsum += FE::grad_shape(i, xi, 0.0, 0.0).v[0];
+      gsum += FE::grad_shape(i, xi, 0.0, 0.0)(0);
     EXPECT_NEAR(gsum, 0.0, TOL);
   }
 }
 
 TEST(KokkosFEEvaluatorTest, GradSumZero_Quad4)
 {
-  using FE = FEEvaluator<LagrangeTag, Quad4Tag>;
+  using FE = FEEvaluator<libMesh::LAGRANGE, libMesh::QUAD4>;
   for (auto [xi, eta] : std::initializer_list<std::pair<double,double>>{{0.3,-0.2},{-0.6,0.7}})
   {
     double gxi = 0.0, geta = 0.0;
     for (unsigned int i = 0; i < FE::n_dofs(); ++i)
     {
       auto g = FE::grad_shape(i, xi, eta, 0.0);
-      gxi  += g.v[0];
-      geta += g.v[1];
+      gxi  += g(0);
+      geta += g(1);
     }
     EXPECT_NEAR(gxi,  0.0, TOL);
     EXPECT_NEAR(geta, 0.0, TOL);
@@ -528,7 +528,7 @@ TEST(KokkosFEEvaluatorTest, GradSumZero_Quad4)
 
 TEST(KokkosFEEvaluatorTest, GradSumZero_Hex8)
 {
-  using FE = FEEvaluator<LagrangeTag, Hex8Tag>;
+  using FE = FEEvaluator<libMesh::LAGRANGE, libMesh::HEX8>;
   for (auto [xi,eta,zeta] : std::initializer_list<std::tuple<double,double,double>>{
       {0.3,-0.2,0.5},{-0.6,0.7,-0.4}})
   {
@@ -536,9 +536,9 @@ TEST(KokkosFEEvaluatorTest, GradSumZero_Hex8)
     for (unsigned int i = 0; i < FE::n_dofs(); ++i)
     {
       auto g = FE::grad_shape(i, xi, eta, zeta);
-      gxi   += g.v[0];
-      geta  += g.v[1];
-      gzeta += g.v[2];
+      gxi   += g(0);
+      geta  += g(1);
+      gzeta += g(2);
     }
     EXPECT_NEAR(gxi,   0.0, TOL);
     EXPECT_NEAR(geta,  0.0, TOL);
@@ -551,20 +551,20 @@ TEST(KokkosFEEvaluatorTest, GradSumZero_Hex8)
 
 TEST(KokkosFEEvaluatorTest, MonomialDim1_Order0_Basis)
 {
-  using FE = FEEvaluator<MonomialTag, Dim1Tag, 0>;
+  using FE = MonomialImpl1D<0>;
   EXPECT_EQ(FE::n_dofs(), 1u);
   // phi_0 = 1 everywhere; grad = 0
   for (double xi : {-1.0, -0.5, 0.0, 0.5, 1.0})
   {
     EXPECT_NEAR(FE::shape(0, xi, 0.0, 0.0), 1.0, TOL) << "xi=" << xi;
     auto g = FE::grad_shape(0, xi, 0.0, 0.0);
-    EXPECT_NEAR(g.v[0], 0.0, TOL);
+    EXPECT_NEAR(g(0), 0.0, TOL);
   }
 }
 
 TEST(KokkosFEEvaluatorTest, MonomialDim1_Order1_Basis)
 {
-  using FE = FEEvaluator<MonomialTag, Dim1Tag, 1>;
+  using FE = MonomialImpl1D<1>;
   EXPECT_EQ(FE::n_dofs(), 2u);
   // phi_0 = 1, phi_1 = xi
   for (double xi : {-0.7, 0.0, 0.3, 1.0})
@@ -572,13 +572,13 @@ TEST(KokkosFEEvaluatorTest, MonomialDim1_Order1_Basis)
     EXPECT_NEAR(FE::shape(0, xi, 0.0, 0.0), 1.0, TOL) << "xi=" << xi;
     EXPECT_NEAR(FE::shape(1, xi, 0.0, 0.0), xi,  TOL) << "xi=" << xi;
     auto g1 = FE::grad_shape(1, xi, 0.0, 0.0);
-    EXPECT_NEAR(g1.v[0], 1.0, TOL);
+    EXPECT_NEAR(g1(0), 1.0, TOL);
   }
 }
 
 TEST(KokkosFEEvaluatorTest, MonomialDim1_Order2_Basis)
 {
-  using FE = FEEvaluator<MonomialTag, Dim1Tag, 2>;
+  using FE = MonomialImpl1D<2>;
   EXPECT_EQ(FE::n_dofs(), 3u);
   // phi_0 = 1, phi_1 = xi, phi_2 = xi²
   for (double xi : {-0.5, 0.0, 0.4})
@@ -587,8 +587,8 @@ TEST(KokkosFEEvaluatorTest, MonomialDim1_Order2_Basis)
     EXPECT_NEAR(FE::shape(1, xi, 0.0, 0.0), xi,     TOL) << "xi=" << xi;
     EXPECT_NEAR(FE::shape(2, xi, 0.0, 0.0), xi * xi, TOL) << "xi=" << xi;
     auto g2 = FE::grad_shape(2, xi, 0.0, 0.0);
-    EXPECT_NEAR(g2.v[0], 2.0 * xi, TOL);
-    EXPECT_NEAR(g2.v[1], 0.0,      TOL);
+    EXPECT_NEAR(g2(0), 2.0 * xi, TOL);
+    EXPECT_NEAR(g2(1), 0.0,      TOL);
   }
 }
 
@@ -597,21 +597,21 @@ TEST(KokkosFEEvaluatorTest, MonomialDim1_Order2_Basis)
 
 TEST(KokkosFEEvaluatorTest, MonomialDim2_Order0_Basis)
 {
-  using FE = FEEvaluator<MonomialTag, Dim2Tag, 0>;
+  using FE = MonomialImpl2D<0>;
   EXPECT_EQ(FE::n_dofs(), 1u);
   for (auto [xi, eta] : std::initializer_list<std::pair<double,double>>{
       {0.0,0.0},{0.3,0.4},{-0.5,0.5}})
   {
     EXPECT_NEAR(FE::shape(0, xi, eta, 0.0), 1.0, TOL) << "xi=" << xi << " eta=" << eta;
     auto g = FE::grad_shape(0, xi, eta, 0.0);
-    EXPECT_NEAR(g.v[0], 0.0, TOL);
-    EXPECT_NEAR(g.v[1], 0.0, TOL);
+    EXPECT_NEAR(g(0), 0.0, TOL);
+    EXPECT_NEAR(g(1), 0.0, TOL);
   }
 }
 
 TEST(KokkosFEEvaluatorTest, MonomialDim2_Order1_Basis)
 {
-  using FE = FEEvaluator<MonomialTag, Dim2Tag, 1>;
+  using FE = MonomialImpl2D<1>;
   EXPECT_EQ(FE::n_dofs(), 3u);
   // i=0:1, i=1:xi, i=2:eta
   const double xi = 0.3, eta = -0.4;
@@ -619,14 +619,14 @@ TEST(KokkosFEEvaluatorTest, MonomialDim2_Order1_Basis)
   EXPECT_NEAR(FE::shape(1, xi, eta, 0.0), xi,  TOL);
   EXPECT_NEAR(FE::shape(2, xi, eta, 0.0), eta, TOL);
   auto g1 = FE::grad_shape(1, xi, eta, 0.0);
-  EXPECT_NEAR(g1.v[0], 1.0, TOL); EXPECT_NEAR(g1.v[1], 0.0, TOL);
+  EXPECT_NEAR(g1(0), 1.0, TOL); EXPECT_NEAR(g1(1), 0.0, TOL);
   auto g2 = FE::grad_shape(2, xi, eta, 0.0);
-  EXPECT_NEAR(g2.v[0], 0.0, TOL); EXPECT_NEAR(g2.v[1], 1.0, TOL);
+  EXPECT_NEAR(g2(0), 0.0, TOL); EXPECT_NEAR(g2(1), 1.0, TOL);
 }
 
 TEST(KokkosFEEvaluatorTest, MonomialDim2_Order2_Basis)
 {
-  using FE = FEEvaluator<MonomialTag, Dim2Tag, 2>;
+  using FE = MonomialImpl2D<2>;
   EXPECT_EQ(FE::n_dofs(), 6u);
   // i: 0→1, 1→xi, 2→eta, 3→xi², 4→xi·eta, 5→eta²
   const double xi = 0.3, eta = 0.5;
@@ -638,13 +638,13 @@ TEST(KokkosFEEvaluatorTest, MonomialDim2_Order2_Basis)
   EXPECT_NEAR(FE::shape(5, xi, eta, 0.0), eta * eta, TOL);
   // grad(xi·eta) = {eta, xi, 0}
   auto g4 = FE::grad_shape(4, xi, eta, 0.0);
-  EXPECT_NEAR(g4.v[0], eta, TOL);
-  EXPECT_NEAR(g4.v[1], xi,  TOL);
-  EXPECT_NEAR(g4.v[2], 0.0, TOL);
+  EXPECT_NEAR(g4(0), eta, TOL);
+  EXPECT_NEAR(g4(1), xi,  TOL);
+  EXPECT_NEAR(g4(2), 0.0, TOL);
   // grad(eta²) = {0, 2·eta, 0}
   auto g5 = FE::grad_shape(5, xi, eta, 0.0);
-  EXPECT_NEAR(g5.v[0], 0.0,       TOL);
-  EXPECT_NEAR(g5.v[1], 2.0 * eta, TOL);
+  EXPECT_NEAR(g5(0), 0.0,       TOL);
+  EXPECT_NEAR(g5(1), 2.0 * eta, TOL);
 }
 
 // ── MONOMIAL Dim3 (TET/HEX/PRISM/PYRAMID share this evaluator) ───────────────
@@ -652,18 +652,18 @@ TEST(KokkosFEEvaluatorTest, MonomialDim2_Order2_Basis)
 
 TEST(KokkosFEEvaluatorTest, MonomialDim3_Order0_Basis)
 {
-  using FE = FEEvaluator<MonomialTag, Dim3Tag, 0>;
+  using FE = MonomialImpl3D<0>;
   EXPECT_EQ(FE::n_dofs(), 1u);
   EXPECT_NEAR(FE::shape(0, 0.1, 0.2, 0.3), 1.0, TOL);
   auto g = FE::grad_shape(0, 0.1, 0.2, 0.3);
-  EXPECT_NEAR(g.v[0], 0.0, TOL);
-  EXPECT_NEAR(g.v[1], 0.0, TOL);
-  EXPECT_NEAR(g.v[2], 0.0, TOL);
+  EXPECT_NEAR(g(0), 0.0, TOL);
+  EXPECT_NEAR(g(1), 0.0, TOL);
+  EXPECT_NEAR(g(2), 0.0, TOL);
 }
 
 TEST(KokkosFEEvaluatorTest, MonomialDim3_Order1_Basis)
 {
-  using FE = FEEvaluator<MonomialTag, Dim3Tag, 1>;
+  using FE = MonomialImpl3D<1>;
   EXPECT_EQ(FE::n_dofs(), 4u);
   // i=0:1, i=1:xi, i=2:eta, i=3:zeta
   const double xi = 0.2, eta = 0.3, zeta = 0.1;
@@ -672,14 +672,14 @@ TEST(KokkosFEEvaluatorTest, MonomialDim3_Order1_Basis)
   EXPECT_NEAR(FE::shape(2, xi, eta, zeta), eta,  TOL);
   EXPECT_NEAR(FE::shape(3, xi, eta, zeta), zeta, TOL);
   auto g3 = FE::grad_shape(3, xi, eta, zeta);
-  EXPECT_NEAR(g3.v[0], 0.0, TOL);
-  EXPECT_NEAR(g3.v[1], 0.0, TOL);
-  EXPECT_NEAR(g3.v[2], 1.0, TOL);
+  EXPECT_NEAR(g3(0), 0.0, TOL);
+  EXPECT_NEAR(g3(1), 0.0, TOL);
+  EXPECT_NEAR(g3(2), 1.0, TOL);
 }
 
 TEST(KokkosFEEvaluatorTest, MonomialDim3_Order2_Basis)
 {
-  using FE = FEEvaluator<MonomialTag, Dim3Tag, 2>;
+  using FE = MonomialImpl3D<2>;
   EXPECT_EQ(FE::n_dofs(), 10u);
   // i: 0→1, 1→xi, 2→eta, 3→zeta, 4→xi², 5→xi·eta, 6→xi·zeta,
   //    7→eta², 8→eta·zeta, 9→zeta²
@@ -693,12 +693,12 @@ TEST(KokkosFEEvaluatorTest, MonomialDim3_Order2_Basis)
   EXPECT_NEAR(FE::shape(9, xi, eta, zeta), zeta * zeta, TOL);
   // grad(eta·zeta) = {0, zeta, eta}
   auto g8 = FE::grad_shape(8, xi, eta, zeta);
-  EXPECT_NEAR(g8.v[0], 0.0,  TOL);
-  EXPECT_NEAR(g8.v[1], zeta, TOL);
-  EXPECT_NEAR(g8.v[2], eta,  TOL);
+  EXPECT_NEAR(g8(0), 0.0,  TOL);
+  EXPECT_NEAR(g8(1), zeta, TOL);
+  EXPECT_NEAR(g8(2), eta,  TOL);
   // grad(xi·zeta) = {zeta, 0, xi}
   auto g6 = FE::grad_shape(6, xi, eta, zeta);
-  EXPECT_NEAR(g6.v[0], zeta, TOL);
-  EXPECT_NEAR(g6.v[1], 0.0,  TOL);
-  EXPECT_NEAR(g6.v[2], xi,   TOL);
+  EXPECT_NEAR(g6(0), zeta, TOL);
+  EXPECT_NEAR(g6(1), 0.0,  TOL);
+  EXPECT_NEAR(g6(2), xi,   TOL);
 }

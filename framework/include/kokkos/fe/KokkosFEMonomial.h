@@ -11,7 +11,7 @@
 
 #pragma once
 
-#include "libmesh/kokkos/fe_monomial.h"
+#include "libmesh/gpu/kokkos_fe_monomial.h"
 
 namespace Moose::Kokkos
 {

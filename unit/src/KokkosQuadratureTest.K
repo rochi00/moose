@@ -26,7 +26,7 @@
 #include "gtest_include.h"
 
 #include "KokkosQuadrature.h"
-#include "libmesh/kokkos/fe_types.h"
+#include "libmesh/gpu/kokkos_fe_types.h"
 #include "KokkosTypes.h"
 
 #include "libmesh/quadrature_gauss.h"
@@ -44,60 +44,39 @@ static constexpr double PTOL = 1.0e-14; // point/weight parity with libMesh
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 // Reference-element measures (same coordinate conventions as fillQuadrature).
-static double refMeasure(FEElemTopology t)
+static double refMeasure(libMesh::ElemType t)
 {
   switch (t)
   {
-    case FEElemTopology::EDGE2:
-    case FEElemTopology::EDGE3:  return 2.0;
-    case FEElemTopology::TRI3:
-    case FEElemTopology::TRI6:   return 0.5;
-    case FEElemTopology::QUAD4:
-    case FEElemTopology::QUAD8:
-    case FEElemTopology::QUAD9:  return 4.0;
-    case FEElemTopology::TET4:
-    case FEElemTopology::TET10:  return 1.0 / 6.0;
-    case FEElemTopology::HEX8:
-    case FEElemTopology::HEX20:
-    case FEElemTopology::HEX27:  return 8.0;
+    case libMesh::EDGE2:
+    case libMesh::EDGE3:  return 2.0;
+    case libMesh::TRI3:
+    case libMesh::TRI6:   return 0.5;
+    case libMesh::QUAD4:
+    case libMesh::QUAD8:
+    case libMesh::QUAD9:  return 4.0;
+    case libMesh::TET4:
+    case libMesh::TET10:  return 1.0 / 6.0;
+    case libMesh::HEX8:
+    case libMesh::HEX20:
+    case libMesh::HEX27:  return 8.0;
     default: return 0.0;
   }
 }
 
-// Map FEElemTopology back to the libMesh ElemType used to initialise QGauss.
-static libMesh::ElemType toLibMeshElemType(FEElemTopology t)
+// Spatial dimension of an element type.
+static unsigned int elemDim(libMesh::ElemType t)
 {
   switch (t)
   {
-    case FEElemTopology::EDGE2:  return libMesh::EDGE2;
-    case FEElemTopology::EDGE3:  return libMesh::EDGE3;
-    case FEElemTopology::TRI3:   return libMesh::TRI3;
-    case FEElemTopology::TRI6:   return libMesh::TRI6;
-    case FEElemTopology::QUAD4:  return libMesh::QUAD4;
-    case FEElemTopology::QUAD8:  return libMesh::QUAD8;
-    case FEElemTopology::QUAD9:  return libMesh::QUAD9;
-    case FEElemTopology::TET4:   return libMesh::TET4;
-    case FEElemTopology::TET10:  return libMesh::TET10;
-    case FEElemTopology::HEX8:   return libMesh::HEX8;
-    case FEElemTopology::HEX20:  return libMesh::HEX20;
-    case FEElemTopology::HEX27:  return libMesh::HEX27;
-    default: return libMesh::INVALID_ELEM;
-  }
-}
-
-// Spatial dimension of an element topology.
-static unsigned int dim(FEElemTopology t)
-{
-  switch (t)
-  {
-    case FEElemTopology::EDGE2:
-    case FEElemTopology::EDGE3:  return 1;
-    case FEElemTopology::TRI3:
-    case FEElemTopology::TRI6:
-    case FEElemTopology::QUAD4:
-    case FEElemTopology::QUAD8:
-    case FEElemTopology::QUAD9:  return 2;
-    default:                     return 3;
+    case libMesh::EDGE2:
+    case libMesh::EDGE3:  return 1;
+    case libMesh::TRI3:
+    case libMesh::TRI6:
+    case libMesh::QUAD4:
+    case libMesh::QUAD8:
+    case libMesh::QUAD9:  return 2;
+    default:              return 3;
   }
 }
 
@@ -196,14 +175,14 @@ TEST(KokkosQuadratureTest, GaussLegendre1D_ExactnessEven)
 // ── 2. Weight-sum tests (all topologies, all orders) ─────────────────────────
 
 // Parametric fixture: (topology, order) pairs
-struct TopoOrder { FEElemTopology topo; unsigned int order; std::string label; };
+struct TopoOrder { libMesh::ElemType topo; unsigned int order; std::string label; };
 
 static std::vector<TopoOrder> allTopoOrders()
 {
   std::vector<TopoOrder> v;
-  const FEElemTopology topos[] = {
-    FEElemTopology::EDGE2,  FEElemTopology::TRI3,  FEElemTopology::QUAD4,
-    FEElemTopology::TET4,   FEElemTopology::HEX8
+  const libMesh::ElemType topos[] = {
+    libMesh::EDGE2,  libMesh::TRI3,  libMesh::QUAD4,
+    libMesh::TET4,   libMesh::HEX8
   };
   const char * names[] = { "EDGE2","TRI3","QUAD4","TET4","HEX8" };
   for (unsigned int t = 0; t < 5; ++t)
@@ -245,12 +224,12 @@ TEST(KokkosQuadratureTest, Exactness_Edge_AllOrders)
   for (unsigned int order = 1; order <= 7; ++order)
   {
     Array<Real3> pts; Array<Real> wts;
-    fillQuadrature(FEElemTopology::EDGE2, order, pts, wts);
+    fillQuadrature(libMesh::EDGE2, order, pts, wts);
 
     double sum = 0.0;
     for (unsigned int q = 0; q < wts.size(); ++q)
     {
-      double x = pts[q].v[0];
+      double x = pts[q](0);
       double p = 1.0;
       for (unsigned int k = 0; k < order; ++k) p *= x;
       sum += wts[q] * p;
@@ -266,12 +245,12 @@ TEST(KokkosQuadratureTest, Exactness_Quad_AllOrders)
   for (unsigned int order = 1; order <= 7; ++order)
   {
     Array<Real3> pts; Array<Real> wts;
-    fillQuadrature(FEElemTopology::QUAD4, order, pts, wts);
+    fillQuadrature(libMesh::QUAD4, order, pts, wts);
 
     double sum = 0.0;
     for (unsigned int q = 0; q < wts.size(); ++q)
     {
-      double xi = pts[q].v[0], eta = pts[q].v[1];
+      double xi = pts[q](0), eta = pts[q](1);
       double px = 1.0, py = 1.0;
       for (unsigned int k = 0; k < order; ++k) { px *= xi; py *= eta; }
       sum += wts[q] * px * py;
@@ -289,12 +268,12 @@ TEST(KokkosQuadratureTest, Exactness_Hex_Degree6)
   for (unsigned int order = 6; order <= 7; ++order)
   {
     Array<Real3> pts; Array<Real> wts;
-    fillQuadrature(FEElemTopology::HEX8, order, pts, wts);
+    fillQuadrature(libMesh::HEX8, order, pts, wts);
 
     double sum = 0.0;
     for (unsigned int q = 0; q < wts.size(); ++q)
     {
-      double xi = pts[q].v[0], eta = pts[q].v[1], zeta = pts[q].v[2];
+      double xi = pts[q](0), eta = pts[q](1), zeta = pts[q](2);
       sum += wts[q] * (xi*xi) * (eta*eta) * (zeta*zeta);
     }
     EXPECT_NEAR(sum, 8.0/27.0, TOL) << "order=" << order;
@@ -308,12 +287,12 @@ TEST(KokkosQuadratureTest, Exactness_Tri_Degree3)
   for (unsigned int order = 3; order <= 7; ++order)
   {
     Array<Real3> pts; Array<Real> wts;
-    fillQuadrature(FEElemTopology::TRI3, order, pts, wts);
+    fillQuadrature(libMesh::TRI3, order, pts, wts);
 
     double sum = 0.0;
     for (unsigned int q = 0; q < wts.size(); ++q)
     {
-      double xi = pts[q].v[0], eta = pts[q].v[1];
+      double xi = pts[q](0), eta = pts[q](1);
       sum += wts[q] * xi * xi * eta;
     }
     // integral of x^2 * y over {x>=0, y>=0, x+y<=1} = 1/24
@@ -329,12 +308,12 @@ TEST(KokkosQuadratureTest, Exactness_Tet_Degree3)
   for (unsigned int order = 3; order <= 6; ++order)
   {
     Array<Real3> pts; Array<Real> wts;
-    fillQuadrature(FEElemTopology::TET4, order, pts, wts);
+    fillQuadrature(libMesh::TET4, order, pts, wts);
 
     double sum = 0.0;
     for (unsigned int q = 0; q < wts.size(); ++q)
     {
-      double xi = pts[q].v[0], eta = pts[q].v[1], zeta = pts[q].v[2];
+      double xi = pts[q](0), eta = pts[q](1), zeta = pts[q](2);
       sum += wts[q] * xi * eta * zeta;
     }
     EXPECT_NEAR(sum, 1.0/720.0, TOL) << "order=" << order;
@@ -347,17 +326,15 @@ TEST(KokkosQuadratureTest, Exactness_Tet_Degree4)
   for (unsigned int order = 4; order <= 6; ++order)
   {
     Array<Real3> pts; Array<Real> wts;
-    fillQuadrature(FEElemTopology::TET4, order, pts, wts);
+    fillQuadrature(libMesh::TET4, order, pts, wts);
 
     double sum = 0.0;
     for (unsigned int q = 0; q < wts.size(); ++q)
     {
-      double xi = pts[q].v[0];
+      double xi = pts[q](0);
       sum += wts[q] * xi * xi * xi * xi;
     }
-    // integral of x^4 over unit tet = 4! * 0! * 0! * 0! / (4+3)! = 24/5040 = 1/210
-    // Actually: integral of x^n over unit tet {x,y,z>=0, x+y+z<=1} = n! * 1! * 1! * 1! / (n+3)!
-    //   n=4: 24 / 7! = 24/5040 = 1/210
+    // integral of x^4 over unit tet {x,y,z>=0, x+y+z<=1} = 4!/(4+3)! = 24/5040 = 1/210
     EXPECT_NEAR(sum, 1.0/210.0, TOL) << "order=" << order;
   }
 }
@@ -367,35 +344,34 @@ TEST(KokkosQuadratureTest, Exactness_Tet_Degree4)
 // Topologies and their dimensionalities for QGauss initialisation.
 struct LibMeshParityParam
 {
-  FEElemTopology topo;
-  unsigned int   order;
-  std::string    label;
+  libMesh::ElemType topo;
+  unsigned int      order;
+  std::string       label;
 };
 
 static std::vector<LibMeshParityParam> parityParams()
 {
-  struct Entry { FEElemTopology t; unsigned int d; const char * name; };
+  struct Entry { libMesh::ElemType t; unsigned int d; const char * name; };
   const Entry entries[] = {
-    { FEElemTopology::EDGE2,  1, "EDGE2"  },
-    { FEElemTopology::EDGE3,  1, "EDGE3"  },
-    { FEElemTopology::TRI3,   2, "TRI3"   },
-    { FEElemTopology::TRI6,   2, "TRI6"   },
-    { FEElemTopology::QUAD4,  2, "QUAD4"  },
-    { FEElemTopology::QUAD8,  2, "QUAD8"  },
-    { FEElemTopology::QUAD9,  2, "QUAD9"  },
-    { FEElemTopology::TET4,   3, "TET4"   },
-    { FEElemTopology::TET10,  3, "TET10"  },
-    { FEElemTopology::HEX8,   3, "HEX8"   },
-    { FEElemTopology::HEX20,  3, "HEX20"  },
-    { FEElemTopology::HEX27,  3, "HEX27"  },
+    { libMesh::EDGE2,  1, "EDGE2"  },
+    { libMesh::EDGE3,  1, "EDGE3"  },
+    { libMesh::TRI3,   2, "TRI3"   },
+    { libMesh::TRI6,   2, "TRI6"   },
+    { libMesh::QUAD4,  2, "QUAD4"  },
+    { libMesh::QUAD8,  2, "QUAD8"  },
+    { libMesh::QUAD9,  2, "QUAD9"  },
+    { libMesh::TET4,   3, "TET4"   },
+    { libMesh::TET10,  3, "TET10"  },
+    { libMesh::HEX8,   3, "HEX8"   },
+    { libMesh::HEX20,  3, "HEX20"  },
+    { libMesh::HEX27,  3, "HEX27"  },
   };
   std::vector<LibMeshParityParam> v;
   for (auto & e : entries)
   {
-    const unsigned int max_order = (e.t == FEElemTopology::TET4 || e.t == FEElemTopology::TET10)? 6u :7u;
-    for (unsigned int order=1 ; order <=max_order; ++order){
+    const unsigned int max_order = (e.t == libMesh::TET4 || e.t == libMesh::TET10) ? 6u : 7u;
+    for (unsigned int order = 1; order <= max_order; ++order)
       v.push_back({e.t, order, std::string(e.name) + "_o" + std::to_string(order)});
-    }
   }
   return v;
 }
@@ -407,9 +383,9 @@ TEST_P(KokkosQuadratureParityTest, MatchesLibMeshQGauss)
   auto p = GetParam();
 
   // Build libMesh reference quadrature
-  libMesh::QGauss qrule(dim(p.topo), toLibMeshOrder(p.order));
+  libMesh::QGauss qrule(elemDim(p.topo), toLibMeshOrder(p.order));
   qrule.allow_rules_with_negative_weights = true;
-  qrule.init(toLibMeshElemType(p.topo));
+  qrule.init(p.topo);
 
   // Build native quadrature
   Array<Real3> pts; Array<Real> wts;
@@ -422,13 +398,13 @@ TEST_P(KokkosQuadratureParityTest, MatchesLibMeshQGauss)
   {
     EXPECT_NEAR(wts[q], qrule.w(q), PTOL)
         << p.label << " weight q=" << q;
-    EXPECT_NEAR(pts[q].v[0], qrule.qp(q)(0), PTOL)
+    EXPECT_NEAR(pts[q](0), qrule.qp(q)(0), PTOL)
         << p.label << " xi q=" << q;
-    if (dim(p.topo) >= 2)
-      EXPECT_NEAR(pts[q].v[1], qrule.qp(q)(1), PTOL)
+    if (elemDim(p.topo) >= 2)
+      EXPECT_NEAR(pts[q](1), qrule.qp(q)(1), PTOL)
           << p.label << " eta q=" << q;
-    if (dim(p.topo) >= 3)
-      EXPECT_NEAR(pts[q].v[2], qrule.qp(q)(2), PTOL)
+    if (elemDim(p.topo) >= 3)
+      EXPECT_NEAR(pts[q](2), qrule.qp(q)(2), PTOL)
           << p.label << " zeta q=" << q;
   }
 }
@@ -445,7 +421,7 @@ INSTANTIATE_TEST_SUITE_P(AllTopoOrders,
 TEST(KokkosQuadratureTest, TetOrder3_HasNegativeWeight)
 {
   Array<Real3> pts; Array<Real> wts;
-  fillQuadrature(FEElemTopology::TET4, 3, pts, wts);
+  fillQuadrature(libMesh::TET4, 3, pts, wts);
 
   bool found_negative = false;
   for (unsigned int q = 0; q < wts.size(); ++q)
@@ -458,7 +434,7 @@ TEST(KokkosQuadratureTest, TetOrder3_HasNegativeWeight)
 TEST(KokkosQuadratureTest, TetOrder4_HasNegativeWeight)
 {
   Array<Real3> pts; Array<Real> wts;
-  fillQuadrature(FEElemTopology::TET4, 4, pts, wts);
+  fillQuadrature(libMesh::TET4, 4, pts, wts);
 
   bool found_negative = false;
   for (unsigned int q = 0; q < wts.size(); ++q)
@@ -474,15 +450,15 @@ TEST(KokkosQuadratureTest, TetOrder4_HasNegativeWeight)
 TEST(KokkosQuadratureTest, Idempotent_Hex8_Order4)
 {
   Array<Real3> pts1, pts2; Array<Real> wts1, wts2;
-  fillQuadrature(FEElemTopology::HEX8, 4, pts1, wts1);
-  fillQuadrature(FEElemTopology::HEX8, 4, pts2, wts2);
+  fillQuadrature(libMesh::HEX8, 4, pts1, wts1);
+  fillQuadrature(libMesh::HEX8, 4, pts2, wts2);
 
   ASSERT_EQ(pts1.size(), pts2.size());
   for (unsigned int q = 0; q < pts1.size(); ++q)
   {
-    EXPECT_EQ(pts1[q].v[0], pts2[q].v[0]);
-    EXPECT_EQ(pts1[q].v[1], pts2[q].v[1]);
-    EXPECT_EQ(pts1[q].v[2], pts2[q].v[2]);
+    EXPECT_EQ(pts1[q](0), pts2[q](0));
+    EXPECT_EQ(pts1[q](1), pts2[q](1));
+    EXPECT_EQ(pts1[q](2), pts2[q](2));
     EXPECT_EQ(wts1[q], wts2[q]);
   }
 }

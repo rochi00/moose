@@ -13,7 +13,7 @@
 
 #pragma once
 
-#include "libmesh/kokkos/fe_base.h"
+#include "libmesh/gpu/kokkos_fe_base.h"
 
 namespace Moose::Kokkos
 {

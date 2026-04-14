@@ -11,10 +11,10 @@
 
 #include "KokkosTypes.h"
 #include "KokkosConfig.h"
-#include "libmesh/kokkos/fe_types.h"
+#include "libmesh/gpu/kokkos_fe_types.h"
 
 #ifdef MOOSE_KOKKOS_ONDEMAND_FE
-#include "libmesh/kokkos/fe_evaluator.h"
+#include "libmesh/gpu/kokkos_fe_evaluator.h"
 #endif
 
 #include "MooseMesh.h"
@@ -273,7 +273,7 @@ public:
     if (_is_ondemand_fe_type(elem_type, fe_type))
     {
       const auto ref = _q_points(subdomain, elem_type)[qp];
-      return nativeShape(_shape_keys(elem_type, fe_type), i, ref.v[0], ref.v[1], ref.v[2]);
+      return nativeShape(_shape_keys(elem_type, fe_type), i, ref(0), ref(1), ref(2));
     }
 #endif
     return _phi(subdomain, elem_type, fe_type)(i, qp);
@@ -299,7 +299,7 @@ public:
     if (_is_ondemand_fe_type(elem_type, fe_type))
     {
       const auto ref = _q_points_face_parent(subdomain, elem_type)[side][qp];
-      return nativeShape(_shape_keys(elem_type, fe_type), i, ref.v[0], ref.v[1], ref.v[2]);
+      return nativeShape(_shape_keys(elem_type, fe_type), i, ref(0), ref(1), ref(2));
     }
 #endif
     return _phi_face(subdomain, elem_type, fe_type)(side)(i, qp);
@@ -324,7 +324,7 @@ public:
     if (_is_ondemand_fe_type(elem_type, fe_type))
     {
       const auto ref = _q_points(subdomain, elem_type)[qp];
-      return nativeGradShape(_shape_keys(elem_type, fe_type), i, ref.v[0], ref.v[1], ref.v[2]);
+      return nativeGradShape(_shape_keys(elem_type, fe_type), i, ref(0), ref(1), ref(2));
     }
 #endif
     return _grad_phi(subdomain, elem_type, fe_type)(i, qp);
@@ -351,7 +351,7 @@ public:
     if (_is_ondemand_fe_type(elem_type, fe_type))
     {
       const auto ref = _q_points_face_parent(subdomain, elem_type)[side][qp];
-      return nativeGradShape(_shape_keys(elem_type, fe_type), i, ref.v[0], ref.v[1], ref.v[2]);
+      return nativeGradShape(_shape_keys(elem_type, fe_type), i, ref(0), ref(1), ref(2));
     }
 #endif
     return _grad_phi_face(subdomain, elem_type, fe_type)(side)(i, qp);
@@ -621,7 +621,7 @@ Assembly::coordTransformFactor(const ContiguousSubdomainID subdomain, const Real
     case Moose::COORD_RZ:
       if (_rz_radial_coord == libMesh::invalid_uint)
         return 2 * M_PI *
-               (point - _rz_axis[subdomain].first).cross_product(_rz_axis[subdomain].second).norm();
+               (point - _rz_axis[subdomain].first).cross(_rz_axis[subdomain].second).norm();
       else
         return 2 * M_PI * point(_rz_radial_coord);
     case Moose::COORD_RSPHERICAL:
@@ -743,9 +743,9 @@ Assembly::computePhysicalMap(const ElementInfo info,
   if (normal)
   {
     if (_dimension == 3)
-      *normal = J.row(0).cross_product(J.row(1));
+      *normal = J.row(0).cross(J.row(1));
     else if (_dimension == 2)
-      *normal = J.row(0).cross_product(dxyz_dxi.cross_product(dxyz_deta));
+      *normal = J.row(0).cross(dxyz_dxi.cross_product(dxyz_deta));
     else
       *normal = side ? dxyz_dxi : -dxyz_dxi;
 

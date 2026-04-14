@@ -24,15 +24,15 @@
 // Included only when the native flag is active so that the default build has no
 // new compile-time dependencies.
 #ifdef MOOSE_KOKKOS_NATIVE_FE
-#include "libmesh/kokkos/fe_lagrange_1d.h"
-#include "libmesh/kokkos/fe_lagrange_2d.h"
-#include "libmesh/kokkos/fe_lagrange_3d.h"
-#include "libmesh/kokkos/fe_monomial.h"
-#include "libmesh/kokkos/fe_face_map.h"
+#include "libmesh/gpu/kokkos_fe_lagrange_1d.h"
+#include "libmesh/gpu/kokkos_fe_lagrange_2d.h"
+#include "libmesh/gpu/kokkos_fe_lagrange_3d.h"
+#include "libmesh/gpu/kokkos_fe_monomial.h"
+#include "libmesh/gpu/kokkos_fe_face_map.h"
 #include "KokkosFEMapEvaluator.h"
 // fe_evaluator.h provides nativeShape(FEShapeKey) and nativeGradShape(FEShapeKey)
 // used by the key-based evalShapeAtQp overload below.
-#include "libmesh/kokkos/fe_evaluator.h"
+#include "libmesh/gpu/kokkos_fe_evaluator.h"
 #endif
 
 // MOOSE_KOKKOS_ONDEMAND_FE (Phase 6) requires MOOSE_KOKKOS_NATIVE_FE.
@@ -736,9 +736,9 @@ Assembly::initShapeNative(unsigned int sid,
   for (unsigned int i = 0; i < n; ++i)
     for (unsigned int qp = 0; qp < n_vol_qps; ++qp)
     {
-      const Real xi   = _q_points(sid, etid)[qp].v[0];
-      const Real eta  = _q_points(sid, etid)[qp].v[1];
-      const Real zeta = _q_points(sid, etid)[qp].v[2];
+      const Real xi   = _q_points(sid, etid)(qp)(0);
+      const Real eta  = _q_points(sid, etid)(qp)(1);
+      const Real zeta = _q_points(sid, etid)(qp)(2);
       evalShapeAtQp(key, i, qp, xi, eta, zeta,
                     _phi(sid, etid, ftid),
                     _grad_phi(sid, etid, ftid));
@@ -768,7 +768,7 @@ Assembly::initShapeNative(unsigned int sid,
       {
         const Real3 par = mapFaceQpToParent(
             *side_elem, side_topo, _q_points_face(sid, etid)[side][qp]);
-        evalShapeAtQp(key, i, qp, par.v[0], par.v[1], par.v[2],
+        evalShapeAtQp(key, i, qp, par(0), par(1), par(2),
                       _phi_face(sid, etid, ftid)(side),
                       _grad_phi_face(sid, etid, ftid)(side));
       }
@@ -820,7 +820,7 @@ Assembly::initMapNative(unsigned int sid,
       for (unsigned int qp = 0; qp < n_face_qps; ++qp)
       {
         const Real3 par = mapFaceQpToParent(*side_elem, side_topo, face_qpts[qp]);
-        evalShapeAtQp(topo, i, qp, par.v[0], par.v[1], par.v[2],
+        evalShapeAtQp(topo, i, qp, par(0), par(1), par(2),
                       _map_phi_face(sid, etid)(side),
                       _map_grad_phi_face(sid, etid)(side));
       }
@@ -834,12 +834,12 @@ Assembly::initMapNative(unsigned int sid,
       for (unsigned int i = 0; i < n_map; ++i)
         for (unsigned int qp = 0; qp < n_face_qps; ++qp)
           _normal_dx_dxi(sid, etid)(side)(i, qp) =
-              _map_grad_phi_face(sid, etid)(side)(i, qp).v[0];
+              _map_grad_phi_face(sid, etid)(side)(i, qp)(0);
     if (parent_dim == 2)
       for (unsigned int i = 0; i < n_map; ++i)
         for (unsigned int qp = 0; qp < n_face_qps; ++qp)
           _normal_dx_deta(sid, etid)(side)(i, qp) =
-              _map_grad_phi_face(sid, etid)(side)(i, qp).v[1];
+              _map_grad_phi_face(sid, etid)(side)(i, qp)(1);
 
     // _map_psi_face / _map_grad_psi_face: side LAGRANGE shapes at face qps
     // in the side element's own reference coordinate system.

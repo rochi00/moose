@@ -13,7 +13,7 @@
 
 #pragma once
 
-#include "libmesh/kokkos/fe_evaluator.h"
+#include "libmesh/gpu/kokkos_fe_evaluator.h"
 
 #ifdef MOOSE_KOKKOS_SCOPE
 namespace Moose::Kokkos
