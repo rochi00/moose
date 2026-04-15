@@ -14,6 +14,7 @@
 #include "MooseMesh.h"
 #include "ElemInfo.h"
 #include "PLICUtils.h"
+#include "PLICUtils3D.h"
 
 #include "libmesh/linear_implicit_system.h"
 #include "libmesh/petsc_vector.h"
@@ -27,8 +28,9 @@ PLICReconstruction::validParams()
   InputParameters params = GeneralUserObject::validParams();
   params.addClassDescription(
       "Computes PLIC interface reconstruction for each interfacial cell. "
-      "The plane normal comes from grad(phi) and the offset is determined "
-      "by matching the cell volume fraction alpha. 2D QUAD4 only.");
+      "The plane normal comes from grad(phi) or grad(alpha) and the offset is determined "
+      "by matching the cell volume fraction. Supports 2D QUAD4 (analytical) and "
+      "general 3D elements (Brent solver on polyhedral clipping).");
   params.addRequiredParam<VariableName>("alpha_variable", "The VOF phase fraction variable.");
   params.addParam<VariableName>("level_set_variable",
                                 "The level-set variable (gradient provides normal). "
@@ -122,25 +124,29 @@ PLICReconstruction::execute()
 
     VectorValue<Real> n_hat = grad_field / grad_mag;
 
-    // Get cell dimensions (assumes axis-aligned QUAD4)
-    const Point & p0 = elem->point(0);
-    const Point & p2 = elem->point(2); // diagonally opposite corner
-    const Real dx = std::abs(p2(0) - p0(0));
-    const Real dy = std::abs(p2(1) - p0(1));
+    Real d_global;
 
-    // Lower-left corner
-    const Point x0(std::min(p0(0), p2(0)), std::min(p0(1), p2(1)), 0.0);
+    if (elem->dim() == 2 && elem->type() == QUAD4)
+    {
+      // Existing 2D analytical path (Scardovelli & Zaleski)
+      const Point & p0 = elem->point(0);
+      const Point & p2 = elem->point(2); // diagonally opposite corner
+      const Real dx = std::abs(p2(0) - p0(0));
+      const Real dy = std::abs(p2(1) - p0(1));
+      const Point x0(std::min(p0(0), p2(0)), std::min(p0(1), p2(1)), 0.0);
 
-    // Compute local PLIC offset and convert to global
-    const Real d_local = NS::PLIC::computePlaneOffset2DRect(n_hat, alpha, dx, dy);
-    const Real d_global = NS::PLIC::localToGlobalOffset(n_hat, d_local, x0, dx, dy);
+      const Real d_local = NS::PLIC::computePlaneOffset2DRect(n_hat, alpha, dx, dy);
+      d_global = NS::PLIC::localToGlobalOffset(n_hat, d_local, x0, dx, dy);
+    }
+    else
+    {
+      // General 3D path (polyhedral clipping + Brent solver)
+      std::vector<Point> vertices;
+      std::vector<std::vector<unsigned int>> faces;
+      NS::PLIC::elemGeometry(*elem, vertices, faces);
+      d_global = NS::PLIC::computePlaneOffset3D(vertices, faces, elem->volume(), n_hat, alpha);
+    }
 
     _planes[elem->id()] = {n_hat, d_global};
   }
-
-  mooseWarning("PLICReconstruction: ",
-              n_total, " total, ",
-              n_interface, " interface, ",
-              _planes.size(), " planes, ",
-              "alpha=[", alpha_min, ",", alpha_max, "]");
 }

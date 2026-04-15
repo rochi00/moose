@@ -1,0 +1,18 @@
+[Tests]
+  design = 'modules/navier_stokes/index.md'
+  issues = '#simplic-phase1 #simplic-phase2'
+  [quad4_dispatch]
+    type = CSVDiff
+    input = plic_quad4.i
+    csvdiff = plic_quad4_out.csv
+    abs_zero = 1e-12
+    requirement = 'The system shall reconstruct a QUAD4 PLIC plane that preserves the input cell volume fraction.'
+  []
+  [hex8_dispatch]
+    type = CSVDiff
+    input = plic_hex8.i
+    csvdiff = plic_hex8_out.csv
+    abs_zero = 1e-12
+    requirement = 'The system shall reconstruct a 3D HEX8 PLIC plane that preserves the input cell volume fraction.'
+  []
+[]

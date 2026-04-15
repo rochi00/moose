@@ -29,7 +29,8 @@ class LinearImplicitSystem;
  * If level_set_variable is provided, normals come from grad(phi).
  * Otherwise, normals come from grad(alpha) (Youngs method).
  *
- * Currently supports 2D axis-aligned QUAD4 elements only.
+ * Supports 2D axis-aligned QUAD4 elements (analytical Scardovelli & Zaleski)
+ * and general 3D elements (Brent-based solver on polyhedral clipping).
  */
 class PLICReconstruction : public GeneralUserObject
 {
