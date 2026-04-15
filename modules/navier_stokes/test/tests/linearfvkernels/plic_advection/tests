@@ -1,0 +1,11 @@
+[Tests]
+  design = 'modules/navier_stokes/index.md'
+  issues = '#simplic-phase3'
+  [plic_advection_2d]
+    type = CSVDiff
+    input = plic_advection_2d.i
+    csvdiff = plic_advection_2d_out.csv
+    abs_zero = 1e-10
+    requirement = 'The system shall advect a VOF field using geometric PLIC fluxes while preserving total volume fraction and interface sharpness.'
+  []
+[]
