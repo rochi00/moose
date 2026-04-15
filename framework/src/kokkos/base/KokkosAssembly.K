@@ -144,7 +144,7 @@ Assembly::initQuadrature()
 #ifdef MOOSE_KOKKOS_NATIVE_QUADRATURE
       {
         // Fill volume quadrature natively
-        const auto topo = toKokkosTopology(elem_type);
+        const auto topo = elem_type;
         const auto vol_order = static_cast<unsigned int>(qrule->get_order());
         fillQuadrature(topo, vol_order, _q_points(sid, elem_type_id), _weights(sid, elem_type_id));
         n_qps[subdomain][elem_type] = _q_points(sid, elem_type_id).size();
@@ -305,7 +305,7 @@ Assembly::initShape()
   // Build element-type → topology map for on-device evaluators.
   _elem_topologies.create(num_elem_types);
   for (auto & [elem_type, elem_type_id] : kokkosMesh().getElementTypeMap())
-    _elem_topologies[elem_type_id] = toKokkosTopology(elem_type);
+    _elem_topologies[elem_type_id] = elem_type;
   _elem_topologies.copyToDevice();
 
   // Build per-(elem_type, fe_type) on-demand flag.  True when our nDofs(FEShapeKey)
@@ -323,9 +323,8 @@ Assembly::initShape()
   for (auto & [elem_type, elem_type_id] : kokkosMesh().getElementTypeMap())
     for (auto & [fe_type, fe_type_id] : _fe_type_map)
     {
-      const auto geom_topo     = toKokkosTopology(elem_type);
-      const auto cls           = classFromTopology(geom_topo);
-      const auto fam           = toKokkosFamily(fe_type.family);
+      const auto cls           = classFromTopology(elem_type);
+      const auto fam           = fe_type.family;
       const unsigned int order = static_cast<unsigned int>(fe_type.order);
       _shape_keys(elem_type_id, fe_type_id) = FEShapeKey{fam, cls, order};
     }
@@ -398,8 +397,8 @@ Assembly::initShape()
           // != native_ndofs and fall back to the phi-table path.  Other families
           // (HERMITE, LAGRANGE_VEC, etc.) also fall back unconditionally.
           const FEShapeKey key = _shape_keys(elem_type_id, fe_type_id);
-          const bool family_supported = (key.family == libMesh::Kokkos::FEFamily::LAGRANGE ||
-                                         key.family == libMesh::Kokkos::FEFamily::MONOMIAL);
+          const bool family_supported = (key.family == libMesh::LAGRANGE ||
+                                         key.family == libMesh::MONOMIAL);
 
           if (family_supported)
           {
@@ -426,9 +425,9 @@ Assembly::initShape()
         }
 #elif defined(MOOSE_KOKKOS_NATIVE_FE)
         {
-          const auto topo = toKokkosTopology(elem_type);
-          const auto fam = toKokkosFamily(fe_type.family);
-          const bool family_supported = (fam == libMesh::Kokkos::FEFamily::LAGRANGE || fam == libMesh::Kokkos::FEFamily::MONOMIAL);
+          const auto topo = elem_type;
+          const auto fam = fe_type.family;
+          const bool family_supported = (fam == libMesh::LAGRANGE || fam == libMesh::MONOMIAL);
           if (family_supported)
           {
             const FEShapeKey key{fam, classFromTopology(topo),
@@ -504,7 +503,7 @@ Assembly::initShape()
       // shape evaluators can look up (xi, eta, zeta) without calling mapFaceQpToParent
       // at kernel time.  The mapping depends only on element topology, not physics.
       {
-        const auto topo = toKokkosTopology(elem_type);
+        const auto topo = elem_type;
         const auto side_topo = getSideTopology(topo);
         const unsigned int n_sides = elem->n_sides();
 
@@ -519,13 +518,13 @@ Assembly::initShape()
           auto side_elem = elem->build_side_ptr(side);
           for (unsigned int qp = 0; qp < n_face_qps; ++qp)
             _q_points_face_parent(sid, elem_type_id)[side][qp] =
-                mapFaceQpToParent(*side_elem, side_topo, face_qpts[qp]);
+                mapFaceQpToParent(*side_elem, elem->mapping_type(), side_topo, face_qpts[qp]);
         }
       }
 #endif
 
 #ifdef MOOSE_KOKKOS_NATIVE_FE
-      initMapNative(sid, elem_type_id, toKokkosTopology(elem_type), _dimension, *elem);
+      initMapNative(sid, elem_type_id, elem_type, _dimension, *elem);
 #else
       std::unique_ptr<FEBase> fe(
           FEBase::build(_dimension, FEType(elem->default_order(), LAGRANGE)));
@@ -661,12 +660,12 @@ Assembly::initShape()
 // given topology and write results into dest_phi and dest_grad at position
 // (i, qp).  Used by both initShapeNative (physics DOFs) and initMapNative
 // (geometric map DOFs) to avoid duplicating the big switch.
-#define MOOSE_KOKKOS_EVAL_SHAPE(Tag, dest_phi, dest_grad, i, qp, xi, eta, zeta) \
-  do                                                                              \
-  {                                                                               \
-    (dest_phi)(i, qp) = FEEvaluator<LagrangeTag, Tag>::shape(i, xi, eta, zeta); \
-    (dest_grad)(i, qp) =                                                         \
-        FEEvaluator<LagrangeTag, Tag>::grad_shape(i, xi, eta, zeta);             \
+#define MOOSE_KOKKOS_EVAL_SHAPE(ElemT, dest_phi, dest_grad, i, qp, xi, eta, zeta)          \
+  do                                                                                         \
+  {                                                                                          \
+    (dest_phi)(i, qp) = FEEvaluator<libMesh::LAGRANGE, ElemT>::shape(i, xi, eta, zeta);    \
+    (dest_grad)(i, qp) =                                                                    \
+        FEEvaluator<libMesh::LAGRANGE, ElemT>::grad_shape(i, xi, eta, zeta);               \
   } while (false)
 
 static void
@@ -681,18 +680,18 @@ evalShapeAtQp(FEElemTopology topo,
 {
   switch (topo)
   {
-    case FEElemTopology::EDGE2:  MOOSE_KOKKOS_EVAL_SHAPE(Edge2Tag,  phi, grad_phi, i, qp, xi, eta, zeta); break;
-    case FEElemTopology::EDGE3:  MOOSE_KOKKOS_EVAL_SHAPE(Edge3Tag,  phi, grad_phi, i, qp, xi, eta, zeta); break;
-    case FEElemTopology::TRI3:   MOOSE_KOKKOS_EVAL_SHAPE(Tri3Tag,   phi, grad_phi, i, qp, xi, eta, zeta); break;
-    case FEElemTopology::TRI6:   MOOSE_KOKKOS_EVAL_SHAPE(Tri6Tag,   phi, grad_phi, i, qp, xi, eta, zeta); break;
-    case FEElemTopology::QUAD4:  MOOSE_KOKKOS_EVAL_SHAPE(Quad4Tag,  phi, grad_phi, i, qp, xi, eta, zeta); break;
-    case FEElemTopology::QUAD8:  MOOSE_KOKKOS_EVAL_SHAPE(Quad8Tag,  phi, grad_phi, i, qp, xi, eta, zeta); break;
-    case FEElemTopology::QUAD9:  MOOSE_KOKKOS_EVAL_SHAPE(Quad9Tag,  phi, grad_phi, i, qp, xi, eta, zeta); break;
-    case FEElemTopology::TET4:   MOOSE_KOKKOS_EVAL_SHAPE(Tet4Tag,   phi, grad_phi, i, qp, xi, eta, zeta); break;
-    case FEElemTopology::TET10:  MOOSE_KOKKOS_EVAL_SHAPE(Tet10Tag,  phi, grad_phi, i, qp, xi, eta, zeta); break;
-    case FEElemTopology::HEX8:   MOOSE_KOKKOS_EVAL_SHAPE(Hex8Tag,   phi, grad_phi, i, qp, xi, eta, zeta); break;
-    case FEElemTopology::HEX20:  MOOSE_KOKKOS_EVAL_SHAPE(Hex20Tag,  phi, grad_phi, i, qp, xi, eta, zeta); break;
-    case FEElemTopology::HEX27:  MOOSE_KOKKOS_EVAL_SHAPE(Hex27Tag,  phi, grad_phi, i, qp, xi, eta, zeta); break;
+    case FEElemTopology::EDGE2:  MOOSE_KOKKOS_EVAL_SHAPE(libMesh::EDGE2,  phi, grad_phi, i, qp, xi, eta, zeta); break;
+    case FEElemTopology::EDGE3:  MOOSE_KOKKOS_EVAL_SHAPE(libMesh::EDGE3,  phi, grad_phi, i, qp, xi, eta, zeta); break;
+    case FEElemTopology::TRI3:   MOOSE_KOKKOS_EVAL_SHAPE(libMesh::TRI3,   phi, grad_phi, i, qp, xi, eta, zeta); break;
+    case FEElemTopology::TRI6:   MOOSE_KOKKOS_EVAL_SHAPE(libMesh::TRI6,   phi, grad_phi, i, qp, xi, eta, zeta); break;
+    case FEElemTopology::QUAD4:  MOOSE_KOKKOS_EVAL_SHAPE(libMesh::QUAD4,  phi, grad_phi, i, qp, xi, eta, zeta); break;
+    case FEElemTopology::QUAD8:  MOOSE_KOKKOS_EVAL_SHAPE(libMesh::QUAD8,  phi, grad_phi, i, qp, xi, eta, zeta); break;
+    case FEElemTopology::QUAD9:  MOOSE_KOKKOS_EVAL_SHAPE(libMesh::QUAD9,  phi, grad_phi, i, qp, xi, eta, zeta); break;
+    case FEElemTopology::TET4:   MOOSE_KOKKOS_EVAL_SHAPE(libMesh::TET4,   phi, grad_phi, i, qp, xi, eta, zeta); break;
+    case FEElemTopology::TET10:  MOOSE_KOKKOS_EVAL_SHAPE(libMesh::TET10,  phi, grad_phi, i, qp, xi, eta, zeta); break;
+    case FEElemTopology::HEX8:   MOOSE_KOKKOS_EVAL_SHAPE(libMesh::HEX8,   phi, grad_phi, i, qp, xi, eta, zeta); break;
+    case FEElemTopology::HEX20:  MOOSE_KOKKOS_EVAL_SHAPE(libMesh::HEX20,  phi, grad_phi, i, qp, xi, eta, zeta); break;
+    case FEElemTopology::HEX27:  MOOSE_KOKKOS_EVAL_SHAPE(libMesh::HEX27,  phi, grad_phi, i, qp, xi, eta, zeta); break;
     default: break;
   }
 }
@@ -767,7 +766,7 @@ Assembly::initShapeNative(unsigned int sid,
       for (unsigned int qp = 0; qp < n_face_qps; ++qp)
       {
         const Real3 par = mapFaceQpToParent(
-            *side_elem, side_topo, _q_points_face(sid, etid)[side][qp]);
+            *side_elem, ref_elem.mapping_type(), side_topo, _q_points_face(sid, etid)[side][qp]);
         evalShapeAtQp(key, i, qp, par(0), par(1), par(2),
                       _phi_face(sid, etid, ftid)(side),
                       _grad_phi_face(sid, etid, ftid)(side));
@@ -801,8 +800,8 @@ Assembly::initMapNative(unsigned int sid,
   _normal_dx_dxi(sid, etid).create(n_sides);
   _normal_dx_deta(sid, etid).create(n_sides);
 
-  // Number of map nodes equals the Lagrange DOFs of the parent topology
-  const unsigned int n_map = nDofs(libMesh::Kokkos::FEFamily::LAGRANGE, topo);
+  // Number of map nodes equals the number of nodes in the reference element
+  const unsigned int n_map = ref_elem.n_nodes();
 
   for (unsigned int side = 0; side < n_sides; ++side)
   {
@@ -819,7 +818,7 @@ Assembly::initMapNative(unsigned int sid,
     for (unsigned int i = 0; i < n_map; ++i)
       for (unsigned int qp = 0; qp < n_face_qps; ++qp)
       {
-        const Real3 par = mapFaceQpToParent(*side_elem, side_topo, face_qpts[qp]);
+        const Real3 par = mapFaceQpToParent(*side_elem, ref_elem.mapping_type(), side_topo, face_qpts[qp]);
         evalShapeAtQp(topo, i, qp, par(0), par(1), par(2),
                       _map_phi_face(sid, etid)(side),
                       _map_grad_phi_face(sid, etid)(side));

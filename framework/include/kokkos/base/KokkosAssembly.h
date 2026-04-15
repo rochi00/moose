@@ -724,7 +724,7 @@ Assembly::computePhysicalMap(const ElementInfo info,
 
   if (JxW || (normal && _dimension > 1))
   {
-    J = 0;
+    J.zero();
 
     auto & grad_psi = _map_grad_psi_face(sid, elem_type)(side);
 
@@ -737,7 +737,7 @@ Assembly::computePhysicalMap(const ElementInfo info,
   }
 
   if (JxW)
-    *JxW = ::Kokkos::sqrt((J * J.transpose()).determinant(_dimension - 1)) *
+    *JxW = ::Kokkos::sqrt(Real33(J * J.transpose()).determinant(_dimension - 1)) *
            _weights_face(sid, elem_type)[side][qp] * coordTransformFactor(sid, xyz);
 
   if (normal)

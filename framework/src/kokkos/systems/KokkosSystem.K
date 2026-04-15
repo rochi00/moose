@@ -548,7 +548,7 @@ System::operator()(const ThreadID tid) const
   auto jacobian = kokkosAssembly().getJacobian(info, qp);
 
   Real value = 0;
-  Real3 grad = 0;
+  Real3 grad{};
 
 #ifdef MOOSE_KOKKOS_ONDEMAND_FE
   if (kokkosAssembly().isOnDemandFEType(elem_type, fe_type))

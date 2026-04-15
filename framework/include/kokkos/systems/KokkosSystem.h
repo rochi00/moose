@@ -537,7 +537,7 @@ System::getVectorQpGradFace(ElementInfo info,
   auto fe = _var_fe_types[var];
   auto n_dofs = kokkosAssembly().getNumDofs(info.type, fe);
 
-  Real3 grad = 0;
+  Real3 grad{};
   for (unsigned int i = 0; i < n_dofs; ++i)
     grad += getVectorDofValue(getElemLocalDofIndex(info.id, i, var), tag) *
             (jacobian * kokkosAssembly().getGradPhiFace(info.subdomain, info.type, fe, side, i, qp));
