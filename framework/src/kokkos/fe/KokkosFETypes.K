@@ -19,17 +19,17 @@ toKokkosFamily(libMesh::FEFamily f)
 {
   switch (f)
   {
-    case libMesh::LAGRANGE:     return FEFamily::LAGRANGE;
-    case libMesh::LAGRANGE_VEC: return FEFamily::LAGRANGE_VEC;
-    case libMesh::HERMITE:      return FEFamily::HERMITE;
-    case libMesh::MONOMIAL:     return FEFamily::MONOMIAL;
-    case libMesh::MONOMIAL_VEC: return FEFamily::MONOMIAL_VEC;
+    case libMesh::LAGRANGE:     return libMesh::LAGRANGE;
+    case libMesh::LAGRANGE_VEC: return libMesh::LAGRANGE_VEC;
+    case libMesh::HERMITE:      return libMesh::HERMITE;
+    case libMesh::MONOMIAL:     return libMesh::MONOMIAL;
+    case libMesh::MONOMIAL_VEC: return libMesh::MONOMIAL_VEC;
     default:
       // Return a sentinel rather than erroring — the shape-key table is populated
       // for every FE type in the problem, so an unrecognised family must not abort.
       // The family_supported gate in initShape() will route these types to the
       // libMesh phi-table fallback path.
-      return FEFamily::UNKNOWN;
+      return libMesh::INVALID_FE;
   }
 }
 
@@ -38,7 +38,7 @@ nDofs(FEFamily family, libMesh::ElemType topo)
 {
   switch (family)
   {
-    case FEFamily::LAGRANGE:
+    case libMesh::LAGRANGE:
     {
       switch (topo)
       {
@@ -60,11 +60,11 @@ nDofs(FEFamily family, libMesh::ElemType topo)
       }
     }
 
-    case FEFamily::HERMITE:
+    case libMesh::HERMITE:
       libmesh_error_msg("nDofs: HERMITE family is not supported by the native FE path; "
                  "use the libMesh fallback path instead");
 
-    case FEFamily::LAGRANGE_VEC:
+    case libMesh::LAGRANGE_VEC:
       libmesh_error_msg("nDofs: LAGRANGE_VEC requires a spatial dimension argument; "
                  "not yet supported by the native FE path");
 
