@@ -7,13 +7,6 @@
 //* Licensed under LGPL 2.1, please see LICENSE for details
 //* https://www.gnu.org/licenses/lgpl-2.1.html
 
-#include "libmesh/libmesh_config.h"
-
-// When libMesh is built with Kokkos support these symbols are compiled into
-// libmesh itself (src/kokkos/fe_types.C).  MOOSE must not define them a
-// second time or the linker will see duplicate symbols.
-#ifndef LIBMESH_HAVE_KOKKOS
-
 #include "libmesh/gpu/kokkos_fe_types.h"
 
 #include "libmesh/libmesh_common.h"
@@ -176,94 +169,4 @@ classFromTopology(FEElemTopology topo)
   }
 }
 
-unsigned int
-nDofs(FEShapeKey key)
-{
-  if (key.family == FEFamily::LAGRANGE)
-  {
-    // Map (class, order) to the canonical Lagrange topology, then return its node count.
-    switch (key.cls)
-    {
-      case FEElemClass::EDGE:
-        switch (key.order)
-        {
-          case 1: return 2;
-          case 2: return 3;
-          default: libmesh_error_msg("nDofs(FEShapeKey): unsupported LAGRANGE order " << key.order << " for EDGE");
-        }
-      case FEElemClass::TRI:
-        switch (key.order)
-        {
-          case 1: return 3;
-          case 2: return 6;
-          default: libmesh_error_msg("nDofs(FEShapeKey): unsupported LAGRANGE order " << key.order << " for TRI");
-        }
-      case FEElemClass::QUAD:
-        switch (key.order)
-        {
-          case 1: return 4;
-          case 2: return 9;
-          default: libmesh_error_msg("nDofs(FEShapeKey): unsupported LAGRANGE order " << key.order << " for QUAD");
-        }
-      case FEElemClass::TET:
-        switch (key.order)
-        {
-          case 1: return 4;
-          case 2: return 10;
-          default: libmesh_error_msg("nDofs(FEShapeKey): unsupported LAGRANGE order " << key.order << " for TET");
-        }
-      case FEElemClass::HEX:
-        switch (key.order)
-        {
-          case 1: return 8;
-          case 2: return 27;
-          default: libmesh_error_msg("nDofs(FEShapeKey): unsupported LAGRANGE order " << key.order << " for HEX");
-        }
-      case FEElemClass::PRISM:
-        switch (key.order)
-        {
-          case 1: return 6;
-          case 2: return 21;
-          default: libmesh_error_msg("nDofs(FEShapeKey): unsupported LAGRANGE order " << key.order << " for PRISM");
-        }
-      case FEElemClass::PYRAMID:
-        switch (key.order)
-        {
-          case 1: return 5;
-          case 2: return 14;
-          default: libmesh_error_msg("nDofs(FEShapeKey): unsupported LAGRANGE order " << key.order << " for PYRAMID");
-        }
-      default:
-        libmesh_error_msg("nDofs(FEShapeKey): unsupported LAGRANGE element class "
-                   << static_cast<unsigned int>(key.cls));
-    }
-  }
-  else if (key.family == FEFamily::MONOMIAL)
-  {
-    // MONOMIAL uses the complete total-degree polynomial space P_p.
-    // DOF count depends on spatial dimension only (TRI and QUAD share dim=2, etc.).
-    const unsigned int p = key.order;
-    switch (key.cls)
-    {
-      case FEElemClass::EDGE:
-        return p + 1;
-      case FEElemClass::TRI:
-      case FEElemClass::QUAD:
-        return (p + 1) * (p + 2) / 2;
-      case FEElemClass::TET:
-      case FEElemClass::HEX:
-      case FEElemClass::PRISM:
-      case FEElemClass::PYRAMID:
-        return (p + 1) * (p + 2) * (p + 3) / 6;
-      default:
-        libmesh_error_msg("nDofs(FEShapeKey): unsupported MONOMIAL element class "
-                   << static_cast<unsigned int>(key.cls));
-    }
-  }
-  libmesh_error_msg("nDofs(FEShapeKey): unsupported FE family "
-             << static_cast<unsigned int>(key.family));
-}
-
 } // namespace libMesh::Kokkos
-
-#endif // !LIBMESH_HAVE_KOKKOS
