@@ -54,12 +54,12 @@ public:
    * @param qpts   Volume quad points in the parent reference coordinate system
    */
   static inline void
-  fillMapPhi(Array2D<Real> & dest, FEElemTopology topo, const Array<Real3> & qpts)
+  fillMapPhi(Array2D<Real> & dest, libMesh::ElemType topo, const Array<Real3> & qpts)
   {
     const unsigned int n_qp = qpts.size();
     switch (topo)
     {
-      case FEElemTopology::EDGE2:
+      case libMesh::EDGE2:
       {
         constexpr unsigned int n = FEEvaluator<libMesh::LAGRANGE, libMesh::EDGE2>::n_dofs();
         dest.create(n, n_qp);
@@ -69,7 +69,7 @@ public:
                 FEEvaluator<libMesh::LAGRANGE, libMesh::EDGE2>::shape(i, qpts[qp](0), qpts[qp](1), qpts[qp](2));
         break;
       }
-      case FEElemTopology::EDGE3:
+      case libMesh::EDGE3:
       {
         constexpr unsigned int n = FEEvaluator<libMesh::LAGRANGE, libMesh::EDGE3>::n_dofs();
         dest.create(n, n_qp);
@@ -79,7 +79,7 @@ public:
                 FEEvaluator<libMesh::LAGRANGE, libMesh::EDGE3>::shape(i, qpts[qp](0), qpts[qp](1), qpts[qp](2));
         break;
       }
-      case FEElemTopology::TRI3:
+      case libMesh::TRI3:
       {
         constexpr unsigned int n = FEEvaluator<libMesh::LAGRANGE, libMesh::TRI3>::n_dofs();
         dest.create(n, n_qp);
@@ -89,7 +89,7 @@ public:
                 FEEvaluator<libMesh::LAGRANGE, libMesh::TRI3>::shape(i, qpts[qp](0), qpts[qp](1), qpts[qp](2));
         break;
       }
-      case FEElemTopology::TRI6:
+      case libMesh::TRI6:
       {
         constexpr unsigned int n = FEEvaluator<libMesh::LAGRANGE, libMesh::TRI6>::n_dofs();
         dest.create(n, n_qp);
@@ -99,7 +99,7 @@ public:
                 FEEvaluator<libMesh::LAGRANGE, libMesh::TRI6>::shape(i, qpts[qp](0), qpts[qp](1), qpts[qp](2));
         break;
       }
-      case FEElemTopology::QUAD4:
+      case libMesh::QUAD4:
       {
         constexpr unsigned int n = FEEvaluator<libMesh::LAGRANGE, libMesh::QUAD4>::n_dofs();
         dest.create(n, n_qp);
@@ -109,7 +109,7 @@ public:
                 FEEvaluator<libMesh::LAGRANGE, libMesh::QUAD4>::shape(i, qpts[qp](0), qpts[qp](1), qpts[qp](2));
         break;
       }
-      case FEElemTopology::QUAD8:
+      case libMesh::QUAD8:
       {
         constexpr unsigned int n = FEEvaluator<libMesh::LAGRANGE, libMesh::QUAD8>::n_dofs();
         dest.create(n, n_qp);
@@ -119,7 +119,7 @@ public:
                 FEEvaluator<libMesh::LAGRANGE, libMesh::QUAD8>::shape(i, qpts[qp](0), qpts[qp](1), qpts[qp](2));
         break;
       }
-      case FEElemTopology::QUAD9:
+      case libMesh::QUAD9:
       {
         constexpr unsigned int n = FEEvaluator<libMesh::LAGRANGE, libMesh::QUAD9>::n_dofs();
         dest.create(n, n_qp);
@@ -129,7 +129,7 @@ public:
                 FEEvaluator<libMesh::LAGRANGE, libMesh::QUAD9>::shape(i, qpts[qp](0), qpts[qp](1), qpts[qp](2));
         break;
       }
-      case FEElemTopology::TET4:
+      case libMesh::TET4:
       {
         constexpr unsigned int n = FEEvaluator<libMesh::LAGRANGE, libMesh::TET4>::n_dofs();
         dest.create(n, n_qp);
@@ -139,7 +139,7 @@ public:
                 FEEvaluator<libMesh::LAGRANGE, libMesh::TET4>::shape(i, qpts[qp](0), qpts[qp](1), qpts[qp](2));
         break;
       }
-      case FEElemTopology::TET10:
+      case libMesh::TET10:
       {
         constexpr unsigned int n = FEEvaluator<libMesh::LAGRANGE, libMesh::TET10>::n_dofs();
         dest.create(n, n_qp);
@@ -149,7 +149,7 @@ public:
                 FEEvaluator<libMesh::LAGRANGE, libMesh::TET10>::shape(i, qpts[qp](0), qpts[qp](1), qpts[qp](2));
         break;
       }
-      case FEElemTopology::HEX8:
+      case libMesh::HEX8:
       {
         constexpr unsigned int n = FEEvaluator<libMesh::LAGRANGE, libMesh::HEX8>::n_dofs();
         dest.create(n, n_qp);
@@ -159,7 +159,7 @@ public:
                 FEEvaluator<libMesh::LAGRANGE, libMesh::HEX8>::shape(i, qpts[qp](0), qpts[qp](1), qpts[qp](2));
         break;
       }
-      case FEElemTopology::HEX20:
+      case libMesh::HEX20:
       {
         constexpr unsigned int n = FEEvaluator<libMesh::LAGRANGE, libMesh::HEX20>::n_dofs();
         dest.create(n, n_qp);
@@ -169,7 +169,7 @@ public:
                 FEEvaluator<libMesh::LAGRANGE, libMesh::HEX20>::shape(i, qpts[qp](0), qpts[qp](1), qpts[qp](2));
         break;
       }
-      case FEElemTopology::HEX27:
+      case libMesh::HEX27:
       {
         constexpr unsigned int n = FEEvaluator<libMesh::LAGRANGE, libMesh::HEX27>::n_dofs();
         dest.create(n, n_qp);
@@ -194,12 +194,12 @@ public:
    * @param qpts   Volume quad points in the parent reference coordinate system
    */
   static inline void
-  fillMapGradPhi(Array2D<Real3> & dest, FEElemTopology topo, const Array<Real3> & qpts)
+  fillMapGradPhi(Array2D<Real3> & dest, libMesh::ElemType topo, const Array<Real3> & qpts)
   {
     const unsigned int n_qp = qpts.size();
     switch (topo)
     {
-      case FEElemTopology::EDGE2:
+      case libMesh::EDGE2:
       {
         constexpr unsigned int n = FEEvaluator<libMesh::LAGRANGE, libMesh::EDGE2>::n_dofs();
         dest.create(n, n_qp);
@@ -209,7 +209,7 @@ public:
                 i, qpts[qp](0), qpts[qp](1), qpts[qp](2));
         break;
       }
-      case FEElemTopology::EDGE3:
+      case libMesh::EDGE3:
       {
         constexpr unsigned int n = FEEvaluator<libMesh::LAGRANGE, libMesh::EDGE3>::n_dofs();
         dest.create(n, n_qp);
@@ -219,7 +219,7 @@ public:
                 i, qpts[qp](0), qpts[qp](1), qpts[qp](2));
         break;
       }
-      case FEElemTopology::TRI3:
+      case libMesh::TRI3:
       {
         constexpr unsigned int n = FEEvaluator<libMesh::LAGRANGE, libMesh::TRI3>::n_dofs();
         dest.create(n, n_qp);
@@ -229,7 +229,7 @@ public:
                 i, qpts[qp](0), qpts[qp](1), qpts[qp](2));
         break;
       }
-      case FEElemTopology::TRI6:
+      case libMesh::TRI6:
       {
         constexpr unsigned int n = FEEvaluator<libMesh::LAGRANGE, libMesh::TRI6>::n_dofs();
         dest.create(n, n_qp);
@@ -239,7 +239,7 @@ public:
                 i, qpts[qp](0), qpts[qp](1), qpts[qp](2));
         break;
       }
-      case FEElemTopology::QUAD4:
+      case libMesh::QUAD4:
       {
         constexpr unsigned int n = FEEvaluator<libMesh::LAGRANGE, libMesh::QUAD4>::n_dofs();
         dest.create(n, n_qp);
@@ -249,7 +249,7 @@ public:
                 i, qpts[qp](0), qpts[qp](1), qpts[qp](2));
         break;
       }
-      case FEElemTopology::QUAD8:
+      case libMesh::QUAD8:
       {
         constexpr unsigned int n = FEEvaluator<libMesh::LAGRANGE, libMesh::QUAD8>::n_dofs();
         dest.create(n, n_qp);
@@ -259,7 +259,7 @@ public:
                 i, qpts[qp](0), qpts[qp](1), qpts[qp](2));
         break;
       }
-      case FEElemTopology::QUAD9:
+      case libMesh::QUAD9:
       {
         constexpr unsigned int n = FEEvaluator<libMesh::LAGRANGE, libMesh::QUAD9>::n_dofs();
         dest.create(n, n_qp);
@@ -269,7 +269,7 @@ public:
                 i, qpts[qp](0), qpts[qp](1), qpts[qp](2));
         break;
       }
-      case FEElemTopology::TET4:
+      case libMesh::TET4:
       {
         constexpr unsigned int n = FEEvaluator<libMesh::LAGRANGE, libMesh::TET4>::n_dofs();
         dest.create(n, n_qp);
@@ -279,7 +279,7 @@ public:
                 i, qpts[qp](0), qpts[qp](1), qpts[qp](2));
         break;
       }
-      case FEElemTopology::TET10:
+      case libMesh::TET10:
       {
         constexpr unsigned int n = FEEvaluator<libMesh::LAGRANGE, libMesh::TET10>::n_dofs();
         dest.create(n, n_qp);
@@ -289,7 +289,7 @@ public:
                 i, qpts[qp](0), qpts[qp](1), qpts[qp](2));
         break;
       }
-      case FEElemTopology::HEX8:
+      case libMesh::HEX8:
       {
         constexpr unsigned int n = FEEvaluator<libMesh::LAGRANGE, libMesh::HEX8>::n_dofs();
         dest.create(n, n_qp);
@@ -299,7 +299,7 @@ public:
                 i, qpts[qp](0), qpts[qp](1), qpts[qp](2));
         break;
       }
-      case FEElemTopology::HEX20:
+      case libMesh::HEX20:
       {
         constexpr unsigned int n = FEEvaluator<libMesh::LAGRANGE, libMesh::HEX20>::n_dofs();
         dest.create(n, n_qp);
@@ -309,7 +309,7 @@ public:
                 i, qpts[qp](0), qpts[qp](1), qpts[qp](2));
         break;
       }
-      case FEElemTopology::HEX27:
+      case libMesh::HEX27:
       {
         constexpr unsigned int n = FEEvaluator<libMesh::LAGRANGE, libMesh::HEX27>::n_dofs();
         dest.create(n, n_qp);
@@ -339,13 +339,13 @@ public:
    */
   static inline void
   fillMapPsiFace(Array2D<Real> & dest,
-                 FEElemTopology side_topo,
+                 libMesh::ElemType side_topo,
                  const Array<Real3> & face_qpts)
   {
     const unsigned int n_qp = face_qpts.size();
     switch (side_topo)
     {
-      case FEElemTopology::EDGE2:
+      case libMesh::EDGE2:
       {
         constexpr unsigned int n = FEEvaluator<libMesh::LAGRANGE, libMesh::EDGE2>::n_dofs();
         dest.create(n, n_qp);
@@ -355,7 +355,7 @@ public:
                 i, face_qpts[qp](0), face_qpts[qp](1), face_qpts[qp](2));
         break;
       }
-      case FEElemTopology::EDGE3:
+      case libMesh::EDGE3:
       {
         constexpr unsigned int n = FEEvaluator<libMesh::LAGRANGE, libMesh::EDGE3>::n_dofs();
         dest.create(n, n_qp);
@@ -365,7 +365,7 @@ public:
                 i, face_qpts[qp](0), face_qpts[qp](1), face_qpts[qp](2));
         break;
       }
-      case FEElemTopology::TRI3:
+      case libMesh::TRI3:
       {
         constexpr unsigned int n = FEEvaluator<libMesh::LAGRANGE, libMesh::TRI3>::n_dofs();
         dest.create(n, n_qp);
@@ -375,7 +375,7 @@ public:
                 i, face_qpts[qp](0), face_qpts[qp](1), face_qpts[qp](2));
         break;
       }
-      case FEElemTopology::TRI6:
+      case libMesh::TRI6:
       {
         constexpr unsigned int n = FEEvaluator<libMesh::LAGRANGE, libMesh::TRI6>::n_dofs();
         dest.create(n, n_qp);
@@ -385,7 +385,7 @@ public:
                 i, face_qpts[qp](0), face_qpts[qp](1), face_qpts[qp](2));
         break;
       }
-      case FEElemTopology::QUAD4:
+      case libMesh::QUAD4:
       {
         constexpr unsigned int n = FEEvaluator<libMesh::LAGRANGE, libMesh::QUAD4>::n_dofs();
         dest.create(n, n_qp);
@@ -395,7 +395,7 @@ public:
                 i, face_qpts[qp](0), face_qpts[qp](1), face_qpts[qp](2));
         break;
       }
-      case FEElemTopology::QUAD8:
+      case libMesh::QUAD8:
       {
         constexpr unsigned int n = FEEvaluator<libMesh::LAGRANGE, libMesh::QUAD8>::n_dofs();
         dest.create(n, n_qp);
@@ -405,7 +405,7 @@ public:
                 i, face_qpts[qp](0), face_qpts[qp](1), face_qpts[qp](2));
         break;
       }
-      case FEElemTopology::QUAD9:
+      case libMesh::QUAD9:
       {
         constexpr unsigned int n = FEEvaluator<libMesh::LAGRANGE, libMesh::QUAD9>::n_dofs();
         dest.create(n, n_qp);
@@ -437,14 +437,14 @@ public:
    */
   static inline void
   fillMapGradPsiFace(Array2D<Real3> & dest,
-                     FEElemTopology side_topo,
+                     libMesh::ElemType side_topo,
                      const Array<Real3> & face_qpts,
                      unsigned int parent_dim)
   {
     const unsigned int n_qp = face_qpts.size();
     switch (side_topo)
     {
-      case FEElemTopology::EDGE2:
+      case libMesh::EDGE2:
       {
         constexpr unsigned int n = FEEvaluator<libMesh::LAGRANGE, libMesh::EDGE2>::n_dofs();
         dest.create(n, n_qp);
@@ -460,7 +460,7 @@ public:
           }
         break;
       }
-      case FEElemTopology::EDGE3:
+      case libMesh::EDGE3:
       {
         constexpr unsigned int n = FEEvaluator<libMesh::LAGRANGE, libMesh::EDGE3>::n_dofs();
         dest.create(n, n_qp);
@@ -476,7 +476,7 @@ public:
           }
         break;
       }
-      case FEElemTopology::TRI3:
+      case libMesh::TRI3:
       {
         constexpr unsigned int n = FEEvaluator<libMesh::LAGRANGE, libMesh::TRI3>::n_dofs();
         dest.create(n, n_qp);
@@ -492,7 +492,7 @@ public:
           }
         break;
       }
-      case FEElemTopology::TRI6:
+      case libMesh::TRI6:
       {
         constexpr unsigned int n = FEEvaluator<libMesh::LAGRANGE, libMesh::TRI6>::n_dofs();
         dest.create(n, n_qp);
@@ -508,7 +508,7 @@ public:
           }
         break;
       }
-      case FEElemTopology::QUAD4:
+      case libMesh::QUAD4:
       {
         constexpr unsigned int n = FEEvaluator<libMesh::LAGRANGE, libMesh::QUAD4>::n_dofs();
         dest.create(n, n_qp);
@@ -524,7 +524,7 @@ public:
           }
         break;
       }
-      case FEElemTopology::QUAD8:
+      case libMesh::QUAD8:
       {
         constexpr unsigned int n = FEEvaluator<libMesh::LAGRANGE, libMesh::QUAD8>::n_dofs();
         dest.create(n, n_qp);
@@ -540,7 +540,7 @@ public:
           }
         break;
       }
-      case FEElemTopology::QUAD9:
+      case libMesh::QUAD9:
       {
         constexpr unsigned int n = FEEvaluator<libMesh::LAGRANGE, libMesh::QUAD9>::n_dofs();
         dest.create(n, n_qp);

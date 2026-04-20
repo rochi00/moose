@@ -150,7 +150,7 @@ public:
    * @param elem_type_id The contiguous element type ID
    * @returns The element topology enum value
    */
-  KOKKOS_FUNCTION FEElemTopology getElemTopology(unsigned int elem_type_id) const
+  KOKKOS_FUNCTION libMesh::ElemType getElemTopology(unsigned int elem_type_id) const
   {
     return _elem_topologies[elem_type_id];
   }
@@ -459,7 +459,7 @@ private:
                        unsigned int etid,
                        unsigned int ftid,
                        FEShapeKey key,
-                       FEElemTopology geom_topo,
+                       libMesh::ElemType geom_topo,
                        unsigned int n_vol_qps,
                        unsigned int n_face_qps,
                        const libMesh::Elem & ref_elem);
@@ -470,7 +470,7 @@ private:
    */
   void initMapNative(unsigned int sid,
                      unsigned int etid,
-                     FEElemTopology topo,
+                     libMesh::ElemType topo,
                      unsigned int parent_dim,
                      const libMesh::Elem & ref_elem);
   /**
@@ -548,7 +548,7 @@ private:
    * Per-element-type topology (for on-demand FE, Phase 6).
    * Indexed by contiguous element type ID.
    */
-  Array<FEElemTopology> _elem_topologies;
+  Array<libMesh::ElemType> _elem_topologies;
   /**
    * Per-FE-type flag: true if this FE type uses the on-demand shape evaluation path
    * (LAGRANGE or MONOMIAL under MOOSE_KOKKOS_ONDEMAND_FE). Other types fall back to phi tables.

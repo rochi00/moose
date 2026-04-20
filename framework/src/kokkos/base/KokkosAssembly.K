@@ -669,7 +669,7 @@ Assembly::initShape()
   } while (false)
 
 static void
-evalShapeAtQp(FEElemTopology topo,
+evalShapeAtQp(libMesh::ElemType topo,
               unsigned int i,
               unsigned int qp,
               Real xi,
@@ -680,18 +680,18 @@ evalShapeAtQp(FEElemTopology topo,
 {
   switch (topo)
   {
-    case FEElemTopology::EDGE2:  MOOSE_KOKKOS_EVAL_SHAPE(libMesh::EDGE2,  phi, grad_phi, i, qp, xi, eta, zeta); break;
-    case FEElemTopology::EDGE3:  MOOSE_KOKKOS_EVAL_SHAPE(libMesh::EDGE3,  phi, grad_phi, i, qp, xi, eta, zeta); break;
-    case FEElemTopology::TRI3:   MOOSE_KOKKOS_EVAL_SHAPE(libMesh::TRI3,   phi, grad_phi, i, qp, xi, eta, zeta); break;
-    case FEElemTopology::TRI6:   MOOSE_KOKKOS_EVAL_SHAPE(libMesh::TRI6,   phi, grad_phi, i, qp, xi, eta, zeta); break;
-    case FEElemTopology::QUAD4:  MOOSE_KOKKOS_EVAL_SHAPE(libMesh::QUAD4,  phi, grad_phi, i, qp, xi, eta, zeta); break;
-    case FEElemTopology::QUAD8:  MOOSE_KOKKOS_EVAL_SHAPE(libMesh::QUAD8,  phi, grad_phi, i, qp, xi, eta, zeta); break;
-    case FEElemTopology::QUAD9:  MOOSE_KOKKOS_EVAL_SHAPE(libMesh::QUAD9,  phi, grad_phi, i, qp, xi, eta, zeta); break;
-    case FEElemTopology::TET4:   MOOSE_KOKKOS_EVAL_SHAPE(libMesh::TET4,   phi, grad_phi, i, qp, xi, eta, zeta); break;
-    case FEElemTopology::TET10:  MOOSE_KOKKOS_EVAL_SHAPE(libMesh::TET10,  phi, grad_phi, i, qp, xi, eta, zeta); break;
-    case FEElemTopology::HEX8:   MOOSE_KOKKOS_EVAL_SHAPE(libMesh::HEX8,   phi, grad_phi, i, qp, xi, eta, zeta); break;
-    case FEElemTopology::HEX20:  MOOSE_KOKKOS_EVAL_SHAPE(libMesh::HEX20,  phi, grad_phi, i, qp, xi, eta, zeta); break;
-    case FEElemTopology::HEX27:  MOOSE_KOKKOS_EVAL_SHAPE(libMesh::HEX27,  phi, grad_phi, i, qp, xi, eta, zeta); break;
+    case libMesh::EDGE2:  MOOSE_KOKKOS_EVAL_SHAPE(libMesh::EDGE2,  phi, grad_phi, i, qp, xi, eta, zeta); break;
+    case libMesh::EDGE3:  MOOSE_KOKKOS_EVAL_SHAPE(libMesh::EDGE3,  phi, grad_phi, i, qp, xi, eta, zeta); break;
+    case libMesh::TRI3:   MOOSE_KOKKOS_EVAL_SHAPE(libMesh::TRI3,   phi, grad_phi, i, qp, xi, eta, zeta); break;
+    case libMesh::TRI6:   MOOSE_KOKKOS_EVAL_SHAPE(libMesh::TRI6,   phi, grad_phi, i, qp, xi, eta, zeta); break;
+    case libMesh::QUAD4:  MOOSE_KOKKOS_EVAL_SHAPE(libMesh::QUAD4,  phi, grad_phi, i, qp, xi, eta, zeta); break;
+    case libMesh::QUAD8:  MOOSE_KOKKOS_EVAL_SHAPE(libMesh::QUAD8,  phi, grad_phi, i, qp, xi, eta, zeta); break;
+    case libMesh::QUAD9:  MOOSE_KOKKOS_EVAL_SHAPE(libMesh::QUAD9,  phi, grad_phi, i, qp, xi, eta, zeta); break;
+    case libMesh::TET4:   MOOSE_KOKKOS_EVAL_SHAPE(libMesh::TET4,   phi, grad_phi, i, qp, xi, eta, zeta); break;
+    case libMesh::TET10:  MOOSE_KOKKOS_EVAL_SHAPE(libMesh::TET10,  phi, grad_phi, i, qp, xi, eta, zeta); break;
+    case libMesh::HEX8:   MOOSE_KOKKOS_EVAL_SHAPE(libMesh::HEX8,   phi, grad_phi, i, qp, xi, eta, zeta); break;
+    case libMesh::HEX20:  MOOSE_KOKKOS_EVAL_SHAPE(libMesh::HEX20,  phi, grad_phi, i, qp, xi, eta, zeta); break;
+    case libMesh::HEX27:  MOOSE_KOKKOS_EVAL_SHAPE(libMesh::HEX27,  phi, grad_phi, i, qp, xi, eta, zeta); break;
     default: break;
   }
 }
@@ -719,7 +719,7 @@ Assembly::initShapeNative(unsigned int sid,
                            unsigned int etid,
                            unsigned int ftid,
                            FEShapeKey key,
-                           FEElemTopology geom_topo,
+                           libMesh::ElemType geom_topo,
                            unsigned int n_vol_qps,
                            unsigned int n_face_qps,
                            const libMesh::Elem & ref_elem)
@@ -777,7 +777,7 @@ Assembly::initShapeNative(unsigned int sid,
 void
 Assembly::initMapNative(unsigned int sid,
                          unsigned int etid,
-                         FEElemTopology topo,
+                         libMesh::ElemType topo,
                          unsigned int parent_dim,
                          const libMesh::Elem & ref_elem)
 {

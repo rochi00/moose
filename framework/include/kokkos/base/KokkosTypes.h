@@ -23,11 +23,6 @@
 // Pull them into Moose::Kokkos for backward compatibility with existing MOOSE code.
 #include "libmesh/gpu/kokkos_scalar_types.h"
 
-// FEElemTopology is an alias for libMesh::ElemType.  The Kokkos assembly and
-// FE evaluator code use scoped syntax (FEElemTopology::EDGE2) which is valid
-// for unscoped enums since C++11.
-using FEElemTopology = libMesh::ElemType;
-
 namespace Moose::Kokkos
 {
 
