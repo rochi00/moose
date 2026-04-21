@@ -11,4 +11,18 @@
     capabilities = 'kokkos'
     compute_devices = 'cpu cuda'
   []
+
+  [ondemand_fe]
+    type = 'Exodiff'
+    input = 'kokkos_material_coupled_force.i'
+    exodiff = 'kokkos_material_coupled_force_out.e'
+    abs_zero = 1e-6
+    prereq = material_coupled_force
+    requirement = 'The Kokkos on-demand FE path shall produce identical results for '
+                  'a material-coupled force kernel, exercising on-device shape '
+                  'evaluation with material property coupling.'
+    design = 'KokkosMatCoupledForce.md'
+    capabilities = 'kokkos & kokkos_ondemand_fe'
+    compute_devices = 'cpu cuda'
+  []
 []

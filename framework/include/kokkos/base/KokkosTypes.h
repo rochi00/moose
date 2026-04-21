@@ -19,8 +19,10 @@
 #include "libmesh/tensor_tools.h"
 #include "libmesh/enum_elem_type.h"
 
-// Real3 and Real33 now live in libMesh::Kokkos (libmesh/kokkos/scalar_types.h).
+// Real3 and Real33 now live in libMesh::Kokkos (libmesh/gpu/kokkos_scalar_types.h).
 // Pull them into Moose::Kokkos for backward compatibility with existing MOOSE code.
+// The header lives under libmesh/installed/include/libmesh/gpu/, which is reachable
+// via the standard -I<prefix>/include path provided by libmesh.pc.
 #include "libmesh/gpu/kokkos_scalar_types.h"
 
 namespace Moose::Kokkos

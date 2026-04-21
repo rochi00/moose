@@ -23,8 +23,10 @@
 #    ifndef MOOSE_KOKKOS_NATIVE_FE
 #      define MOOSE_KOKKOS_NATIVE_FE
 #    endif
-#    ifndef MOOSE_KOKKOS_ONDEMAND_FE
-#      define MOOSE_KOKKOS_ONDEMAND_FE
-#    endif
+//   MOOSE_KOKKOS_ONDEMAND_FE is opt-in: define it via
+//   ADDITIONAL_KOKKOS_CPPFLAGS="-DMOOSE_KOKKOS_ONDEMAND_FE" to enable
+//   per-QP on-device shape evaluation instead of precomputed phi tables.
+//   The table-lookup path is significantly faster on GPU because it
+//   replaces per-thread polynomial evaluation with a single coalesced read.
 #  endif
 #endif

@@ -201,9 +201,13 @@ MaterialPropertyStorage::registerLoadStore(std::type_index type,
 void
 MaterialPropertyStorage::shift()
 {
+  // We must deep copy (not swap view pointers) because material objects hold their
+  // own copies of the Kokkos view handles captured at construction time. A shallow
+  // swap only rearranges which views the storage map holds, but the materials'
+  // captured views still reference the original memory allocations.
   for (unsigned int state = maxState(); state != 0; --state)
     for (auto & [name, prop] : _kokkos_props[state])
-      prop->swap(*_kokkos_props[state - 1][name], {});
+      prop->copy(*_kokkos_props[state - 1][name], {});
 }
 
 void

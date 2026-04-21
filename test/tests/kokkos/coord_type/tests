@@ -21,4 +21,32 @@
       compute_devices = 'cpu cuda'
     []
   []
+
+  # ── On-demand FE path (MOOSE_KOKKOS_ONDEMAND_FE) ────────────────────────────
+  # Verify the on-demand shape evaluation produces identical results for
+  # non-Cartesian coordinate systems, where coordTransformFactor is exercised.
+
+  [ondemand_fe_rz]
+    type = 'Exodiff'
+    input = 'kokkos_diffusion_rz.i'
+    exodiff = 'kokkos_diffusion_rz_out.e'
+    prereq = 'coord/rz'
+    requirement = 'The Kokkos on-demand FE path shall produce identical results for '
+                  'an R-Z coordinate diffusion problem.'
+    design = 'KokkosDiffusion.md'
+    capabilities = 'kokkos & kokkos_ondemand_fe'
+    compute_devices = 'cpu cuda'
+  []
+
+  [ondemand_fe_rspherical]
+    type = 'Exodiff'
+    input = 'kokkos_diffusion_rspherical.i'
+    exodiff = 'kokkos_diffusion_rspherical_out.e'
+    prereq = 'coord/rspherical'
+    requirement = 'The Kokkos on-demand FE path shall produce identical results for '
+                  'an R-Spherical coordinate diffusion problem.'
+    design = 'KokkosDiffusion.md'
+    capabilities = 'kokkos & kokkos_ondemand_fe'
+    compute_devices = 'cpu cuda'
+  []
 []

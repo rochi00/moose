@@ -11,6 +11,7 @@
 
 #include "KokkosTypes.h"
 #include "KokkosConfig.h"
+
 #include "libmesh/gpu/kokkos_fe_types.h"
 
 #ifdef MOOSE_KOKKOS_ONDEMAND_FE

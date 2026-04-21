@@ -10,4 +10,17 @@
     capabilities = 'kokkos'
     compute_devices = 'cpu cuda'
   []
+
+  [ondemand_fe]
+    type = 'Exodiff'
+    input = 'kokkos_kernel_precompute_test.i'
+    exodiff = 'kokkos_kernel_precompute_test_out.e'
+    prereq = test
+    requirement = 'The Kokkos on-demand FE path shall produce identical results for '
+                  'precomputed kernels, exercising the on-device shape evaluation in '
+                  'the KernelPrecompute assembly path.'
+    design = 'KokkosKernels/index.md'
+    capabilities = 'kokkos & kokkos_ondemand_fe'
+    compute_devices = 'cpu cuda'
+  []
 []

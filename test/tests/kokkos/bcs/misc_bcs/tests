@@ -19,4 +19,33 @@
     capabilities = 'kokkos'
     compute_devices = 'cpu cuda'
   []
+
+  # ── On-demand FE path (MOOSE_KOKKOS_ONDEMAND_FE) ────────────────────────────
+  # Verify that on-demand face shape evaluation produces identical boundary
+  # integral results for integrated BCs.
+
+  [ondemand_fe_convective_flux]
+    type = 'Exodiff'
+    input = 'kokkos_convective_flux_bc.i'
+    exodiff = 'kokkos_convective_flux_bc_out.e'
+    prereq = convective_flux_bc_test
+    requirement = 'The Kokkos on-demand FE path shall produce identical results for '
+                  'a convective flux boundary condition, exercising on-device face '
+                  'shape evaluation.'
+    design = 'KokkosBCs/index.md'
+    capabilities = 'kokkos & kokkos_ondemand_fe'
+    compute_devices = 'cpu cuda'
+  []
+
+  [ondemand_fe_vacuum]
+    type = 'Exodiff'
+    input = 'kokkos_vacuum_bc_test.i'
+    exodiff = 'kokkos_vacuum_bc_test_out.e'
+    prereq = vacuumbc_test
+    requirement = 'The Kokkos on-demand FE path shall produce identical results for '
+                  'a vacuum boundary condition.'
+    design = 'KokkosBCs/index.md'
+    capabilities = 'kokkos & kokkos_ondemand_fe'
+    compute_devices = 'cpu cuda'
+  []
 []

@@ -282,9 +282,9 @@ Capabilities::registerMooseCapabilities()
 #ifdef MOOSE_KOKKOS_ONDEMAND_FE                                                                               
       add_bool("kokkos_ondemand_fe", true, doc);                                                                
 #else                                                                                                         
-      missing("kokkos_ondemand_fe", doc,                                                                        
-      "Rebuild with ADDITIONAL_KOKKOS_CPPFLAGS=\"-DMOOSE_KOKKOS_NATIVE_FE "                             
-      "-DMOOSE_KOKKOS_ONDEMAND_FE\".");                                                                 
+      missing("kokkos_ondemand_fe", doc,
+      "Rebuild with ADDITIONAL_KOKKOS_CPPFLAGS=-DMOOSE_KOKKOS_ONDEMAND_FE. "
+      "MOOSE_KOKKOS_NATIVE_FE is enabled automatically when libMesh has Kokkos.");                                                                 
 #endif                                                                                                        
     }                                                                                                           
                                                                                                               
