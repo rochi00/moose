@@ -47,12 +47,28 @@ function configure_libmesh()
     EXTRA_ARGS+=("--with-xdr-include=${CONDA_PREFIX}/include/tirpc")
   fi
   # Enable native Kokkos FE math headers if Kokkos is available via PETSc.
-  # Default to OpenMP backend unless CUDA is explicitly available.
+  # Pass the same compiler/flags that MOOSE's kokkos.mk uses so that
+  # libMesh's .K test files compile identically.
   if [[ -n "$PETSC_DIR" ]] && [[ -f "${PETSC_DIR}/include/Kokkos_Core.hpp" ]]; then
     EXTRA_ARGS+=("--with-kokkos=${PETSC_DIR}")
-    if ! command -v nvcc &>/dev/null; then
+
+    KOKKOS_CFG="${PETSC_DIR}/include/KokkosCore_config.h"
+    _kokkos_openmp=""
+    if [[ -r "$KOKKOS_CFG" ]] && grep -q 'KOKKOS_ENABLE_OPENMP' "$KOKKOS_CFG"; then
+      _kokkos_openmp="-fopenmp"
+    fi
+
+    if command -v nvcc &>/dev/null; then
+      export KOKKOS_CXX="$(command -v nvcc)"
+      export KOKKOS_CXXFLAGS="--forward-unknown-to-host-compiler --extended-lambda --disable-warnings -x cu -ccbin ${CXX} ${_kokkos_openmp}"
+      export KOKKOS_LDFLAGS="--forward-unknown-to-host-compiler -L${PETSC_DIR}/lib"
+    else
+      export KOKKOS_CXX="${CXX}"
+      export KOKKOS_CXXFLAGS="${_kokkos_openmp} -x c++"
       EXTRA_ARGS+=("--with-kokkos-backend=openmp")
     fi
+    export KOKKOS_CPPFLAGS="-DLIBMESH_KOKKOS_COMPILATION -I${PETSC_DIR}/include"
+    export KOKKOS_LIBS="-lkokkoscore"
   fi
 
   # Allow unbound variable for when EXTRA_ARGS is empty
