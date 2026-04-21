@@ -58,15 +58,42 @@ function configure_libmesh()
       _kokkos_openmp="-fopenmp"
     fi
 
-    if command -v nvcc &>/dev/null; then
+    # Detect backend and arch from PETSc's petscconf.h (mirrors kokkos.mk logic)
+    _petsc_conf="${PETSC_DIR}/include/petscconf.h"
+    _petsc_have_cuda=$(sed -n 's/#define PETSC_HAVE_CUDA //p' "$_petsc_conf" 2>/dev/null)
+    _petsc_have_hip=$(sed -n 's/#define PETSC_HAVE_HIP //p' "$_petsc_conf" 2>/dev/null)
+    _petsc_have_sycl=$(sed -n 's/#define PETSC_HAVE_SYCL //p' "$_petsc_conf" 2>/dev/null)
+
+    if [[ "$_petsc_have_cuda" == "1" ]] && command -v nvcc &>/dev/null; then
+      # Get CUDA arch from PETSc (same as kokkos.mk)
+      _cuda_arch=$(sed -n 's/#define PETSC_PKG_CUDA_MIN_ARCH //p' "$_petsc_conf" 2>/dev/null)
+      _arch_flag=""
+      if [[ -n "$_cuda_arch" ]]; then
+        _arch_flag="-arch=sm_${_cuda_arch}"
+      fi
+
       export KOKKOS_CXX="$(command -v nvcc)"
-      export KOKKOS_CXXFLAGS="--forward-unknown-to-host-compiler --extended-lambda --disable-warnings -x cu -ccbin ${CXX} ${_kokkos_openmp}"
-      export KOKKOS_LDFLAGS="--forward-unknown-to-host-compiler -L${PETSC_DIR}/lib"
+      export KOKKOS_CXXFLAGS="${_arch_flag} --extended-lambda --forward-unknown-to-host-compiler --disable-warnings -x cu -ccbin ${CXX} ${_kokkos_openmp}"
+      export KOKKOS_LDFLAGS="--forward-unknown-to-host-compiler ${_arch_flag} -L${PETSC_DIR}/lib"
+
+    elif [[ "$_petsc_have_hip" == "1" ]] && command -v hipcc &>/dev/null; then
+      export KOKKOS_CXX="$(command -v hipcc)"
+      export KOKKOS_CXXFLAGS="${_kokkos_openmp}"
+      export KOKKOS_LDFLAGS="-L${PETSC_DIR}/lib"
+
+    elif [[ "$_petsc_have_sycl" == "1" ]] && command -v icpx &>/dev/null; then
+      export KOKKOS_CXX="$(command -v icpx)"
+      export KOKKOS_CXXFLAGS="-fsycl ${_kokkos_openmp}"
+      export KOKKOS_LDFLAGS="-L${PETSC_DIR}/lib"
+
     else
+      # CPU-only (OpenMP or serial)
       export KOKKOS_CXX="${CXX}"
       export KOKKOS_CXXFLAGS="${_kokkos_openmp} -x c++"
+      export KOKKOS_LDFLAGS="-L${PETSC_DIR}/lib"
       EXTRA_ARGS+=("--with-kokkos-backend=openmp")
     fi
+
     export KOKKOS_CPPFLAGS="-DLIBMESH_KOKKOS_COMPILATION -I${PETSC_DIR}/include"
     export KOKKOS_LIBS="-lkokkoscore"
   fi
