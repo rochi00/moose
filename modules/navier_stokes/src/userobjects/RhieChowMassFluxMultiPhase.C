@@ -67,6 +67,18 @@ RhieChowMassFluxMultiPhase::validParams()
       "When provided, the face flux includes a balanced surface tension correction "
       "computed from PLIC geometry, using the same face stencil as the pressure gradient.");
 
+  params.addParam<Real>("rho_1", 0.0, "Density of phase 1 (for consistent mass-momentum transport).");
+  params.addParam<Real>("rho_2", 0.0, "Density of phase 2 (for consistent mass-momentum transport).");
+  params.addParam<MooseFunctorName>("vof_alpha", "VOF volume fraction variable for consistent "
+                                    "mass flux reconstruction (rhoPhi = (alpha*rho1 + (1-alpha)*rho2)*phi). "
+                                    "Required when rho_1 and rho_2 are specified.");
+  params.addParam<RealVectorValue>("gravity_vector", RealVectorValue(0, 0, 0),
+                                   "Gravity vector for p_rgh buoyancy correction. When non-zero, "
+                                   "the pressure variable is treated as p_rgh = p - rho*g*h, and a "
+                                   "buoyancy flux Ainv*grad(rho*g*h) is added to HbyA. This makes "
+                                   "p_rgh ~ 0 at hydrostatic equilibrium, dramatically improving "
+                                   "pressure solve conditioning at high density ratios.");
+
   params.addParam<bool>("check_executioner", true, "Whether to check the type of the executioner");
   params.addParam<std::string>("property_suffix", "A property suffix to add to the RC created objects.");
   params.addParamNamesToGroup("check_executioner property_suffix", "Advanced");
@@ -94,7 +106,13 @@ RhieChowMassFluxMultiPhase::RhieChowMassFluxMultiPhase(const InputParameters & p
     _pressure_projection_method(getParam<MooseEnum>("pressure_projection_method")),
     _plic_st(isParamValid("plic_surface_tension")
                  ? &getUserObject<BalancedForceSurfaceTension>("plic_surface_tension")
-                 : nullptr)
+                 : nullptr),
+    _rho_1(getParam<Real>("rho_1")),
+    _rho_2(getParam<Real>("rho_2")),
+    _vof_alpha(isParamValid("vof_alpha") ? &getFunctor<Real>("vof_alpha") : nullptr),
+    _gravity(getParam<RealVectorValue>("gravity_vector")),
+    _has_consistent_mass_flux(false),
+    _flux_old_captured(false)
 {
   if (!_p)
     paramError(NS::pressure, "the pressure must be a MooseLinearVariableFVReal.");
@@ -218,79 +236,128 @@ RhieChowMassFluxMultiPhase::initFaceMassFlux()
   using namespace Moose::FV;
 
   const auto time_arg = Moose::currentState();
+  const bool volumetric_pressure = (_vof_alpha != nullptr);
 
-  // We loop through the faces and compute the resulting face fluxes from the
-  // initial conditions for velocity
+  // Initialize face fluxes from velocity ICs.
+  // In VOF mode, _face_mass_flux stores phi (volumetric) directly.
+  // In Euler-Euler mode, it stores rho*alpha*phi (mass flux).
   for (auto & fi : _flow_face_info)
   {
-    RealVectorValue density_times_velocity;
+    RealVectorValue face_velocity;
 
-    // On internal face we do a regular interpolation with geometric weights
     if (_vel[0]->isInternalFace(*fi))
     {
       const auto & elem_info = *fi->elemInfo();
       const auto & neighbor_info = *fi->neighborInfo();
 
-      Real elem_rho_alpha = _rho(makeElemArg(fi->elemPtr()), time_arg) * _alpha(makeElemArg(fi->elemPtr()), time_arg);
-      Real neighbor_rho_alpha = _rho(makeElemArg(fi->neighborPtr()), time_arg) * _alpha(makeElemArg(fi->neighborPtr()), time_arg);
+      if (volumetric_pressure)
+      {
+        // VOF mode: store phi = u · n directly
+        for (const auto dim_i : index_range(_vel))
+          interpolate(InterpMethod::Average,
+                      face_velocity(dim_i),
+                      _vel[dim_i]->getElemValue(elem_info, time_arg),
+                      _vel[dim_i]->getElemValue(neighbor_info, time_arg),
+                      *fi,
+                      true);
+      }
+      else
+      {
+        // Euler-Euler mode: store rho*alpha*u · n
+        Real elem_rho_alpha = _rho(makeElemArg(fi->elemPtr()), time_arg) * _alpha(makeElemArg(fi->elemPtr()), time_arg);
+        Real neighbor_rho_alpha = _rho(makeElemArg(fi->neighborPtr()), time_arg) * _alpha(makeElemArg(fi->neighborPtr()), time_arg);
 
-      for (const auto dim_i : index_range(_vel))
-        interpolate(InterpMethod::Average,
-                    density_times_velocity(dim_i),
-                    _vel[dim_i]->getElemValue(elem_info, time_arg) * elem_rho_alpha,
-                    _vel[dim_i]->getElemValue(neighbor_info, time_arg) * neighbor_rho_alpha,
-                    *fi,
-                    true);
+        for (const auto dim_i : index_range(_vel))
+          interpolate(InterpMethod::Average,
+                      face_velocity(dim_i),
+                      _vel[dim_i]->getElemValue(elem_info, time_arg) * elem_rho_alpha,
+                      _vel[dim_i]->getElemValue(neighbor_info, time_arg) * neighbor_rho_alpha,
+                      *fi,
+                      true);
+      }
     }
-    // On the boundary, we just take the boundary values
     else
     {
       const Elem * const boundary_elem =
           hasBlocks(fi->elemPtr()->subdomain_id()) ? fi->elemPtr() : fi->neighborPtr();
-
       const Moose::FaceArg boundary_face{
           fi, Moose::FV::LimiterType::CentralDifference, true, false, boundary_elem, nullptr};
 
-      const Real face_rho_alpha = _rho(boundary_face, time_arg) * _alpha(boundary_face, time_arg);
-      for (const auto dim_i : index_range(_vel))
-        density_times_velocity(dim_i) =
-            face_rho_alpha * raw_value((*_vel[dim_i])(boundary_face, time_arg));
+      if (volumetric_pressure)
+      {
+        for (const auto dim_i : index_range(_vel))
+          face_velocity(dim_i) = raw_value((*_vel[dim_i])(boundary_face, time_arg));
+      }
+      else
+      {
+        const Real face_rho_alpha = _rho(boundary_face, time_arg) * _alpha(boundary_face, time_arg);
+        for (const auto dim_i : index_range(_vel))
+          face_velocity(dim_i) = face_rho_alpha * raw_value((*_vel[dim_i])(boundary_face, time_arg));
+      }
     }
 
-    _face_mass_flux[fi->id()] = density_times_velocity * fi->normal();
+    _face_mass_flux[fi->id()] = face_velocity * fi->normal();
   }
 }
 
 Real
 RhieChowMassFluxMultiPhase::getMassFlux(const FaceInfo & fi) const
 {
+  if (_vof_alpha)
+  {
+    // In VOF mode, _face_mass_flux stores phi (volumetric). Reconstruct mass flux.
+    const Moose::FaceArg face_arg{&fi,
+                                  Moose::FV::LimiterType::CentralDifference,
+                                  true, false, fi.elemPtr(), nullptr};
+    const Real rho_f = _rho(face_arg, Moose::currentState());
+    const Real alpha_f = _alpha(face_arg, Moose::currentState());
+    return rho_f * alpha_f * _face_mass_flux.evaluate(&fi);
+  }
   return _face_mass_flux.evaluate(&fi);
 }
 
 Real
 RhieChowMassFluxMultiPhase::getUnweightedMassFlux(const FaceInfo & fi) const
 {
-  const Moose::FaceArg face_arg{&fi,
-                                /*limiter_type=*/Moose::FV::LimiterType::CentralDifference,
-                                /*elem_is_upwind=*/true,
-                                /*correct_skewness=*/false,
-                                &fi.elem(),
-                                /*state_limiter*/ nullptr};
-  const Real face_alpha = _alpha(face_arg, Moose::currentState());
-  return libmesh_map_find(_face_mass_flux, fi.id()) / std::max(face_alpha, 1e-42);
+  if (_vof_alpha)
+  {
+    // In VOF mode, _face_mass_flux stores phi. Unweighted mass flux = rho * phi.
+    const Moose::FaceArg face_arg{&fi,
+                                  Moose::FV::LimiterType::CentralDifference,
+                                  true, false, fi.elemPtr(), nullptr};
+    const Real rho_f = _rho(face_arg, Moose::currentState());
+    return rho_f * _face_mass_flux.evaluate(&fi);
+  }
+  else
+  {
+    // Euler-Euler mode: _face_mass_flux = rho*alpha*phi, divide by alpha to get rho*phi
+    const Moose::FaceArg face_arg{&fi,
+                                  Moose::FV::LimiterType::CentralDifference,
+                                  true, false, fi.elemPtr(), nullptr};
+    const Real face_alpha = _alpha(face_arg, Moose::currentState());
+    return libmesh_map_find(_face_mass_flux, fi.id()) / std::max(face_alpha, 1e-42);
+  }
 }
 
 Real
 RhieChowMassFluxMultiPhase::getVolumetricFaceFlux(const FaceInfo & fi) const
 {
-  const Moose::FaceArg face_arg{&fi,
-                                /*limiter_type=*/Moose::FV::LimiterType::CentralDifference,
-                                /*elem_is_upwind=*/true,
-                                /*correct_skewness=*/false,
-                                &fi.elem(),
-                                /*state_limiter*/ nullptr};
-  const Real face_rho_alpha = _rho(face_arg, Moose::currentState()) * _alpha(face_arg, Moose::currentState());
-  return libmesh_map_find(_face_mass_flux, fi.id()) / std::max(face_rho_alpha, 1e-42);
+  if (_vof_alpha)
+  {
+    // In VOF mode, _face_mass_flux IS phi (volumetric) directly — the pressure
+    // equation outputs phi without rho*alpha multiplication.
+    return _face_mass_flux.evaluate(&fi);
+  }
+  else
+  {
+    // Euler-Euler mode: _face_mass_flux = rho*alpha*phi, divide to get phi
+    const Moose::FaceArg face_arg{&fi,
+                                  Moose::FV::LimiterType::CentralDifference,
+                                  true, false, fi.elemPtr(), nullptr};
+    const Real face_rho_alpha = _rho(face_arg, Moose::currentState()) *
+                                _alpha(face_arg, Moose::currentState());
+    return libmesh_map_find(_face_mass_flux, fi.id()) / std::max(face_rho_alpha, 1e-42);
+  }
 }
 
 Real
@@ -317,9 +384,80 @@ RhieChowMassFluxMultiPhase::getCellVolumes()
 }
 
 void
+RhieChowMassFluxMultiPhase::setConsistentFaceAlpha(const FaceInfo & fi, Real alpha_f_mules)
+{
+  _consistent_face_alpha[fi.id()] = alpha_f_mules;
+}
+
+void
+RhieChowMassFluxMultiPhase::captureOldFlux()
+{
+  if (_flux_old_captured)
+    return;
+  for (const auto * fi : _flow_face_info)
+    _face_flux_old[fi->id()] = _face_mass_flux.evaluate(fi);
+  _flux_old_captured = true;
+}
+
+void
+RhieChowMassFluxMultiPhase::computeConsistentMassFlux()
+{
+  for (const auto * fi : _flow_face_info)
+  {
+    const Real phi_f = getVolumetricFaceFlux(*fi);
+
+    if (_vof_alpha && (_rho_1 > 0.0 || _rho_2 > 0.0))
+    {
+      // Prefer MULES-limited face alpha (bounded, from alpha solve).
+      // Fall back to current VOF alpha only at initialization (before any MULES solve).
+      Real alpha_f;
+      const auto it = _consistent_face_alpha.find(fi->id());
+      if (it != _consistent_face_alpha.end())
+        alpha_f = it->second;
+      else
+      {
+        const Moose::FaceArg face_arg{fi,
+                                      Moose::FV::LimiterType::CentralDifference,
+                                      true, false, fi->elemPtr(), nullptr};
+        alpha_f = (*_vof_alpha)(face_arg, Moose::currentState());
+      }
+
+      // rhoPhi = (alpha*rho1 + (1-alpha)*rho2) * phi  [OpenFOAM interFoam formula]
+      const Real rho_mix_f = alpha_f * _rho_1 + (1.0 - alpha_f) * _rho_2;
+      _consistent_mass_flux[fi->id()] = rho_mix_f * phi_f;
+    }
+    else
+    {
+      // Euler-Euler mode: mass flux is already stored as rho*alpha*phi
+      _consistent_mass_flux[fi->id()] = _face_mass_flux.evaluate(fi);
+    }
+  }
+  _has_consistent_mass_flux = true;
+}
+
+Real
+RhieChowMassFluxMultiPhase::getConsistentMassFlux(const FaceInfo & fi) const
+{
+  // Always use precomputed consistent flux — never fall through to central-differenced
+  // alpha reconstruction. computeConsistentMassFlux() must have been called before this.
+  // This guarantees rhoPhi uses MULES-bounded face alpha (or the initial alpha at startup),
+  // matching OpenFOAM where rhoPhi is only ever computed from alphaPhi.
+  const auto it = _consistent_mass_flux.find(fi.id());
+  if (it != _consistent_mass_flux.end())
+    return it->second;
+
+  // If we get here, the face wasn't in _flow_face_info (boundary face not covered
+  // by computeConsistentMassFlux). Fall back to getMassFlux.
+  return getMassFlux(fi);
+}
+
+void
 RhieChowMassFluxMultiPhase::computeFaceMassFlux()
 {
   using namespace Moose::FV;
+
+  // Reset the old flux flag so captureOldFlux works on the next timestep
+  _flux_old_captured = false;
 
   const auto time_arg = Moose::currentState();
 
@@ -389,6 +527,8 @@ RhieChowMassFluxMultiPhase::computeFaceMassFlux()
     //   _HbyA_flux = st_flux (velocity HbyA is zero, only ST remains)
     //   p_grad_flux = st_flux (pressure adjusts to balance ST)
     //   → face_mass_flux = -st_flux + st_flux = 0
+    // In VOF mode, this IS phi (volumetric) directly.
+    // In Euler-Euler mode, this is rho*alpha*phi (mass flux).
     _face_mass_flux[fi->id()] = -_HbyA_flux[fi->id()] + p_grad_flux;
   }
 }
@@ -409,12 +549,15 @@ RhieChowMassFluxMultiPhase::computeCellVelocity()
 
   auto & pressure_gradient = _pressure_system->gradientContainer();
 
-  // We set the dof value in the solution vector the same logic applies:
-  // u_C = -(H/A)_C - (1/A)_C*grad(p)_C where C is the cell index
+  // u_C = -(H/A)_C - (1/A)_C * alpha_C * grad(p)_C where C is the cell index
+  // In VOF mode, alpha is 1.0 everywhere (single velocity field), so skip the multiplication
+  const bool volumetric_pressure = (_vof_alpha != nullptr);
+
   for (const auto system_i : index_range(_momentum_implicit_systems))
   {
     auto working_vector = _Ainv_raw[system_i]->clone();
-    working_vector->pointwise_mult(*working_vector, *cell_alpha);
+    if (!volumetric_pressure)
+      working_vector->pointwise_mult(*working_vector, *cell_alpha);
     working_vector->pointwise_mult(*working_vector, *pressure_gradient[system_i]);
     working_vector->add(*_HbyA_raw[system_i]);
     working_vector->scale(-1.0);
@@ -467,6 +610,12 @@ RhieChowMassFluxMultiPhase::populateCouplingFunctors(
     // We do the lookup in advance
     auto & Ainv = _Ainv[fi->id()];
 
+    // In VOF mode (_vof_alpha set), the pressure equation outputs VOLUMETRIC flux phi
+    // directly, matching OpenFOAM interFoam. Since A() from the momentum equation already
+    // contains rho (from ddt(rho,U)), 1/A and H/A are already volumetric — no rho*alpha
+    // multiplication needed. In Euler-Euler mode, rho*alpha scaling is required.
+    const bool volumetric_pressure = (_vof_alpha != nullptr);
+
     // If it is internal, we just interpolate (using geometric weights) to the face
     if (_vel[0]->isInternalFace(*fi))
     {
@@ -476,16 +625,18 @@ RhieChowMassFluxMultiPhase::populateCouplingFunctors(
       const auto elem_dof = elem_info.dofIndices()[_global_momentum_system_numbers[0]][0];
       const auto neighbor_dof = neighbor_info.dofIndices()[_global_momentum_system_numbers[0]][0];
 
-      // Get the density values for the element and neighbor. We need this multiplication to make
-      // the coupling fields mass fluxes.
-      const Real elem_rho = _rho(makeElemArg(fi->elemPtr()), time_arg);
-      const Real neighbor_rho = _rho(makeElemArg(fi->neighborPtr()), time_arg);
-      const Real elem_alpha = _alpha(makeElemArg(fi->elemPtr()), time_arg);
-      const Real neighbor_alpha = _alpha(makeElemArg(fi->neighborPtr()), time_arg);
-
-      // Now we do the interpolation to the face
-      interpolate(Moose::FV::InterpMethod::Average, face_rho, elem_rho, neighbor_rho, *fi, true);
-      interpolate(Moose::FV::InterpMethod::Average, face_alpha, elem_alpha, neighbor_alpha, *fi, true);
+      Real elem_scale = 1.0, neighbor_scale = 1.0;
+      if (!volumetric_pressure)
+      {
+        elem_scale = _rho(makeElemArg(fi->elemPtr()), time_arg) *
+                     _alpha(makeElemArg(fi->elemPtr()), time_arg);
+        neighbor_scale = _rho(makeElemArg(fi->neighborPtr()), time_arg) *
+                         _alpha(makeElemArg(fi->neighborPtr()), time_arg);
+        interpolate(Moose::FV::InterpMethod::Average, face_rho, elem_scale, neighbor_scale, *fi, true);
+        interpolate(Moose::FV::InterpMethod::Average, face_alpha,
+                    _alpha(makeElemArg(fi->elemPtr()), time_arg),
+                    _alpha(makeElemArg(fi->neighborPtr()), time_arg), *fi, true);
+      }
 
       for (const auto dim_i : index_range(raw_hbya))
       {
@@ -495,12 +646,26 @@ RhieChowMassFluxMultiPhase::populateCouplingFunctors(
                     hbya_reader[dim_i](neighbor_dof),
                     *fi,
                     true);
-        interpolate(InterpMethod::Average,
-                    Ainv(dim_i),
-                    elem_rho * Utility::pow<2>(elem_alpha) * ainv_reader[dim_i](elem_dof),
-                    neighbor_rho * Utility::pow<2>(neighbor_alpha) * ainv_reader[dim_i](neighbor_dof),
-                    *fi,
-                    true);
+        if (volumetric_pressure)
+        {
+          // phi mode: Ainv = V/A (no rho*alpha, since A already has rho)
+          interpolate(InterpMethod::Average,
+                      Ainv(dim_i),
+                      ainv_reader[dim_i](elem_dof),
+                      ainv_reader[dim_i](neighbor_dof),
+                      *fi,
+                      true);
+        }
+        else
+        {
+          // Mass flux mode: Ainv = rho * alpha^2 * (1/A) * V
+          interpolate(InterpMethod::Average,
+                      Ainv(dim_i),
+                      elem_scale * _alpha(makeElemArg(fi->elemPtr()), time_arg) * ainv_reader[dim_i](elem_dof),
+                      neighbor_scale * _alpha(makeElemArg(fi->neighborPtr()), time_arg) * ainv_reader[dim_i](neighbor_dof),
+                      *fi,
+                      true);
+        }
       }
     }
     else
@@ -509,40 +674,92 @@ RhieChowMassFluxMultiPhase::populateCouplingFunctors(
           hasBlocks(fi->elemPtr()->subdomain_id()) ? *fi->elemInfo() : *fi->neighborInfo();
       const auto elem_dof = elem_info.dofIndices()[_global_momentum_system_numbers[0]][0];
 
-      // If it is a Dirichlet BC, we use the dirichlet value the make sure the face flux
-      // is consistent
       if (_vel[0]->isDirichletBoundaryFace(*fi))
       {
         const Moose::FaceArg boundary_face{
             fi, Moose::FV::LimiterType::CentralDifference, true, false, elem_info.elem(), nullptr};
-        face_rho = _rho(boundary_face, Moose::currentState());
-        face_alpha = _alpha(boundary_face, Moose::currentState());
+
+        if (!volumetric_pressure)
+        {
+          face_rho = _rho(boundary_face, Moose::currentState());
+          face_alpha = _alpha(boundary_face, Moose::currentState());
+        }
 
         for (const auto dim_i : make_range(_dim))
           face_hbya(dim_i) =
               -MetaPhysicL::raw_value((*_vel[dim_i])(boundary_face, Moose::currentState()));
       }
-      // Otherwise we just do a one-term expansion (so we just use the element value)
       else
       {
-        const auto elem_dof = elem_info.dofIndices()[_global_momentum_system_numbers[0]][0];
+        const auto elem_dof_inner = elem_info.dofIndices()[_global_momentum_system_numbers[0]][0];
 
-        face_rho = _rho(makeElemArg(elem_info.elem()), time_arg);
-        face_alpha = _alpha(makeElemArg(elem_info.elem()), time_arg);
+        if (!volumetric_pressure)
+        {
+          face_rho = _rho(makeElemArg(elem_info.elem()), time_arg);
+          face_alpha = _alpha(makeElemArg(elem_info.elem()), time_arg);
+        }
 
         for (const auto dim_i : make_range(_dim))
-          face_hbya(dim_i) = hbya_reader[dim_i](elem_dof);
+          face_hbya(dim_i) = hbya_reader[dim_i](elem_dof_inner);
       }
 
-      // We just do a one-term expansion for 1/A no matter what
-      const Real elem_rho = _rho(makeElemArg(elem_info.elem()), time_arg);
-      const Real elem_alpha = _alpha(makeElemArg(elem_info.elem()), time_arg);
-
-      for (const auto dim_i : index_range(raw_Ainv))
-        Ainv(dim_i) = elem_rho * Utility::pow<2>(elem_alpha) * ainv_reader[dim_i](elem_dof);
+      if (volumetric_pressure)
+      {
+        for (const auto dim_i : index_range(raw_Ainv))
+          Ainv(dim_i) = ainv_reader[dim_i](elem_dof);
+      }
+      else
+      {
+        const Real elem_rho = _rho(makeElemArg(elem_info.elem()), time_arg);
+        const Real elem_alpha = _alpha(makeElemArg(elem_info.elem()), time_arg);
+        for (const auto dim_i : index_range(raw_Ainv))
+          Ainv(dim_i) = elem_rho * Utility::pow<2>(elem_alpha) * ainv_reader[dim_i](elem_dof);
+      }
     }
-    // Lastly, we populate the face flux resulted by H/A
-    _HbyA_flux[fi->id()] = face_hbya * fi->normal() * face_rho * face_alpha;
+
+    // Populate face HbyA flux
+    if (volumetric_pressure)
+      _HbyA_flux[fi->id()] = face_hbya * fi->normal();  // phi = HbyA · n (volumetric)
+    else
+      _HbyA_flux[fi->id()] = face_hbya * fi->normal() * face_rho * face_alpha;  // mass flux
+
+    // ddtCorr: temporal flux correction (OpenFOAM interFoam stabilizer).
+    // Adds rho_f * rAU_f * (phi_old - flux(U_old)) / dt to the predicted flux.
+    // Since rho*rAU ~ dt (uniform), this doesn't amplify the density contrast.
+    // For the first timestep or when no old flux is available, this is zero.
+    if (volumetric_pressure && !_face_flux_old.empty())
+    {
+      const auto phi_old_it = _face_flux_old.find(fi->id());
+      if (phi_old_it != _face_flux_old.end())
+      {
+        const Real phi_old = phi_old_it->second;
+
+        // flux(U_old) = interpolated old velocity · n
+        Real flux_U_old = 0.0;
+        if (_vel[0]->isInternalFace(*fi))
+        {
+          const auto & elem_info = *fi->elemInfo();
+          const auto & neighbor_info = *fi->neighborInfo();
+          RealVectorValue face_vel_old;
+          for (const auto dim_i : index_range(_vel))
+            interpolate(Moose::FV::InterpMethod::Average,
+                        face_vel_old(dim_i),
+                        _vel[dim_i]->getElemValue(elem_info, time_arg),
+                        _vel[dim_i]->getElemValue(neighbor_info, time_arg),
+                        *fi,
+                        true);
+          flux_U_old = face_vel_old * fi->normal();
+        }
+
+        // rho_f * rAU_f = rho_f * (dt/rho_f) = dt exactly (uniform across phases).
+        // So the correction is simply: phi_old - flux(U_old)
+        // (the dt from rho*rAU cancels with the 1/dt from ddtCorr)
+        const Real correction = phi_old - flux_U_old;
+
+        // In our sign convention: _HbyA_flux = -phiHbyA, so we subtract
+        _HbyA_flux[fi->id()] -= correction;
+      }
+    }
   }
 }
 
@@ -637,7 +854,8 @@ RhieChowMassFluxMultiPhase::computeHbyA(const bool with_updated_pressure, bool v
     // Unfortunately, the pressure forces are included in the momentum RHS
     // so we have to correct them back
     working_vector_petsc->pointwise_mult(*pressure_gradient[system_i], *_cell_volumes);
-    working_vector_petsc->pointwise_mult(*working_vector_petsc, *cell_alpha);
+    if (!_vof_alpha)
+      working_vector_petsc->pointwise_mult(*working_vector_petsc, *cell_alpha);
     HbyA.add(-1.0, *working_vector_petsc);
 
     if (verbose)
@@ -758,6 +976,40 @@ RhieChowMassFluxMultiPhase::computeHbyA(const bool with_updated_pressure, bool v
       const auto neigh_mc = _p_diffusion_kernel->computeNeighborMatrixContribution();
 
       _HbyA_flux[fi->id()] += psi_neigh * neigh_mc + psi_elem * elem_mc;
+    }
+  }
+
+  // p_rgh buoyancy correction (OpenFOAM interFoam formulation).
+  // When gravity is non-zero, the pressure variable is p_rgh = p - rho*g*h.
+  // The buoyancy flux is ghf * Ainv * snGrad(rho), which acts ONLY at the density
+  // interface (snGrad(rho) = 0 in uniform-density regions). The body force rho*g
+  // remains in the momentum equation and cancels with grad(p) naturally.
+  // Using ghf*snGrad(rho) instead of grad(rho*gh) avoids discrete cancellation errors.
+  if (_gravity.norm() > 1e-42)
+  {
+    for (auto & fi : _flow_face_info)
+    {
+      if (!_p->isInternalFace(*fi))
+        continue;
+
+      // rho at cell centers
+      const Real rho_elem = _rho(makeElemArg(fi->elemPtr()), Moose::currentState());
+      const Real rho_neigh = _rho(makeElemArg(fi->neighborPtr()), Moose::currentState());
+
+      // ghf = gravity · face_centroid (gravity potential at face)
+      const Real ghf = _gravity * fi->faceCentroid();
+
+      // Discrete buoyancy flux: ghf * Ainv * snGrad(rho) * Sf
+      // Using the pressure diffusion operator: rho_N*neigh_mc + rho_E*elem_mc ≈ Ainv*snGrad(rho)*Sf
+      _p_diffusion_kernel->setupFaceData(fi);
+      _p_diffusion_kernel->setCurrentFaceArea(1.0);
+
+      const auto elem_mc = _p_diffusion_kernel->computeElemMatrixContribution();
+      const auto neigh_mc = _p_diffusion_kernel->computeNeighborMatrixContribution();
+
+      const Real buoyancy_flux = ghf * (rho_neigh * neigh_mc + rho_elem * elem_mc);
+
+      _HbyA_flux[fi->id()] -= buoyancy_flux;
     }
   }
 

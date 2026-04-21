@@ -11,6 +11,9 @@
 #include "FEProblem.h"
 #include "SegregatedSolverUtils.h"
 #include "LinearSystem.h"
+#include "LinearFVMultiPhaseFractionAdvection.h"
+#include "LinearFVFluxKernel.h"
+#include "Attributes.h"
 
 using namespace libMesh;
 
@@ -274,6 +277,13 @@ SolveBaseMultiPhase::validParams()
                                             "1<=MULES_iterations",
                                             "Number of MULES iterations to perform.");
 
+  params.addRangeCheckedParam<unsigned int>(
+      "n_alpha_subcycles",
+      1,
+      "n_alpha_subcycles >= 1",
+      "Number of sub-cycles for the phase transport equation per PIMPLE iteration. "
+      "The alpha equation is solved n_alpha_subcycles times with dt/n_alpha_subcycles.");
+
   params.addParam<MultiMooseEnum>("phase_petsc_options",
                                   Moose::PetscSupport::getCommonPetscFlags(),
                                   "Singleton PETSc options for the phase equation");
@@ -308,7 +318,8 @@ SolveBaseMultiPhase::validParams()
       "The maximum allowed iterations in the linear solver of the phase equation.");
 
   params.addParamNamesToGroup(
-      "phase_equation_relaxation MULES_iterations phase_petsc_options phase_petsc_options_iname "
+      "phase_equation_relaxation MULES_iterations n_alpha_subcycles phase_petsc_options "
+      "phase_petsc_options_iname "
       "phase_petsc_options_value phase_petsc_options_value phase_absolute_tolerance "
       "phase_l_tol phase_l_abs_tol phase_l_max_its",
       "Phase Equation");
@@ -483,6 +494,7 @@ SolveBaseMultiPhase::SolveBaseMultiPhase(Executioner & ex)
     _number_of_solved_phases(_phase_system_names.size()),
     _phase_equation_relaxation(getParam<Real>("phase_equation_relaxation")),
     _MULES_iterations(getParam<unsigned int>("MULES_iterations")),
+    _n_alpha_subcycles(getParam<unsigned int>("n_alpha_subcycles")),
     _phase_l_abs_tol(getParam<Real>("phase_l_abs_tol")),
     // Passive Scalars
     _passive_scalar_system_names(getParam<std::vector<SolverSystemName>>("passive_scalar_systems")),
@@ -832,7 +844,12 @@ SolveBaseMultiPhase::linkRhieChowUserObjects()
 
     // Initialize the face velocities in the RC object
     if (!_app.isRecovering())
+    {
       _rc_uo[i]->initFaceMassFlux();
+      // Initialize consistent mass flux from the initial alpha field so it's
+      // available before the first momentum solve (required for alpha-first ordering)
+      _rc_uo[i]->computeConsistentMassFlux();
+    }
     _rc_uo[i]->initCouplingField();
   }
 }
@@ -1195,6 +1212,42 @@ SolveBaseMultiPhase::solve()
     return true;
 
   // ------------------------------------------------------------------
+  //  Look up alpha advection kernels (once) for semi-implicit MULES
+  // ------------------------------------------------------------------
+  if (_alpha_advection_kernels.empty() && _number_of_solved_phases > 0)
+  {
+    for (unsigned int phase_number = 0; phase_number < _number_of_solved_phases; ++phase_number)
+    {
+      LinearFVMultiPhaseFractionAdvection * found_kernel = nullptr;
+      std::vector<LinearFVFluxKernel *> kernels;
+      _problem.theWarehouse()
+          .query()
+          .template condition<AttribSysNum>(_phase_system_numbers[phase_number])
+          .template condition<AttribSystem>("LinearFVFluxKernel")
+          .template condition<AttribThread>(0)
+          .queryInto(kernels);
+
+      for (auto * kernel : kernels)
+      {
+        auto * alpha_kernel =
+            dynamic_cast<LinearFVMultiPhaseFractionAdvection *>(kernel);
+        if (alpha_kernel && alpha_kernel->isSemiImplicitMULES())
+        {
+          found_kernel = alpha_kernel;
+          break;
+        }
+      }
+      _alpha_advection_kernels.push_back(found_kernel);
+    }
+  }
+
+  // ------------------------------------------------------------------
+  //  Capture old face flux for ddtCorr (once per timestep, before PIMPLE)
+  // ------------------------------------------------------------------
+  for (unsigned int phase_number = 0; phase_number < _number_of_phases; ++phase_number)
+    _rc_uo[phase_number]->captureOldFlux();
+
+  // ------------------------------------------------------------------
   //  Helper counts of equations per phase
   // ------------------------------------------------------------------
   const unsigned int n_vel  = _momentum_systems.front().size();
@@ -1217,6 +1270,10 @@ SolveBaseMultiPhase::solve()
   std::vector<Real> ns_abs_tols;
   ns_abs_tols.reserve(no_systems);
 
+  // phases (solved first in alpha-first order)
+  for (unsigned int i = 0; i < _number_of_solved_phases; ++i)
+    ns_abs_tols.push_back(_phase_absolute_tolerance);
+
   // momentum tolerances
   for (unsigned int p = 0; p < _number_of_phases; ++p)
     for (unsigned int c = 0; c < n_vel; ++c)
@@ -1233,10 +1290,6 @@ SolveBaseMultiPhase::solve()
   // energy (solid)
   if (_has_solid_energy_system)
     ns_abs_tols.push_back(_solid_energy_absolute_tolerance);
-
-  // phases
-  for (unsigned int i = 0; i < _number_of_solved_phases; ++i)
-    ns_abs_tols.push_back(_phase_absolute_tolerance);
 
   // turbulence
   if (_has_turbulence_systems)
@@ -1277,19 +1330,141 @@ SolveBaseMultiPhase::solve()
     unsigned int residual_counter = 0;
 
     // ---------------------------------------------------------------
-    // 1. Momentum predictor
+    // 1. Phase transport with optional MULES sub-iterations
+    //    and alpha sub-cycling. Alpha-first: solve before momentum
+    //    so mixture properties are current for momentum/pressure.
+    // ---------------------------------------------------------------
+    const auto residual_counter_base = residual_counter;
+
+    // Save original dt and apply sub-cycling reduction
+    const Real dt_global = _problem.dt();
+    if (_n_alpha_subcycles > 1)
+      _problem.dt() = dt_global / static_cast<Real>(_n_alpha_subcycles);
+
+    for (unsigned int subcycle = 0; subcycle < _n_alpha_subcycles; ++subcycle)
+    {
+      if (_n_alpha_subcycles > 1)
+        _console << COLOR_CYAN << " -- ALPHA SUB-CYCLE: " << subcycle + 1
+                 << " / " << _n_alpha_subcycles << COLOR_DEFAULT << std::endl;
+
+      for(unsigned int MULES_iteration = 0; MULES_iteration < _MULES_iterations; ++MULES_iteration)
+      {
+        if(_MULES_iterations > 1)
+          _console << COLOR_CYAN << " -- MULES ITERATION: " << MULES_iteration << std::endl;
+
+        for(unsigned int phase_number = 0; phase_number < _number_of_solved_phases; ++phase_number)
+        {
+          // We set the preconditioner/controllable parameters through petsc options. Linear
+          // tolerances will be overridden within the solver.
+          Moose::PetscSupport::petscSetOptions(_phase_petsc_options, solver_params);
+          ns_residuals[residual_counter_base + phase_number] =
+              solveAdvectedSystem(_phase_system_numbers[phase_number],
+                                  *_phase_systems[phase_number],
+                                  _phase_equation_relaxation,
+                                  _phase_linear_control,
+                                  _phase_l_abs_tol);
+
+          // Apply semi-implicit MULES correction (second pass: bounded anti-diffusive correction)
+          // Applied on the last MULES iteration of every sub-cycle (matching OpenFOAM interFoam).
+          if (MULES_iteration == _MULES_iterations - 1 &&
+              phase_number < _alpha_advection_kernels.size() &&
+              _alpha_advection_kernels[phase_number])
+          {
+            _alpha_advection_kernels[phase_number]->applyMULESCorrection(
+                *_phase_systems[phase_number]);
+            // Clamp alpha to [0,1] immediately after correction — the per-face MULES
+            // limiter doesn't guarantee per-cell boundedness when corrections accumulate.
+            LinearImplicitSystem & li_sys =
+                libMesh::cast_ref<LinearImplicitSystem &>(_phase_systems[phase_number]->system());
+            NS::FV::limitSolutionUpdate(*(li_sys.solution), 0.0, 1.0);
+          }
+
+          // Update residual counter only on the last MULES iteration of the last sub-cycle
+          if (MULES_iteration == _MULES_iterations - 1 && subcycle == _n_alpha_subcycles - 1)
+            residual_counter++;
+        }
+
+        // Bound individual phases
+        for(unsigned int phase_number = 0; phase_number < _number_of_solved_phases; ++phase_number)
+        {
+          LinearImplicitSystem & li_system =
+              libMesh::cast_ref<LinearImplicitSystem &>(_phase_systems[phase_number]->system());
+          NumericVector<Number> & current_solution = *(li_system.solution);
+          NS::FV::limitSolutionUpdate(current_solution, 0.0, 1.0);
+        }
+      }
+
+      // After each sub-cycle, copy current solution to "old" for the next sub-cycle
+      // so the time derivative kernel uses the just-computed alpha as alpha_old
+      if (subcycle < _n_alpha_subcycles - 1)
+      {
+        for(unsigned int phase_number = 0; phase_number < _number_of_solved_phases; ++phase_number)
+        {
+          LinearImplicitSystem & li_system =
+              libMesh::cast_ref<LinearImplicitSystem &>(_phase_systems[phase_number]->system());
+          _phase_systems[phase_number]->setSolution(*(li_system.solution));
+          _phase_systems[phase_number]->copyPreviousNonlinearSolutions();
+        }
+      }
+    }
+
+    // Restore global dt
+    if (_n_alpha_subcycles > 1)
+      _problem.dt() = dt_global;
+
+    // Apply interface sharpening (inside PIMPLE loop after phase solve)
+    if(_activate_interface_shapening)
+    {
+      for(unsigned int phase_number = 0; phase_number < _number_of_solved_phases; ++phase_number)
+      {
+        LinearImplicitSystem & li_system =
+            libMesh::cast_ref<LinearImplicitSystem &>(_phase_systems[phase_number]->system());
+        NumericVector<Number> & current_solution = *(li_system.solution);
+        NS::FV::sharpenPhaseField(current_solution,
+                                  *(_rc_uo[0]->getCellVolumes()),
+                                  _shapening_type,
+                                  _smoothing_constant);
+      }
+    }
+
+    // Enforce phase sum constraint
+    if (_number_of_phases == _number_of_solved_phases && _enforce_phase_sum)
+    {
+      std::vector<NumericVector<Number> *> phase_solutions;
+      phase_solutions.reserve(_number_of_solved_phases);
+      for(unsigned int phase_number = 0; phase_number < _number_of_solved_phases; ++phase_number)
+      {
+        LinearImplicitSystem & li_system =
+            libMesh::cast_ref<LinearImplicitSystem &>(_phase_systems[phase_number]->system());
+        NumericVector<Number> & current_solution = *(li_system.solution);
+        phase_solutions.push_back(&current_solution);
+      }
+      NS::FV::constrainPhaseUpdate(phase_solutions);
+    }
+
+    // Compute consistent mass flux for momentum equation (rhoPhi from MULES-limited face alpha)
+    for (unsigned int phase_number = 0; phase_number < _number_of_phases; ++phase_number)
+      _rc_uo[phase_number]->computeConsistentMassFlux();
+
+    // Update material properties (rho_mix, mu_mix) from new alpha
+    _problem.execute(EXEC_NONLINEAR);
+
+    // ---------------------------------------------------------------
+    // 2. Momentum predictor
     // ---------------------------------------------------------------
     // Solve the momentum predictor step
     for(unsigned int phase_number = 0; phase_number < _number_of_phases; ++phase_number)
     {
       auto momentum_residual = solveMomentumPredictor(phase_number);
       for (const auto system_i : index_range(momentum_residual))
+      {
         ns_residuals[residual_counter] = momentum_residual[system_i];
         residual_counter++;
+      }
     }
 
     // ---------------------------------------------------------------
-    // 2. Pressure corrector (and cell/face velocity update)
+    // 3. Pressure corrector (and cell/face velocity update)
     // ---------------------------------------------------------------
     // Now we correct the velocity, this function depends on the method, it differs for
     // SIMPLE/PIMPLE, this returns the pressure errors
@@ -1297,9 +1472,9 @@ SolveBaseMultiPhase::solve()
     residual_counter++;
 
     // ---------------------------------------------------------------
-    // 3. Fluid energy (per phase)
+    // 4. Fluid energy (per phase)
     // ---------------------------------------------------------------
-    // If we have an energy equation, solve it here.We assume the material properties in the
+    // If we have an energy equation, solve it here. We assume the material properties in the
     // Navier-Stokes equations depend on temperature, therefore we can not solve for temperature
     // outside of the velocity-pressure loop
     if (_has_energy_system)
@@ -1320,7 +1495,7 @@ SolveBaseMultiPhase::solve()
     }
 
     // ---------------------------------------------------------------
-    // 4. Solid energy
+    // 5. Solid energy
     // ---------------------------------------------------------------
     if (_has_solid_energy_system)
     {
@@ -1329,48 +1504,6 @@ SolveBaseMultiPhase::solve()
       Moose::PetscSupport::petscSetOptions(_solid_energy_petsc_options, solver_params);
       ns_residuals[residual_counter] = solveSolidEnergy();
       residual_counter++;
-    }
-
-    // ---------------------------------------------------------------
-    // 5. Phase transport with optional MULES sub-iterations
-    // ---------------------------------------------------------------
-    // Solved the equation of phase transport for all tjhe solved phases
-    // We solve right ater the piso iteration and temperature are solved so that
-    // we get the right conditions in case there is phase exchange
-    const auto residual_counter_base = residual_counter;
-
-    for(unsigned int MULES_iteration = 0; MULES_iteration < _MULES_iterations; ++MULES_iteration)
-    {
-      if(_MULES_iterations > 1)
-        _console << COLOR_CYAN << " -- MULES ITERATION: " << MULES_iteration << std::endl;
-
-      for(unsigned int phase_number = 0; phase_number < _number_of_solved_phases; ++phase_number)
-      {
-        // We set the preconditioner/controllable parameters through petsc options. Linear
-        // tolerances will be overridden within the solver.
-        Moose::PetscSupport::petscSetOptions(_phase_petsc_options, solver_params);
-        ns_residuals[residual_counter_base + phase_number] =
-            solveAdvectedSystem(_phase_system_numbers[phase_number],
-                                *_phase_systems[phase_number],
-                                _phase_equation_relaxation,
-                                _phase_linear_control,
-                                _phase_l_abs_tol);
-        
-        // Update residual counter
-        if (MULES_iteration == _MULES_iterations -1)
-          residual_counter++;
-      }
-
-      // Limit the solutions of the phases after solving
-
-      // Bound indivdual phases
-      for(unsigned int phase_number = 0; phase_number < _number_of_solved_phases; ++phase_number)
-      {
-        LinearImplicitSystem & li_system =
-            libMesh::cast_ref<LinearImplicitSystem &>(_phase_systems[phase_number]->system());
-        NumericVector<Number> & current_solution = *(li_system.solution);
-        NS::FV::limitSolutionUpdate(current_solution, 0.0, 1.0);
-      }
     }
 
     // ---------------------------------------------------------------
@@ -1411,50 +1544,9 @@ SolveBaseMultiPhase::solve()
     }
 
     // ---------------------------------------------------------------
-    // 7. Material properties & user kernels that depend on new fields
-    // ---------------------------------------------------------------
-    _problem.execute(EXEC_NONLINEAR);
-
-    // ---------------------------------------------------------------
-    // 8. Check convergence of the flow block
+    // 7. Check convergence of the flow block
     // ---------------------------------------------------------------
     converged = NS::FV::converged(ns_residuals, ns_abs_tols);
-  }
-
-  // -----------------------------------------------------------
-  // 9. Interface constrain and sharpening
-  // -----------------------------------------------------------
-  // Apply interface sharpening
-  if(_activate_interface_shapening)
-  {
-    for(unsigned int phase_number = 0; phase_number < _number_of_solved_phases; ++phase_number)
-    {
-      LinearImplicitSystem & li_system =
-          libMesh::cast_ref<LinearImplicitSystem &>(_phase_systems[phase_number]->system());
-      NumericVector<Number> & current_solution = *(li_system.solution);
-      NS::FV::sharpenPhaseField(current_solution, // alpha
-                                *(_rc_uo[0]->getCellVolumes()), // should always have at least one rc system
-                                _shapening_type,
-                                _smoothing_constant);
-    }
-  }
-
-  // Bound total phases
-  if (_number_of_phases == _number_of_solved_phases && _enforce_phase_sum) // otherwise the total phase fraction should be externally constrained
-  {
-    std::vector<NumericVector<Number> *> phase_solutions;
-    phase_solutions.reserve(_number_of_solved_phases);
-
-    for(unsigned int phase_number = 0; phase_number < _number_of_solved_phases; ++phase_number)
-    {
-        LinearImplicitSystem & li_system =
-            libMesh::cast_ref<LinearImplicitSystem &>(_phase_systems[phase_number]->system());
-        NumericVector<Number> & current_solution = *(li_system.solution);
-        phase_solutions.push_back(&current_solution); // Store pointer to current_solution
-    }
-
-    // Call the function to limit phase solutions
-    NS::FV::constrainPhaseUpdate(phase_solutions);
   }
 
   // ------------------------------------------------------------------

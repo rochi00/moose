@@ -17,6 +17,8 @@
 #include "SegregatedSolverUtils.h"
 #include "RhieChowMassFluxMultiPhase.h"
 
+class LinearFVMultiPhaseFractionAdvection;
+
 // Libmesh includes
 #include "libmesh/solver_configuration.h"
 #include "libmesh/petsc_vector.h"
@@ -218,6 +220,9 @@ protected:
   /// Number of internal MULES iterations to perform
   const unsigned int _MULES_iterations;
 
+  /// Number of alpha sub-cycles per time step
+  const unsigned int _n_alpha_subcycles;
+
   /// Options which hold the petsc settings for the phase equation
   Moose::PetscSupport::PetscOptions _phase_petsc_options;
 
@@ -368,5 +373,8 @@ protected:
   const bool _activate_interface_shapening;
   const MooseEnum _shapening_type;
   const Real _smoothing_constant;
+
+  /// Pointers to the alpha advection kernels (for semi-implicit MULES correction)
+  std::vector<LinearFVMultiPhaseFractionAdvection *> _alpha_advection_kernels;
 
 };

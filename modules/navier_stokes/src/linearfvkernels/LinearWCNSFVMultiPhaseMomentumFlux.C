@@ -345,9 +345,11 @@ LinearWCNSFVMultiPhaseMomentumFlux::setupFaceData(const FaceInfo * face_info)
 {
   LinearFVFluxKernel::setupFaceData(face_info);
 
-  // Caching the mass flux on the face which will be reused in the advection term's matrix and right
-  // hand side contributions
-  _face_mass_flux = _mass_flux_provider.getMassFlux(*face_info);
+  // Caching the mass flux on the face. When consistent mass-momentum transport is enabled
+  // (rho_1/rho_2 set on RC object), ALWAYS use the consistent rhoPhi reconstructed from the
+  // alpha solve. This is mandatory for the volumetric alpha / density-weighted momentum
+  // formulation (OpenFOAM interFoam approach) at high density ratios.
+  _face_mass_flux = _mass_flux_provider.getConsistentMassFlux(*face_info);
 
   // Caching the interpolation coefficients so they will be reused for the matrix and right hand
   // side terms

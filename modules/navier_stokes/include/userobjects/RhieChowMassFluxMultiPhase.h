@@ -50,6 +50,22 @@ public:
   /// Get the volumetric face flux (used in advection terms)
   Real getVolumetricFaceFlux(const FaceInfo & fi) const;
 
+  /// Store the MULES-limited face alpha for consistent mass-momentum transport
+  void setConsistentFaceAlpha(const FaceInfo & fi, Real alpha_f_mules);
+
+  /// Compute consistent mass flux from stored MULES-limited face alphas
+  void computeConsistentMassFlux();
+
+  /// Retrieve consistent mass flux for momentum equation
+  Real getConsistentMassFlux(const FaceInfo & fi) const;
+
+  /// Whether consistent mass flux has been computed and is available
+  bool hasConsistentMassFlux() const { return _has_consistent_mass_flux; }
+
+  /// Capture the current face flux as "old" for the ddtCorr computation.
+  /// Must be called once at the start of each timestep, before any PIMPLE iteration.
+  void captureOldFlux();
+
   virtual Real getVolumetricFaceFlux(const Moose::FV::InterpMethod m,
                                      const FaceInfo & fi,
                                      const Moose::StateArg & time,
@@ -164,6 +180,10 @@ protected:
    */
   FaceCenteredMapFunctor<Real, std::unordered_map<dof_id_type, Real>> & _face_mass_flux;
 
+  // Note: In VOF mode (_vof_alpha set), _face_mass_flux stores phi (volumetric flux)
+  // directly. The pressure equation outputs phi without rho*alpha multiplication.
+  // In Euler-Euler mode, _face_mass_flux stores rho*alpha*phi as before.
+
   /**
    * for a PISO iteration we need to hold on to the original pressure gradient field.
    * Should not be used in other conditions.
@@ -207,10 +227,37 @@ protected:
   /// Balanced-force surface tension user object
   const BalancedForceSurfaceTension * const _plic_st;
 
+  /// Density of phase 1 (for consistent mass flux)
+  const Real _rho_1;
+
+  /// Density of phase 2 (for consistent mass flux)
+  const Real _rho_2;
+
+  /// VOF alpha functor for consistent mass flux (distinct from phase fraction _alpha)
+  const Moose::Functor<Real> * _vof_alpha;
+
+  /// Gravity vector for p_rgh buoyancy correction
+  const RealVectorValue _gravity;
+
 private:
   /// The subset of the FaceInfo objects that actually cover the subdomains which the
   /// flow field is defined on. Cached for performance optimization.
   std::vector<const FaceInfo *> _flow_face_info;
+
+  /// Storage for MULES-limited face alpha values (for consistent mass-momentum transport)
+  std::unordered_map<dof_id_type, Real> _consistent_face_alpha;
+
+  /// Consistent mass flux storage: rhoPhi_f = (alpha_f*rho_1 + (1-alpha_f)*rho_2) * phi_f
+  std::unordered_map<dof_id_type, Real> _consistent_mass_flux;
+
+  /// Flag indicating whether consistent mass flux has been computed this step
+  bool _has_consistent_mass_flux;
+
+  /// Old-time face flux for ddtCorr computation (stored at the start of each timestep)
+  std::unordered_map<dof_id_type, Real> _face_flux_old;
+
+  /// Whether the old flux has been captured for this timestep
+  bool _flux_old_captured;
 };
 
 template <typename VarType>

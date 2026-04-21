@@ -13,6 +13,8 @@
 #include "RhieChowMassFluxMultiPhase.h"
 #include "LinearFVAdvectionDiffusionBC.h"
 
+class LinearSystem;
+
 /**
  * An advection kernel that implements the advection term for the passive scalar transport equation.
  */
@@ -36,6 +38,14 @@ public:
 
   virtual void setupFaceData(const FaceInfo * face_info) override;
 
+  /// Apply the semi-implicit MULES correction after the upwind solve.
+  /// Called from the executioner after the linear system solve completes.
+  /// @param system The linear system that was just solved (contains alpha_upwind)
+  void applyMULESCorrection(LinearSystem & system);
+
+  /// Whether semi-implicit MULES mode is active
+  bool isSemiImplicitMULES() const { return _semi_implicit_mules; }
+
 protected:
   /// Function to compute compression mass flux
   Real computeCompressionVelocityMassFlux();
@@ -51,7 +61,7 @@ protected:
   Real getHighOrderFaceValue(MooseLinearVariableFV<Real> & variable);
 
   /// The Rhie-Chow user object that provides us with the face velocity
-  const RhieChowMassFluxMultiPhase & _mass_flux_provider;
+  RhieChowMassFluxMultiPhase & _mass_flux_provider;
 
   /// The dimension of the mesh
   const unsigned int _dim;
@@ -67,6 +77,12 @@ protected:
 
   /// Switch to activate MULES
   const bool _use_mules;
+
+  /// Semi-implicit MULES mode: two-pass (implicit upwind + explicit limited correction)
+  const bool _semi_implicit_mules;
+
+  /// Use volumetric flux (phi) instead of mass flux (rho*phi) for advection
+  const bool _use_volumetric_flux;
 
   /// Number of internal MULES iterations to perform
   const unsigned int _MULES_iterations;
