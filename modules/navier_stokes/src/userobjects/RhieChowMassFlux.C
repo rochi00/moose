@@ -1026,6 +1026,19 @@ RhieChowMassFlux::pressurePredictorFluxAdjustment(const FaceInfo * fi) const
   return it == _pressure_predictor_flux_adjustment.end() ? 0.0 : it->second;
 }
 
+Real
+RhieChowMassFlux::pressureBoundaryTargetFlux(const FaceInfo * fi,
+                                             const Moose::StateArg & time_arg) const
+{
+  return boundaryMassFluxTarget(fi, time_arg);
+}
+
+Real
+RhieChowMassFlux::pressureBoundaryNormalAinv(const FaceInfo * fi) const
+{
+  return boundaryNormalAinv(fi);
+}
+
 void
 RhieChowMassFlux::updatePressureBoundaryNormalGradients(const bool apply_reference_adjustment)
 {
@@ -1043,7 +1056,7 @@ RhieChowMassFlux::updatePressureBoundaryNormalGradients(const bool apply_referen
     {
       _pressure_boundary_normal_gradient[fi->id()] = 0.0;
       max_boundary_normal_ainv =
-          std::max(max_boundary_normal_ainv, std::abs(boundaryNormalAinv(fi)));
+          std::max(max_boundary_normal_ainv, std::abs(pressureBoundaryNormalAinv(fi)));
     }
   }
 
@@ -1067,7 +1080,7 @@ RhieChowMassFlux::updatePressureBoundaryNormalGradients(const bool apply_referen
       {
         const Real face_measure = fi->faceArea() * fi->faceCoord();
         integrated_source_imbalance +=
-            (_pressure_predictor_base_flux[fi->id()] + boundaryMassFluxTarget(fi, time_arg)) *
+            (_pressure_predictor_base_flux[fi->id()] + pressureBoundaryTargetFlux(fi, time_arg)) *
             face_measure;
         adjustable_measure += face_measure;
       }
@@ -1090,14 +1103,15 @@ RhieChowMassFlux::updatePressureBoundaryNormalGradients(const bool apply_referen
     if (_vel[0]->isInternalFace(*fi))
       continue;
 
-    const Real normal_ainv = boundaryNormalAinv(fi);
+    const Real normal_ainv = pressureBoundaryNormalAinv(fi);
     if (!std::isfinite(normal_ainv) || std::abs(normal_ainv) <= degenerate_normal_ainv_tol)
     {
       _pressure_boundary_normal_gradient[fi->id()] = 0.0;
       continue;
     }
 
-    const Real required_pressure_flux = _phiHbyA_flux[fi->id()] + boundaryMassFluxTarget(fi, time_arg);
+    const Real required_pressure_flux =
+        _phiHbyA_flux[fi->id()] + pressureBoundaryTargetFlux(fi, time_arg);
     _pressure_boundary_normal_gradient[fi->id()] = -required_pressure_flux / normal_ainv;
   }
 
@@ -1365,6 +1379,7 @@ RhieChowMassFlux::populateCouplingFunctors(
   {
     Real face_rho = 0;
     RealVectorValue face_hbya;
+    RealVectorValue density_times_face_hbya;
 
     // We do the lookup in advance
     auto & Ainv = _Ainv[fi->id()];
@@ -1397,6 +1412,12 @@ RhieChowMassFlux::populateCouplingFunctors(
                     Ainv(dim_i),
                     elem_rho * ainv_reader[dim_i](elem_dof),
                     neighbor_rho * ainv_reader[dim_i](neighbor_dof),
+                    *fi,
+                    true);
+        interpolate(Moose::FV::InterpMethod::Average,
+                    density_times_face_hbya(dim_i),
+                    elem_rho * hbya_reader[dim_i](elem_dof),
+                    neighbor_rho * hbya_reader[dim_i](neighbor_dof),
                     *fi,
                     true);
       }
@@ -1476,6 +1497,7 @@ RhieChowMassFlux::populateCouplingFunctors(
                   (elem_info.volume() * elem_info.coordFactor()); // zero-term expansion
             }
           face_hbya(dim_i) *= boundary_normal_multiplier;
+          density_times_face_hbya(dim_i) = face_rho * face_hbya(dim_i);
         }
       }
       // Otherwise we just do a one-term expansion (so we just use the element value)
@@ -1483,7 +1505,10 @@ RhieChowMassFlux::populateCouplingFunctors(
       {
         face_rho = _rho(makeElemArg(elem_info.elem()), time_arg);
         for (const auto dim_i : make_range(_dim))
+        {
           face_hbya(dim_i) = boundary_normal_multiplier * hbya_reader[dim_i](elem_dof);
+          density_times_face_hbya(dim_i) = face_rho * face_hbya(dim_i);
+        }
       }
 
       // We just do a one-term expansion for 1/A no matter what
@@ -1492,7 +1517,7 @@ RhieChowMassFlux::populateCouplingFunctors(
         Ainv(dim_i) = elem_rho * ainv_reader[dim_i](elem_dof);
     }
     // Lastly, we populate the face flux resulted by H/A
-    _HbyA_flux[fi->id()] = face_hbya * fi->normal() * face_rho;
+    _HbyA_flux[fi->id()] = density_times_face_hbya * fi->normal();
   }
 }
 
