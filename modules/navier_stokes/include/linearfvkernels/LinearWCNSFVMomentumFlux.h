@@ -10,6 +10,8 @@
 #pragma once
 
 #include "LinearFVFluxKernel.h"
+#include "FVInterpolationMethodInterface.h"
+#include "FVAdvectedInterpolationMethod.h"
 #include "libmesh/numeric_vector.h"
 
 #include <array>
@@ -22,7 +24,7 @@ class LinearFVAdvectionDiffusionBC;
  * Kernel that implements the stress tensor and advection terms for the momentum
  * equation.
  */
-class LinearWCNSFVMomentumFlux : public LinearFVFluxKernel
+class LinearWCNSFVMomentumFlux : public LinearFVFluxKernel, public FVInterpolationMethodInterface
 {
 public:
   static InputParameters validParams();
@@ -70,6 +72,10 @@ protected:
   /// Computes the matrix contribution of the advective flux on the neighbor side of current face
   /// when the face is an internal face (doesn't have associated boundary conditions).
   Real computeInternalAdvectionNeighborMatrixContribution();
+
+  /// Computes the right hand side contribution of the advective flux on the current face
+  /// when the face is an internal face (doesn't have associated boundary conditions).
+  Real computeInternalAdvectionRHSContribution();
 
   /// Computes the matrix contribution of the stress term on the current face
   /// when the face is an internal face (doesn't have associated boundary conditions).
@@ -121,6 +127,9 @@ protected:
   /// we don't compute it multiple times for different terms.
   std::pair<Real, Real> _advected_interp_coeffs;
 
+  /// Explicit deferred-correction face-value contribution for internal advection.
+  Real _advected_rhs_face_value;
+
   /// Container for the mass flux on the face which will be reused in the advection term's
   /// matrix and right hand side contribution
   Real _face_mass_flux;
@@ -138,6 +147,9 @@ protected:
   /// The interpolation method to use for the advected quantity
   Moose::FV::InterpMethod _advected_interp_method;
 
+  /// Optional deferred-correction interpolation method for internal advection faces.
+  const FVAdvectedInterpolationMethod * _adv_interp_method;
+
   /// Index x|y|z, this is mainly to handle the deviatoric parts correctly in
   /// in the stress term
   const unsigned int _index;
@@ -153,4 +165,8 @@ protected:
 
   /// Helper to access the velocity variable for a given direction
   const MooseLinearVariableFVReal & velocityVar(unsigned int dir) const;
+
+  /// Reusable gradient storage used when advected interpolation requires gradients.
+  VectorValue<Real> _elem_grad_storage;
+  VectorValue<Real> _neighbor_grad_storage;
 };
