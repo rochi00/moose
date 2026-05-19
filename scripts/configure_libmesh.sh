@@ -65,16 +65,10 @@ function configure_libmesh()
     _petsc_have_sycl=$(sed -n 's/#define PETSC_HAVE_SYCL //p' "$_petsc_conf" 2>/dev/null)
 
     if [[ "$_petsc_have_cuda" == "1" ]] && command -v nvcc &>/dev/null; then
-      # Get CUDA arch from PETSc (same as kokkos.mk)
-      _cuda_arch=$(sed -n 's/#define PETSC_PKG_CUDA_MIN_ARCH //p' "$_petsc_conf" 2>/dev/null)
-      _arch_flag=""
-      if [[ -n "$_cuda_arch" ]]; then
-        _arch_flag="-arch=sm_${_cuda_arch}"
-      fi
-
-      export KOKKOS_CXX="$(command -v nvcc)"
-      export KOKKOS_CXXFLAGS="${_arch_flag} --extended-lambda --forward-unknown-to-host-compiler --disable-warnings -x cu -ccbin ${CXX} ${_kokkos_openmp}"
-      export KOKKOS_LDFLAGS="--forward-unknown-to-host-compiler ${_arch_flag} -L${PETSC_DIR}/lib"
+      # For CUDA, let libMesh choose nvcc_wrapper itself. Exporting raw
+      # KOKKOS_CXX=nvcc here overrides libMesh\x27s safer CUDA toolchain logic
+      # and causes ordinary host flags to hit nvcc project-wide.
+      unset KOKKOS_CXX KOKKOS_CXXFLAGS KOKKOS_LDFLAGS
 
     elif [[ "$_petsc_have_hip" == "1" ]] && command -v hipcc &>/dev/null; then
       export KOKKOS_CXX="$(command -v hipcc)"
