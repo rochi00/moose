@@ -71,7 +71,7 @@ function configure_libmesh()
       export KOKKOS_CXX="$(command -v nvcc)"
       export KOKKOS_CXXFLAGS="-arch=sm_${_petsc_cuda_arch} --extended-lambda"
       export KOKKOS_CXXFLAGS+=" --forward-unknown-to-host-compiler --disable-warnings -x cu -ccbin ${_kokkos_ccbin}"
-      export KOKKOS_LDFLAGS="--forward-unknown-to-host-compiler -arch=sm_${_petsc_cuda_arch}"
+      export KOKKOS_LDFLAGS="--forward-unknown-to-host-compiler -arch=sm_${_petsc_cuda_arch} -L${PETSC_DIR}/lib"
       EXTRA_ARGS+=("--with-kokkos-backend=cuda")
 
     elif [[ "$_petsc_have_hip" == "1" ]] && command -v hipcc &>/dev/null; then
