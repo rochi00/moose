@@ -53,9 +53,16 @@ function configure_libmesh()
     EXTRA_ARGS+=("--with-kokkos=${PETSC_DIR}")
 
     KOKKOS_CFG="${PETSC_DIR}/include/KokkosCore_config.h"
+    _petsc_variables="${PETSC_DIR}/lib/petsc/conf/petscvariables"
     _kokkos_openmp=""
+    _petsc_kokkos_include="-I${PETSC_DIR}/include"
+    _petsc_kokkos_libs="-L${PETSC_DIR}/lib -lkokkoscontainers -lkokkoscore -lkokkossimd"
     if [[ -r "$KOKKOS_CFG" ]] && grep -q 'KOKKOS_ENABLE_OPENMP' "$KOKKOS_CFG"; then
       _kokkos_openmp="-fopenmp"
+    fi
+    if [[ -r "$_petsc_variables" ]]; then
+      _petsc_kokkos_include=$(sed -n 's/^KOKKOS_INCLUDE = //p' "$_petsc_variables" 2>/dev/null)
+      _petsc_kokkos_libs=$(sed -n 's/^KOKKOS_LIB = //p' "$_petsc_variables" 2>/dev/null)
     fi
 
     # Detect backend and arch from PETSc's petscconf.h (mirrors kokkos.mk logic)
@@ -92,8 +99,8 @@ function configure_libmesh()
       EXTRA_ARGS+=("--with-kokkos-backend=openmp")
     fi
 
-    export KOKKOS_CPPFLAGS="-DLIBMESH_KOKKOS_COMPILATION -I${PETSC_DIR}/include"
-    export KOKKOS_LIBS="-lkokkoscore"
+    export KOKKOS_CPPFLAGS="-DLIBMESH_KOKKOS_COMPILATION ${_petsc_kokkos_include}"
+    export KOKKOS_LIBS="${_petsc_kokkos_libs}"
   fi
 
   # Allow unbound variable for when EXTRA_ARGS is empty
