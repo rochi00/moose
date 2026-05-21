@@ -54,7 +54,7 @@ function configure_libmesh()
 
     KOKKOS_CFG="${PETSC_DIR}/include/KokkosCore_config.h"
     _kokkos_openmp=""
-    if [[ -r "$KOKKOS_CFG" ]] && grep -q 'KOKKOS_ENABLE_OPENMP' "$KOKKOS_CFG"; then
+    if [[ -r "$KOKKOS_CFG" ]] && grep -q '^#define KOKKOS_ENABLE_OPENMP' "$KOKKOS_CFG"; then
       _kokkos_openmp="-fopenmp"
     fi
 
