@@ -53,18 +53,9 @@ function configure_libmesh()
     EXTRA_ARGS+=("--with-kokkos=${PETSC_DIR}")
 
     KOKKOS_CFG="${PETSC_DIR}/include/KokkosCore_config.h"
-    _petsc_variables="${PETSC_DIR}/lib/petsc/conf/petscvariables"
     _kokkos_openmp=""
-    _petsc_kokkos_include="-I${PETSC_DIR}/include"
-    _petsc_kokkos_libs="-L${PETSC_DIR}/lib -lkokkoscontainers -lkokkoscore -lkokkossimd"
-    _petsc_kokkos_kernels_libs=""
     if [[ -r "$KOKKOS_CFG" ]] && grep -q 'KOKKOS_ENABLE_OPENMP' "$KOKKOS_CFG"; then
       _kokkos_openmp="-fopenmp"
-    fi
-    if [[ -r "$_petsc_variables" ]]; then
-      _petsc_kokkos_include=$(sed -n 's/^KOKKOS_INCLUDE = //p' "$_petsc_variables" 2>/dev/null)
-      _petsc_kokkos_libs=$(sed -n 's/^KOKKOS_LIB = //p' "$_petsc_variables" 2>/dev/null)
-      _petsc_kokkos_kernels_libs=$(sed -n 's/^KOKKOS_KERNELS_LIB = //p' "$_petsc_variables" 2>/dev/null)
     fi
 
     # Detect backend and arch from PETSc's petscconf.h (mirrors kokkos.mk logic)
@@ -74,16 +65,10 @@ function configure_libmesh()
     _petsc_have_sycl=$(sed -n 's/#define PETSC_HAVE_SYCL //p' "$_petsc_conf" 2>/dev/null)
 
     if [[ "$_petsc_have_cuda" == "1" ]] && command -v nvcc &>/dev/null; then
-      _petsc_cuda_arch=$(sed -n 's/#define PETSC_PKG_CUDA_MIN_ARCH //p' "$_petsc_conf" 2>/dev/null)
-      _kokkos_ccbin="$(
-        ($CXX -show 2>/dev/null || $CXX --showme:command 2>/dev/null || echo "$CXX") | awk '{print $1}'
-      )"
-
-      export KOKKOS_CXX="$(command -v nvcc)"
-      export KOKKOS_CXXFLAGS="-arch=sm_${_petsc_cuda_arch} --extended-lambda"
-      export KOKKOS_CXXFLAGS+=" --forward-unknown-to-host-compiler --disable-warnings -x cu -ccbin ${_kokkos_ccbin}"
-      export KOKKOS_LDFLAGS="--forward-unknown-to-host-compiler -arch=sm_${_petsc_cuda_arch}"
-      EXTRA_ARGS+=("--with-kokkos-backend=cuda")
+      # For CUDA, let libMesh choose nvcc_wrapper itself. Exporting raw
+      # KOKKOS_CXX=nvcc here overrides libMesh's safer CUDA toolchain logic
+      # and causes ordinary host flags to hit nvcc project-wide.
+      unset KOKKOS_CXX KOKKOS_CXXFLAGS KOKKOS_LDFLAGS
 
     elif [[ "$_petsc_have_hip" == "1" ]] && command -v hipcc &>/dev/null; then
       export KOKKOS_CXX="$(command -v hipcc)"
@@ -103,8 +88,8 @@ function configure_libmesh()
       EXTRA_ARGS+=("--with-kokkos-backend=openmp")
     fi
 
-    export KOKKOS_CPPFLAGS="-DLIBMESH_KOKKOS_COMPILATION ${_petsc_kokkos_include}"
-    export KOKKOS_LIBS="${_petsc_kokkos_libs} ${_petsc_kokkos_kernels_libs}"
+    export KOKKOS_CPPFLAGS="-DLIBMESH_KOKKOS_COMPILATION -I${PETSC_DIR}/include"
+    export KOKKOS_LIBS="-lkokkoscore"
   fi
 
   # Allow unbound variable for when EXTRA_ARGS is empty
