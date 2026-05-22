@@ -53,6 +53,13 @@ function configure_libmesh()
     EXTRA_ARGS+=("--with-kokkos=${PETSC_DIR}")
 
     KOKKOS_CFG="${PETSC_DIR}/include/KokkosCore_config.h"
+    PETSC_VARS="${PETSC_DIR}/lib/petsc/conf/petscvariables"
+    _petsc_makevar()
+    {
+      local var_name="$1"
+      [[ -r "$PETSC_VARS" ]] || return 0
+      sed -n "s/^${var_name} = //p" "$PETSC_VARS" | head -n 1
+    }
     _kokkos_openmp=""
     if [[ -r "$KOKKOS_CFG" ]] && grep -q '^#define KOKKOS_ENABLE_OPENMP' "$KOKKOS_CFG"; then
       _kokkos_openmp="-fopenmp"
@@ -88,8 +95,37 @@ function configure_libmesh()
       EXTRA_ARGS+=("--with-kokkos-backend=openmp")
     fi
 
-    export KOKKOS_CPPFLAGS="-DLIBMESH_KOKKOS_COMPILATION -I${PETSC_DIR}/include"
-    export KOKKOS_LIBS="-lkokkoscore"
+    if [[ -z "${KOKKOS_CPPFLAGS:-}" ]]; then
+      export KOKKOS_CPPFLAGS="-DLIBMESH_KOKKOS_COMPILATION -I${PETSC_DIR}/include"
+    fi
+
+    if [[ -z "${KOKKOS_LIBS:-}" ]]; then
+      _petsc_kokkos_libs="$(_petsc_makevar KOKKOS_LIB)"
+      _petsc_backend_libs=""
+      _petsc_system_libs=""
+
+      if [[ "$_petsc_have_cuda" == "1" ]]; then
+        _petsc_backend_libs="$(_petsc_makevar CUDA_LIB)"
+      elif [[ "$_petsc_have_hip" == "1" ]]; then
+        _petsc_backend_libs="$(_petsc_makevar HIP_LIB)"
+      elif [[ "$_petsc_have_sycl" == "1" ]]; then
+        _petsc_backend_libs="$(_petsc_makevar SYCL_LIB)"
+      fi
+
+      _petsc_external_libs="$(_petsc_makevar PETSC_EXTERNAL_LIB_BASIC)"
+      case " $_petsc_external_libs " in
+        *" -ldl "*) _petsc_system_libs="$_petsc_system_libs -ldl" ;;
+      esac
+      case " $_petsc_external_libs " in
+        *" -lpthread "*) _petsc_system_libs="$_petsc_system_libs -lpthread" ;;
+      esac
+
+      if [[ -n "$_petsc_kokkos_libs" ]]; then
+        export KOKKOS_LIBS="$_petsc_kokkos_libs $_petsc_backend_libs $_petsc_system_libs"
+      else
+        export KOKKOS_LIBS="-lkokkoscore $_petsc_system_libs"
+      fi
+    fi
   fi
 
   # Allow unbound variable for when EXTRA_ARGS is empty
