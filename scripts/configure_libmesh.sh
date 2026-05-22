@@ -117,6 +117,16 @@ function configure_libmesh()
     [[ "$_petsc_have_hip" == "1" || "$_kokkos_has_hip" == "1" ]] && _use_hip=1
     [[ "$_petsc_have_sycl" == "1" || "$_kokkos_has_sycl" == "1" ]] && _use_sycl=1
 
+    if [[ "$_use_cuda" == "1" ]]; then
+      EXTRA_ARGS+=("--with-kokkos-backend=cuda")
+    elif [[ "$_use_hip" == "1" ]]; then
+      EXTRA_ARGS+=("--with-kokkos-backend=hip")
+    elif [[ "$_use_sycl" == "1" ]]; then
+      EXTRA_ARGS+=("--with-kokkos-backend=sycl")
+    elif [[ -n "$_kokkos_openmp" ]]; then
+      EXTRA_ARGS+=("--with-kokkos-backend=openmp")
+    fi
+
     _petsc_exported_kokkos_cxx="$(_petsc_first_makevar KOKKOS_CXX)"
     _petsc_exported_kokkos_cppflags="$(_petsc_first_makevar KOKKOS_CPPFLAGS)"
     _petsc_exported_kokkos_cxxflags="$(_petsc_first_makevar KOKKOS_CXXFLAGS)"
@@ -178,7 +188,6 @@ function configure_libmesh()
         export KOKKOS_CXXFLAGS="-fsycl ${_kokkos_openmp}"
       else
         export KOKKOS_CXXFLAGS="${_kokkos_openmp} -x c++"
-        EXTRA_ARGS+=("--with-kokkos-backend=openmp")
       fi
     fi
 
