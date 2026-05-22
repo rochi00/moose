@@ -61,28 +61,44 @@ function configure_libmesh()
       sed -n "s/^${var_name} = //p" "$PETSC_VARS" | head -n 1
     }
     _kokkos_openmp=""
-    if [[ -r "$KOKKOS_CFG" ]] && grep -q '^#define KOKKOS_ENABLE_OPENMP' "$KOKKOS_CFG"; then
-      _kokkos_openmp="-fopenmp"
+    _kokkos_has_cuda=0
+    _kokkos_has_hip=0
+    _kokkos_has_sycl=0
+    if [[ -r "$KOKKOS_CFG" ]]; then
+      grep -q '^#define KOKKOS_ENABLE_OPENMP' "$KOKKOS_CFG" && _kokkos_openmp="-fopenmp"
+      grep -q '^#define KOKKOS_ENABLE_CUDA' "$KOKKOS_CFG" && _kokkos_has_cuda=1
+      grep -q '^#define KOKKOS_ENABLE_HIP' "$KOKKOS_CFG" && _kokkos_has_hip=1
+      grep -q '^#define KOKKOS_ENABLE_SYCL' "$KOKKOS_CFG" && _kokkos_has_sycl=1
     fi
 
     # Detect backend and arch from PETSc's petscconf.h (mirrors kokkos.mk logic)
     _petsc_conf="${PETSC_DIR}/include/petscconf.h"
+    if [[ -n "${PETSC_ARCH:-}" ]] && [[ -r "${PETSC_DIR}/${PETSC_ARCH}/include/petscconf.h" ]]; then
+      _petsc_conf="${PETSC_DIR}/${PETSC_ARCH}/include/petscconf.h"
+    fi
     _petsc_have_cuda=$(sed -n 's/#define PETSC_HAVE_CUDA //p' "$_petsc_conf" 2>/dev/null)
     _petsc_have_hip=$(sed -n 's/#define PETSC_HAVE_HIP //p' "$_petsc_conf" 2>/dev/null)
     _petsc_have_sycl=$(sed -n 's/#define PETSC_HAVE_SYCL //p' "$_petsc_conf" 2>/dev/null)
+    _use_cuda=0
+    _use_hip=0
+    _use_sycl=0
 
-    if [[ "$_petsc_have_cuda" == "1" ]] && command -v nvcc &>/dev/null; then
+    [[ "$_petsc_have_cuda" == "1" || "$_kokkos_has_cuda" == "1" ]] && _use_cuda=1
+    [[ "$_petsc_have_hip" == "1" || "$_kokkos_has_hip" == "1" ]] && _use_hip=1
+    [[ "$_petsc_have_sycl" == "1" || "$_kokkos_has_sycl" == "1" ]] && _use_sycl=1
+
+    if [[ "$_use_cuda" == "1" ]] && command -v nvcc &>/dev/null; then
       # For CUDA, let libMesh choose nvcc_wrapper itself. Exporting raw
       # KOKKOS_CXX=nvcc here overrides libMesh's safer CUDA toolchain logic
       # and causes ordinary host flags to hit nvcc project-wide.
       unset KOKKOS_CXX KOKKOS_CXXFLAGS KOKKOS_LDFLAGS
 
-    elif [[ "$_petsc_have_hip" == "1" ]] && command -v hipcc &>/dev/null; then
+    elif [[ "$_use_hip" == "1" ]] && command -v hipcc &>/dev/null; then
       export KOKKOS_CXX="$(command -v hipcc)"
       export KOKKOS_CXXFLAGS="${_kokkos_openmp}"
       export KOKKOS_LDFLAGS="-L${PETSC_DIR}/lib"
 
-    elif [[ "$_petsc_have_sycl" == "1" ]] && command -v icpx &>/dev/null; then
+    elif [[ "$_use_sycl" == "1" ]] && command -v icpx &>/dev/null; then
       export KOKKOS_CXX="$(command -v icpx)"
       export KOKKOS_CXXFLAGS="-fsycl ${_kokkos_openmp}"
       export KOKKOS_LDFLAGS="-L${PETSC_DIR}/lib"
@@ -104,11 +120,11 @@ function configure_libmesh()
       _petsc_backend_libs=""
       _petsc_system_libs=""
 
-      if [[ "$_petsc_have_cuda" == "1" ]]; then
+      if [[ "$_use_cuda" == "1" ]]; then
         _petsc_backend_libs="$(_petsc_makevar CUDA_LIB)"
-      elif [[ "$_petsc_have_hip" == "1" ]]; then
+      elif [[ "$_use_hip" == "1" ]]; then
         _petsc_backend_libs="$(_petsc_makevar HIP_LIB)"
-      elif [[ "$_petsc_have_sycl" == "1" ]]; then
+      elif [[ "$_use_sycl" == "1" ]]; then
         _petsc_backend_libs="$(_petsc_makevar SYCL_LIB)"
       fi
 
