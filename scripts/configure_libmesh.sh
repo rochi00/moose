@@ -178,7 +178,7 @@ function configure_libmesh()
         if [[ -n "$_petsc_cuda_arch" ]]; then
           _kokkos_cuda_arch_flag="-arch=sm_${_petsc_cuda_arch}"
         fi
-        export KOKKOS_CXXFLAGS="${_kokkos_cuda_arch_flag} --forward-unknown-to-host-compiler --extended-lambda --expt-relaxed-constexpr --disable-warnings --x=cu -ccbin=${_petsc_host_cxx}"
+        export KOKKOS_CXXFLAGS="${_kokkos_cuda_arch_flag} --forward-unknown-to-host-compiler --extended-lambda --expt-relaxed-constexpr --disable-warnings -x cu -ccbin ${_petsc_host_cxx}"
         if [[ -n "$_kokkos_openmp" ]]; then
           export KOKKOS_CXXFLAGS="${KOKKOS_CXXFLAGS} ${_kokkos_openmp}"
         fi
