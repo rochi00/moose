@@ -20,9 +20,15 @@ LinearFVScalarAdvection::validParams()
   InputParameters params = LinearFVFluxKernel::validParams();
   params.addClassDescription("Represents the matrix and right hand side contributions of an "
                              "advection term for a passive scalar.");
-  params.addRequiredParam<UserObjectName>(
+  params.addParam<UserObjectName>(
       "rhie_chow_user_object",
+      "",
       "The rhie-chow user-object which is used to determine the face velocity.");
+  params.addParam<MooseFunctorName>(
+      "face_flux",
+      "",
+      "Optional volumetric face-flux functor. When supplied, this kernel uses it directly instead "
+      "of querying the Rhie-Chow user object.");
   params += Moose::FV::advectedInterpolationParameter();
   params.addParam<MooseFunctorName>("u_slip", "The slip-velocity in the x direction.");
   params.addParam<MooseFunctorName>("v_slip", "The slip-velocity in the y direction.");
@@ -32,7 +38,13 @@ LinearFVScalarAdvection::validParams()
 
 LinearFVScalarAdvection::LinearFVScalarAdvection(const InputParameters & params)
   : LinearFVFluxKernel(params),
-    _mass_flux_provider(getUserObject<RhieChowMassFlux>("rhie_chow_user_object")),
+    _mass_flux_provider(isParamValid("rhie_chow_user_object") &&
+                                !getParam<UserObjectName>("rhie_chow_user_object").empty()
+                            ? &getUserObject<RhieChowMassFlux>("rhie_chow_user_object")
+                            : nullptr),
+    _face_flux(isParamValid("face_flux") && !getParam<MooseFunctorName>("face_flux").empty()
+                   ? &getFunctor<Real>("face_flux")
+                   : nullptr),
     _advected_interp_coeffs(std::make_pair<Real, Real>(0, 0)),
     _volumetric_face_flux(0.0),
     _u_slip(isParamValid("u_slip") ? &getFunctor<ADReal>("u_slip") : nullptr),
@@ -40,6 +52,10 @@ LinearFVScalarAdvection::LinearFVScalarAdvection(const InputParameters & params)
     _w_slip(isParamValid("w_slip") ? &getFunctor<ADReal>("w_slip") : nullptr),
     _add_slip_model(isParamValid("u_slip") ? true : false)
 {
+  if (!_face_flux && !_mass_flux_provider)
+    paramError("rhie_chow_user_object",
+               "Either 'rhie_chow_user_object' or 'face_flux' must be provided.");
+
   Moose::FV::setInterpolationMethod(*this, _advected_interp_method, "advected_interp_method");
 }
 
@@ -101,7 +117,10 @@ LinearFVScalarAdvection::setupFaceData(const FaceInfo * face_info)
 
   // Caching the velocity on the face which will be reused in the advection term's matrix and right
   // hand side contributions
-  _volumetric_face_flux = _mass_flux_provider.getVOFTransportVolumetricFaceFlux(*face_info);
+  if (_face_flux)
+    _volumetric_face_flux = (*_face_flux)(makeCDFace(*face_info), determineState());
+  else
+    _volumetric_face_flux = _mass_flux_provider->getVolumetricFaceFlux(*face_info);
 
   // Adjust volumetric face flux using the slip velocity
   // TODO: add boundaries

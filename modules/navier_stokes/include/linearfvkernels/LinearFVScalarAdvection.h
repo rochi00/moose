@@ -38,7 +38,10 @@ public:
 
 protected:
   /// The Rhie-Chow user object that provides us with the face velocity
-  const RhieChowMassFlux & _mass_flux_provider;
+  const RhieChowMassFlux * const _mass_flux_provider;
+
+  /// Optional directly supplied volumetric face-flux functor.
+  const Moose::Functor<Real> * const _face_flux;
 
 private:
   /// Container for the current advected interpolation coefficients on the face to make sure
