@@ -18,6 +18,7 @@
 #include "PetscVectorReader.h"
 #include "LinearSystem.h"
 #include "LinearFVElementalKernel.h"
+#include "LinearFVAssemblyConsumer.h"
 #include "LinearFVKernel.h"
 #include "LinearFVBoundaryCondition.h"
 #include "LinearFVFluxKernel.h"
@@ -33,10 +34,58 @@
 #include "libmesh/mesh_base.h"
 #include "libmesh/elem_range.h"
 #include "libmesh/petsc_matrix.h"
+#include "libmesh/threads.h"
 
 using namespace libMesh;
 
 registerMooseObject("NavierStokesApp", RhieChowMassFlux);
+
+struct RhieChowMassFlux::MomentumPredictorOperator : public LinearFVAssemblyConsumer
+{
+  bool assembly_closed = false;
+  bool finalized = false;
+  Real relaxation_parameter = 1.0;
+  bool enforce_diagonal_dominance = false;
+  std::unique_ptr<NumericVector<Number>> constant_source_raw;
+  std::unique_ptr<NumericVector<Number>> diagonal_raw;
+  std::unique_ptr<NumericVector<Number>> pressure_coupling_diagonal_raw;
+  std::unique_ptr<NumericVector<Number>> pre_relaxation_diagonal_raw;
+  std::unique_ptr<NumericVector<Number>> interior_diagonal_raw;
+  std::unique_ptr<NumericVector<Number>> boundary_relax_diagonal_raw;
+  std::unique_ptr<NumericVector<Number>> boundary_a_diagonal_raw;
+  std::unique_ptr<NumericVector<Number>> boundary_dominance_diagonal_raw;
+  std::unique_ptr<NumericVector<Number>> boundary_h_diagonal_raw;
+  std::unique_ptr<NumericVector<Number>> offdiag_abs_sum_raw;
+  struct BoundaryMatrixContribution
+  {
+    dof_id_type face_id;
+    dof_id_type dof;
+    Real contribution;
+  };
+  std::vector<BoundaryMatrixContribution> boundary_matrix_contributions;
+  std::unordered_map<dof_id_type, std::vector<std::pair<dof_id_type, Real>>> offdiag_coefficients;
+  mutable libMesh::Threads::spin_mutex assembly_mutex;
+
+  bool complete() const;
+  void computeHSource(NumericVector<Number> & solution, NumericVector<Number> & h_source_raw) const;
+  void addElementalMatrixContribution(dof_id_type dof, Real contribution) override;
+  void addElementalRightHandSideContribution(dof_id_type dof, Real contribution) override;
+  void addInternalFaceMatrixContribution(dof_id_type elem_dof,
+                                         dof_id_type neighbor_dof,
+                                         Real elem_matrix_contribution,
+                                         Real neighbor_matrix_contribution,
+                                         bool elem_has_blocks,
+                                         bool neighbor_has_blocks) override;
+  void addInternalFaceRightHandSideContribution(dof_id_type elem_dof,
+                                                dof_id_type neighbor_dof,
+                                                Real elem_rhs_contribution,
+                                                Real neighbor_rhs_contribution,
+                                                bool elem_has_blocks,
+                                                bool neighbor_has_blocks) override;
+  void
+  addBoundaryMatrixContribution(dof_id_type face_id, dof_id_type dof, Real contribution) override;
+  void addBoundaryRightHandSideContribution(dof_id_type dof, Real contribution) override;
+};
 
 InputParameters
 RhieChowMassFlux::validParams()
@@ -100,7 +149,6 @@ RhieChowMassFlux::RhieChowMassFlux(const InputParameters & params)
     _HbyA_flux(_moose_mesh, blockIDs(), "HbyA_flux"),
     _phiHbyA_flux(_moose_mesh, blockIDs(), "phiHbyA_flux"),
     _pressure_predictor_flux(_moose_mesh, blockIDs(), "pressure_predictor_flux"),
-    _pressure_predictor_mass_flux(_moose_mesh, blockIDs(), "pressure_predictor_mass_flux"),
     _phig_flux(_moose_mesh, blockIDs(), "phig_flux"),
     _Ainv(_moose_mesh, blockIDs(), "Ainv"),
     _pressure_Ainv(_moose_mesh, blockIDs(), "pressure_Ainv"),
@@ -142,8 +190,6 @@ RhieChowMassFlux::RhieChowMassFlux(const InputParameters & params)
     UserObject::_subproblem.addFunctor("HbyA", _HbyA_flux, tid);
     UserObject::_subproblem.addFunctor("phiHbyA", _phiHbyA_flux, tid);
     UserObject::_subproblem.addFunctor("pressure_predictor_flux", _pressure_predictor_flux, tid);
-    UserObject::_subproblem.addFunctor(
-        "pressure_predictor_mass_flux", _pressure_predictor_mass_flux, tid);
     UserObject::_subproblem.addFunctor("phig", _phig_flux, tid);
     UserObject::_subproblem.addFunctor("pressure_equation_flux", _pressure_equation_flux, tid);
     UserObject::_subproblem.addFunctor(
@@ -155,6 +201,8 @@ RhieChowMassFlux::RhieChowMassFlux(const InputParameters & params)
     mooseError(this->name(),
                " should only be used with a linear segregated thermal-hydraulics solver!");
 }
+
+RhieChowMassFlux::~RhieChowMassFlux() = default;
 
 void
 RhieChowMassFlux::linkMomentumPressureSystems(
@@ -183,7 +231,6 @@ RhieChowMassFlux::meshChanged()
   _HbyA_flux.clear();
   _phiHbyA_flux.clear();
   _pressure_predictor_flux.clear();
-  _pressure_predictor_mass_flux.clear();
   _phig_flux.clear();
   _Ainv.clear();
   _pressure_Ainv.clear();
@@ -286,7 +333,6 @@ RhieChowMassFlux::setupMeshInformation()
     _pressure_predictor_flux_adjustment[fi->id()] = 0.0;
     _pressure_predictor_base_flux[fi->id()] = 0.0;
     _pressure_predictor_flux[fi->id()] = 0.0;
-    _pressure_predictor_mass_flux[fi->id()] = 0.0;
     _pressure_Ainv[fi->id()] = RealVectorValue();
   }
 }
@@ -302,9 +348,6 @@ RhieChowMassFlux::initialize()
 
   for (const auto & pair : _pressure_predictor_flux)
     _pressure_predictor_flux[pair.first] = 0;
-
-  for (const auto & pair : _pressure_predictor_mass_flux)
-    _pressure_predictor_mass_flux[pair.first] = 0;
 
   for (const auto & pair : _phig_flux)
     _phig_flux[pair.first] = 0;
@@ -552,7 +595,6 @@ RhieChowMassFlux::updatePressurePredictorFaceState()
     _pressure_predictor_base_flux[face_id] = pressurePredictorFlux(fi);
     _phiHbyA_flux[face_id] = _pressure_predictor_base_flux[face_id];
     _pressure_predictor_flux[face_id] = _pressure_predictor_base_flux[face_id];
-    _pressure_predictor_mass_flux[face_id] = _pressure_predictor_flux[face_id];
   }
 
   _pressure_predictor_face_state_valid = true;
