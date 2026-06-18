@@ -459,7 +459,7 @@ RhieChowMassFlux::maxCourant(const Real dt) const
     if (!fi)
       continue;
 
-    const Real face_measure = fi->faceArea() * fi->faceCoord();
+    const Real face_measure = faceMeasure(*fi);
     const Real face_volumetric_flux = std::abs(getVolumetricFaceFlux(*fi));
     const Real volumetric_flux = face_volumetric_flux * face_measure;
 
@@ -517,7 +517,7 @@ RhieChowMassFlux::computeDiscretePressureFaceFlux(const FaceInfo * fi) const
   PetscVectorReader p_reader(*_pressure_system->system().current_local_solution);
 
   _p_diffusion_kernel->setupFaceData(fi);
-  _p_diffusion_kernel->setCurrentFaceArea(1.0);
+  _p_diffusion_kernel->setCurrentFaceArea(pressureDiffusionFaceArea(fi));
 
   if (_p->isInternalFace(*fi))
   {
@@ -537,25 +537,17 @@ RhieChowMassFlux::computeDiscretePressureFaceFlux(const FaceInfo * fi) const
            elem_rhs_contribution;
   }
 
-  if (!fi->boundaryIDs().empty())
+  if (auto * bc_pointer = pressureBoundaryCondition(fi))
   {
-    mooseAssert(fi->boundaryIDs().size() == 1, "We should only have one boundary on every face.");
-    if (auto * bc_pointer = _p->getBoundaryCondition(*fi->boundaryIDs().begin()))
-    {
-      bc_pointer->setupFaceData(
-          fi, fi->faceType(std::make_pair(_p->number(), _global_pressure_system_number)));
+    const ElemInfo & elem_info =
+        hasBlocks(fi->elemPtr()->subdomain_id()) ? *fi->elemInfo() : *fi->neighborInfo();
+    const auto elem_dof = elem_info.dofIndices()[_global_pressure_system_number][0];
+    const auto p_elem_value = p_reader(elem_dof);
+    const auto matrix_contribution =
+        _p_diffusion_kernel->computeBoundaryMatrixContribution(*bc_pointer);
+    const auto rhs_contribution = _p_diffusion_kernel->computeBoundaryRHSContribution(*bc_pointer);
 
-      const ElemInfo & elem_info =
-          hasBlocks(fi->elemPtr()->subdomain_id()) ? *fi->elemInfo() : *fi->neighborInfo();
-      const auto elem_dof = elem_info.dofIndices()[_global_pressure_system_number][0];
-      const auto p_elem_value = p_reader(elem_dof);
-      const auto matrix_contribution =
-          _p_diffusion_kernel->computeBoundaryMatrixContribution(*bc_pointer);
-      const auto rhs_contribution =
-          _p_diffusion_kernel->computeBoundaryRHSContribution(*bc_pointer);
-
-      return p_elem_value * matrix_contribution - rhs_contribution;
-    }
+    return p_elem_value * matrix_contribution - rhs_contribution;
   }
 
   return 0.0;
@@ -1048,6 +1040,7 @@ RhieChowMassFlux::updateVelocityBoundaryState()
 {
   const auto time_arg = Moose::currentState();
 
+  _velocity_boundary_state_valid = false;
   for (auto & component_face_values : _boundary_velocity_face_values)
     component_face_values.clear();
 
@@ -1066,19 +1059,8 @@ RhieChowMassFlux::updateVelocityBoundaryState()
 
     for (const auto component : index_range(_vel))
     {
-      if (!fi->boundaryIDs().empty())
+      if (auto * bc_pointer = velocityBoundaryCondition(fi, component))
       {
-        mooseAssert(fi->boundaryIDs().size() == 1,
-                    "Expected at most one physical boundary id on a FV boundary face.");
-      }
-
-      if (!fi->boundaryIDs().empty() &&
-          _vel[component]->getBoundaryCondition(*fi->boundaryIDs().begin()))
-      {
-        auto * bc_pointer = _vel[component]->getBoundaryCondition(*fi->boundaryIDs().begin());
-        bc_pointer->setupFaceData(fi,
-                                  fi->faceType(std::make_pair(_vel[component]->number(),
-                                                              _vel[component]->sys().number())));
         _boundary_velocity_face_values[component][fi->id()] = bc_pointer->computeBoundaryValue();
       }
       else
@@ -1103,6 +1085,14 @@ RhieChowMassFlux::updateVelocityBoundaryState()
   }
 
   _velocity_boundary_state_valid = true;
+  postUpdateVelocityBoundaryState();
+}
+
+LinearFVBoundaryCondition *
+RhieChowMassFlux::velocityBoundaryCondition(const FaceInfo * fi, const unsigned int component) const
+{
+  mooseAssert(component < _vel.size(), "Velocity component index out of range.");
+  return boundaryCondition(fi, *_vel[component], _vel[component]->sys().number());
 }
 
 Real
@@ -1120,19 +1110,8 @@ RhieChowMassFlux::boundaryVelocityValue(const FaceInfo * fi,
         it != _boundary_velocity_face_values[component].end())
       return it->second;
 
-  if (!fi->boundaryIDs().empty())
-  {
-    mooseAssert(fi->boundaryIDs().size() == 1,
-                "Expected at most one physical boundary id on a FV boundary face.");
-
-    if (auto * bc_pointer = _vel[component]->getBoundaryCondition(*fi->boundaryIDs().begin()))
-    {
-      bc_pointer->setupFaceData(
-          fi,
-          fi->faceType(std::make_pair(_vel[component]->number(), _vel[component]->sys().number())));
-      return bc_pointer->computeBoundaryValue();
-    }
-  }
+  if (auto * bc_pointer = velocityBoundaryCondition(fi, component))
+    return bc_pointer->computeBoundaryValue();
 
   const ElemInfo & elem_info =
       hasBlocks(fi->elemPtr()->subdomain_id()) ? *fi->elemInfo() : *fi->neighborInfo();
@@ -1180,19 +1159,24 @@ RhieChowMassFlux::boundaryVolumetricFluxTarget(const FaceInfo * fi,
 }
 
 Real
+RhieChowMassFlux::computeFaceNormalAinv(const RealVectorValue & face_ainv,
+                                        const RealVectorValue & face_normal) const
+{
+  Real normal_ainv = 0.0;
+  for (const auto dim_i : make_range(_dim))
+    normal_ainv += face_ainv(dim_i) * face_normal(dim_i) * face_normal(dim_i);
+
+  return normal_ainv;
+}
+
+Real
 RhieChowMassFlux::boundaryNormalAinv(const FaceInfo * fi) const
 {
   mooseAssert(fi && !_vel[0]->isInternalFace(*fi),
               "boundaryNormalAinv should only be called on boundary faces.");
 
   const auto & face_ainv = libmesh_map_find(_Ainv, fi->id());
-  const auto & normal = fi->normal();
-
-  Real normal_ainv = 0.0;
-  for (const auto dim_i : make_range(_dim))
-    normal_ainv += face_ainv(dim_i) * normal(dim_i) * normal(dim_i);
-
-  return normal_ainv;
+  return computeFaceNormalAinv(face_ainv, fi->normal());
 }
 
 bool
@@ -1201,9 +1185,7 @@ RhieChowMassFlux::isAdjustablePressureBoundaryFace(const FaceInfo * fi) const
   if (!fi || _vel[0]->isInternalFace(*fi) || fi->boundaryIDs().empty())
     return false;
 
-  mooseAssert(fi->boundaryIDs().size() == 1,
-              "Expected a single boundary id on a FV boundary face.");
-  if (const auto * bc_pointer = _p->getBoundaryCondition(*fi->boundaryIDs().begin()))
+  if (const auto * bc_pointer = boundaryCondition(fi, *_p, _global_pressure_system_number))
     return dynamic_cast<const LinearFVPressureFluxBC *>(bc_pointer) ||
            dynamic_cast<const LinearFVPressureSymmetryBC *>(bc_pointer);
 
@@ -1231,6 +1213,41 @@ Real
 RhieChowMassFlux::pressureBoundaryNormalAinv(const FaceInfo * fi) const
 {
   return boundaryNormalAinv(fi);
+}
+
+LinearFVBoundaryCondition *
+RhieChowMassFlux::boundaryCondition(const FaceInfo * fi,
+                                    const MooseLinearVariableFVReal & var,
+                                    const unsigned int system_number) const
+{
+  if (!fi || fi->boundaryIDs().empty())
+    return nullptr;
+
+  mooseAssert(fi->boundaryIDs().size() == 1,
+              "Expected at most one physical boundary id on a FV boundary face.");
+  auto * const bc_pointer = var.getBoundaryCondition(*fi->boundaryIDs().begin());
+  if (bc_pointer)
+    bc_pointer->setupFaceData(fi, fi->faceType(std::make_pair(var.number(), system_number)));
+
+  return bc_pointer;
+}
+
+LinearFVBoundaryCondition *
+RhieChowMassFlux::pressureBoundaryCondition(const FaceInfo * fi) const
+{
+  return boundaryCondition(fi, *_p, _global_pressure_system_number);
+}
+
+Real
+RhieChowMassFlux::pressureDiffusionFaceArea(const FaceInfo * /*fi*/) const
+{
+  return 1.0;
+}
+
+Real
+RhieChowMassFlux::faceMeasure(const FaceInfo & fi) const
+{
+  return fi.faceArea() * fi.faceCoord();
 }
 
 void
@@ -1277,7 +1294,7 @@ RhieChowMassFlux::updatePressureBoundaryNormalGradients(const bool apply_pressur
     for (const auto * fi : _flow_face_info)
       if (isAdjustablePressureBoundaryFace(fi))
       {
-        const Real face_measure = fi->faceArea() * fi->faceCoord();
+        const Real face_measure = faceMeasure(*fi);
         const Real required_pressure_flux =
             _pressure_predictor_flux[fi->id()] + pressureBoundaryTargetFlux(fi, time_arg);
         integrated_source_imbalance += pressureCorrectionFluxIsIntegrated()
@@ -1293,7 +1310,7 @@ RhieChowMassFlux::updatePressureBoundaryNormalGradients(const bool apply_pressur
       for (const auto * fi : _flow_face_info)
         if (isAdjustablePressureBoundaryFace(fi))
         {
-          const Real face_measure = fi->faceArea() * fi->faceCoord();
+          const Real face_measure = faceMeasure(*fi);
           const Real source_adjustment = pressureCorrectionFluxIsIntegrated()
                                              ? uniform_source_adjustment_density * face_measure
                                              : uniform_source_adjustment_density;
@@ -1317,7 +1334,7 @@ RhieChowMassFlux::updatePressureBoundaryNormalGradients(const bool apply_pressur
 
     const Real required_pressure_flux =
         _pressure_predictor_flux[fi->id()] + pressureBoundaryTargetFlux(fi, time_arg);
-    const Real face_measure = fi->faceArea() * fi->faceCoord();
+    const Real face_measure = faceMeasure(*fi);
     if (pressureCorrectionFluxIsIntegrated() && face_measure <= libMesh::TOLERANCE)
     {
       _pressure_boundary_normal_gradient[fi->id()] = 0.0;
@@ -1434,17 +1451,8 @@ RhieChowMassFlux::populateCouplingFunctors(
 
       const auto boundary_value_from_bc = [this, fi](const unsigned int dim_i)
       {
-        if (fi->boundaryIDs().empty())
-          return std::numeric_limits<Real>::quiet_NaN();
-
-        mooseAssert(fi->boundaryIDs().size() == 1,
-                    "Expected at most one physical boundary id on a FV boundary face.");
-        if (auto * bc_pointer = _vel[dim_i]->getBoundaryCondition(*fi->boundaryIDs().begin()))
-        {
-          bc_pointer->setupFaceData(
-              fi, fi->faceType(std::make_pair(_vel[dim_i]->number(), _vel[dim_i]->sys().number())));
+        if (auto * bc_pointer = velocityBoundaryCondition(fi, dim_i))
           return bc_pointer->computeBoundaryValue();
-        }
 
         return std::numeric_limits<Real>::quiet_NaN();
       };
