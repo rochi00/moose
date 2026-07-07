@@ -310,8 +310,10 @@ MooseLinearVariableFV<OutputType>::evaluate(const FaceArg & face, const StateArg
 
   if (face_type == FaceInfo::VarFaceNeighbors::BOTH)
     return Moose::FV::interpolate(*this, face, state);
-  else if (auto * bc_pointer = this->getBoundaryCondition(*fi))
+  else if (auto * bc_pointer = state.state == 0 ? this->getBoundaryCondition(*fi) : nullptr)
+  {
     return bc_pointer->computeBoundaryValue();
+  }
   // If no boundary condition is defined but we are evaluating on a boundary, just return the
   // element value
   else if (face_type == FaceInfo::VarFaceNeighbors::ELEM)

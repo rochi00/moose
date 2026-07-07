@@ -20,6 +20,9 @@ LinearFVAdvectionDiffusionFunctorRobinBCBase::LinearFVAdvectionDiffusionFunctorR
     const InputParameters & parameters)
   : LinearFVAdvectionDiffusionBC(parameters)
 {
+  // For beta calculation which is lagged
+  // TODO: consider linear iteration lagging vs time iteration lagging
+  _var.sys().needSolutionState(1, Moose::SolutionIterationType::Nonlinear);
 }
 
 Real
@@ -32,10 +35,12 @@ LinearFVAdvectionDiffusionFunctorRobinBCBase::computeBoundaryValue() const
                                ? _current_face_info->elemInfo()
                                : _current_face_info->neighborInfo();
   const auto state = determineState();
+  const auto old_state = Moose::previousNonlinearState();
 
-  const auto alpha = getAlpha(face, state);
-  const auto beta = getBeta(face, state);
-  const auto gamma = getGamma(face, state);
+  const auto alpha = getAlpha(face, old_state);
+  // we have to lag this to avoid recursive calls
+  const auto beta = getBeta(face, old_state);
+  const auto gamma = getGamma(face, old_state);
 
   const auto phi = _var.getElemValue(*elem_info, state);
   const auto grad_phi = _var.gradSln(*elem_info, state);
@@ -54,10 +59,12 @@ LinearFVAdvectionDiffusionFunctorRobinBCBase::computeBoundaryNormalGradient() co
 {
   const auto face = singleSidedFaceArg(_current_face_info);
   const auto state = determineState();
-  const auto alpha = getAlpha(face, state);
+  const auto old_state = Moose::previousNonlinearState();
+
+  const auto alpha = getAlpha(face, old_state);
   mooseAssert(!MooseUtils::isZero(alpha), "Alpha should not be 0!");
-  const auto beta = getBeta(face, state);
-  const auto gamma = getGamma(face, state);
+  const auto beta = getBeta(face, old_state);
+  const auto gamma = getGamma(face, old_state);
   return (gamma - beta * computeBoundaryValue()) / alpha;
 }
 
@@ -67,8 +74,10 @@ LinearFVAdvectionDiffusionFunctorRobinBCBase::computeBoundaryValueMatrixContribu
 {
   const auto face = singleSidedFaceArg(_current_face_info);
   const auto state = determineState();
+  const auto old_state = Moose::previousNonlinearState();
+
   const auto alpha = getAlpha(face, state);
-  const auto beta = getBeta(face, state);
+  const auto beta = getBeta(face, old_state);
   const auto & nhat = _current_face_info->normal();
 
   return alpha / (alpha + (beta * computeCellToFaceVector() * nhat));
@@ -86,9 +95,11 @@ LinearFVAdvectionDiffusionFunctorRobinBCBase::computeBoundaryValueRHSContributio
                                ? _current_face_info->elemInfo()
                                : _current_face_info->neighborInfo();
 
-  const auto alpha = getAlpha(face, state);
-  const auto beta = getBeta(face, state);
-  const auto gamma = getGamma(face, state);
+  const auto old_state = Moose::previousNonlinearState();
+
+  const auto alpha = getAlpha(face, old_state);
+  const auto beta = getBeta(face, old_state);
+  const auto gamma = getGamma(face, old_state);
 
   const auto & grad_phi = _var.gradSln(*elem_info, state);
 
@@ -108,9 +119,10 @@ LinearFVAdvectionDiffusionFunctorRobinBCBase::computeBoundaryGradientMatrixContr
 {
   const auto face = singleSidedFaceArg(_current_face_info);
   const auto state = determineState();
+  const auto old_state = Moose::previousNonlinearState();
 
-  const auto alpha = getAlpha(face, state);
-  const auto beta = getBeta(face, state);
+  const auto alpha = getAlpha(face, old_state);
+  const auto beta = getBeta(face, old_state);
 
   const auto & nhat = _current_face_info->normal();
 
@@ -128,11 +140,12 @@ LinearFVAdvectionDiffusionFunctorRobinBCBase::computeBoundaryGradientRHSContribu
                                : _current_face_info->neighborInfo();
   const auto face = singleSidedFaceArg(_current_face_info);
   const auto state = determineState();
-  const auto & grad_phi = _var.gradSln(*elem_info, state);
+  const auto & grad_phi = _var.gradSln(*elem_info,state);
+  const auto old_state = Moose::previousNonlinearState();
 
-  const auto alpha = getAlpha(face, state);
-  const auto beta = getBeta(face, state);
-  const auto gamma = getGamma(face, state);
+  const auto alpha = getAlpha(face, old_state);
+  const auto beta = getBeta(face, old_state);
+  const auto gamma = getGamma(face, old_state);
 
   const auto & nhat = _current_face_info->normal();
 
