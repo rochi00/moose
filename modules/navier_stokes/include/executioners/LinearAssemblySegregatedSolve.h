@@ -14,6 +14,8 @@
 #include "SIMPLESolveBase.h"
 #include "CHTHandler.h"
 
+class LaserBeamFoamLiquidFractionCorrector;
+
 /**
  * Common base class for segregated solvers for the Navier-Stokes
  * equations with linear FV assembly routines. Once the nonlinear
@@ -99,6 +101,8 @@ protected:
     std::size_t pressure_index = Moose::invalid_size_t;
     /// Index of the energy equation in ns_residuals
     std::size_t energy_index = Moose::invalid_size_t;
+    /// Index of the liquid-fraction correction in ns_residuals
+    std::size_t liquid_fraction_correction_index = Moose::invalid_size_t;
     /// Index of the solid energy equation in ns_residuals
     std::size_t solid_energy_index = Moose::invalid_size_t;
     /// Indices of active scalar equations in ns_residuals
@@ -148,6 +152,18 @@ protected:
 
   /// Pointer to the linear system corresponding to the fluid energy equation
   LinearSystem * _energy_system;
+
+  /// Optional liquid-fraction corrector applied inside the energy solve loop
+  LaserBeamFoamLiquidFractionCorrector * _liquid_fraction_corrector;
+
+  /// Minimum number of temperature/liquid-fraction corrections
+  const unsigned int _min_temperature_correctors;
+
+  /// Maximum number of temperature/liquid-fraction corrections
+  const unsigned int _max_temperature_correctors;
+
+  /// Liquid-fraction correction tolerance for the energy loop
+  const Real _liquid_fraction_tolerance;
 
   /// The number of the system corresponding to the solid energy equation
   const unsigned int _solid_energy_sys_number;

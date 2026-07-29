@@ -69,6 +69,18 @@ WCNSLinearFVConservativeSharpInterfaceVOFPhysics::validParams()
       "interface_normal_functor",
       "interface_unit_normal_face",
       "Face-oriented interface unit normal used by the explicit compression flux.");
+  params.addParam<MooseFunctorName>(
+      "phase_change_divergence",
+      "",
+      "Optional phase-change velocity-divergence functor. When supplied, the VOF action adds the "
+      "consistent material-fraction source alpha * phase_change_divergence.");
+  params.addParam<MooseFunctorName>("phase_change_volume_fraction_source_name",
+                                    "alpha_phase_change_divergence",
+                                    "Name of the generated material-fraction source functor.");
+  params.addParam<MooseFunctorName>(
+      "phase_change_volume_fraction_reaction_coeff_name",
+      "alpha_phase_change_reaction_coeff",
+      "Name of the generated implicit material-fraction reaction coefficient functor.");
   params.addParam<std::vector<VariableName>>(
       "confined_scalar_variables",
       {},
@@ -139,7 +151,10 @@ WCNSLinearFVConservativeSharpInterfaceVOFPhysics::validParams()
 
   params.addParamNamesToGroup("system_names passive_scalar_names initial_scalar_variables "
                               "passive_scalar_advection_interpolation compression_factor "
-                              "interface_normal_functor confined_scalar_variables "
+                              "interface_normal_functor phase_change_divergence "
+                              "phase_change_volume_fraction_source_name "
+                              "phase_change_volume_fraction_reaction_coeff_name "
+                              "confined_scalar_variables "
                               "confined_scalar_backflow_concentration confined_scalar_alpha_floor "
                               "confined_scalar_concentration_min "
                               "confined_scalar_concentration_max thermal_energy_variable "
@@ -228,6 +243,25 @@ WCNSLinearFVConservativeSharpInterfaceVOFPhysics::addMaterials()
                             getParam<MooseFunctorName>("liquid_dynamic_viscosity_name"),
                             getParam<MooseFunctorName>("gas_dynamic_viscosity_name"),
                             true);
+
+  const auto phase_change_divergence = getParam<MooseFunctorName>("phase_change_divergence");
+  if (!phase_change_divergence.empty())
+  {
+    const auto coeff_name =
+        getParam<MooseFunctorName>("phase_change_volume_fraction_reaction_coeff_name");
+    if (!getProblem().hasFunctor(coeff_name, /*tid=*/0))
+    {
+      auto params = getFactory().getValidParams("ParsedFunctorMaterial");
+      assignBlocks(params, _blocks);
+      params.set<std::string>("property_name") = coeff_name;
+      params.set<std::vector<std::string>>("functor_names") = {phase_change_divergence};
+      params.set<std::vector<std::string>>("functor_symbols") = {"phase_change_divergence"};
+      params.set<std::string>("expression") = "-phase_change_divergence";
+      getProblem().addMaterial("ParsedFunctorMaterial",
+                               prefix() + "phase_change_volume_fraction_reaction_coeff",
+                               params);
+    }
+  }
 }
 
 void
@@ -268,6 +302,9 @@ WCNSLinearFVConservativeSharpInterfaceVOFPhysics::addUserObjects()
   params.set<MooseFunctorName>("liquid_density") =
       getParam<MooseFunctorName>("liquid_density_name");
   params.set<MooseFunctorName>("gas_density") = getParam<MooseFunctorName>("gas_density_name");
+  if (!getParam<MooseFunctorName>("phase_change_divergence").empty())
+    params.set<MooseFunctorName>("source_sp") =
+        getParam<MooseFunctorName>("phase_change_divergence");
   if (isParamValid("liquid_specific_heat_name") || isParamValid("gas_specific_heat_name"))
   {
     if (!isParamValid("liquid_specific_heat_name"))
@@ -327,6 +364,25 @@ WCNSLinearFVConservativeSharpInterfaceVOFPhysics::addScalarAdvectionKernels()
       _blocks,
       [](InputParameters & params)
       { params.set<MooseFunctorName>("face_flux") = "vof_transport_phi"; });
+
+  addScalarSourceKernels();
+}
+
+void
+WCNSLinearFVConservativeSharpInterfaceVOFPhysics::addScalarSourceKernels()
+{
+  if (_phase_change_source_kernel_added ||
+      getParam<MooseFunctorName>("phase_change_divergence").empty())
+    return;
+
+  const std::string kernel_type = "LinearFVReaction";
+  auto params = getFactory().getValidParams(kernel_type);
+  assignBlocks(params, _blocks);
+  params.set<LinearVariableName>("variable") = _passive_scalar_names[0];
+  params.set<MooseFunctorName>("coeff") =
+      getParam<MooseFunctorName>("phase_change_volume_fraction_reaction_coeff_name");
+  getProblem().addLinearFVKernel(kernel_type, prefix() + "alpha_phase_change_reaction", params);
+  _phase_change_source_kernel_added = true;
 }
 
 void

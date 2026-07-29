@@ -9,6 +9,7 @@
 
 #include "LinearAssemblySegregatedSolve.h"
 #include "FEProblem.h"
+#include "LaserBeamFoamLiquidFractionCorrector.h"
 #include "SegregatedSolverUtils.h"
 #include "LinearSystem.h"
 #include "Executioner.h"
@@ -100,6 +101,32 @@ LinearAssemblySegregatedSolve::validParams()
                               "should_solve_passive_scalars should_solve_active_scalars",
                               "Solve control");
 
+  params.addParam<UserObjectName>("liquid_fraction_corrector",
+                                  "",
+                                  "Optional LaserBeamFoamLiquidFractionCorrector user object to "
+                                  "apply after each energy solve.");
+  params.addRangeCheckedParam<unsigned int>(
+      "min_temperature_correctors",
+      1,
+      "min_temperature_correctors>0",
+      "Minimum number of temperature/liquid-fraction corrections.");
+  params.addRangeCheckedParam<unsigned int>(
+      "max_temperature_correctors",
+      1,
+      "max_temperature_correctors>0",
+      "Maximum number of temperature/liquid-fraction corrections.");
+  params.addRangeCheckedParam<Real>(
+      "liquid_fraction_tolerance",
+      1e-6,
+      "liquid_fraction_tolerance>=0",
+      "Stop the energy correction loop when the maximum liquid-fraction update is "
+      "below this tolerance.");
+  params.addParamNamesToGroup("liquid_fraction_corrector "
+                              "min_temperature_correctors "
+                              "max_temperature_correctors "
+                              "liquid_fraction_tolerance",
+                              "Energy Equation");
+
   /*
    * Parameters to control the conjugate heat transfer
    */
@@ -116,6 +143,10 @@ LinearAssemblySegregatedSolve::LinearAssemblySegregatedSolve(Executioner & ex)
                            ? _problem.linearSysNum(getParam<SolverSystemName>("energy_system"))
                            : libMesh::invalid_uint),
     _energy_system(_has_energy_system ? &_problem.getLinearSystem(_energy_sys_number) : nullptr),
+    _liquid_fraction_corrector(nullptr),
+    _min_temperature_correctors(getParam<unsigned int>("min_temperature_correctors")),
+    _max_temperature_correctors(getParam<unsigned int>("max_temperature_correctors")),
+    _liquid_fraction_tolerance(getParam<Real>("liquid_fraction_tolerance")),
     _solid_energy_sys_number(
         _has_solid_energy_system
             ? _problem.linearSysNum(getParam<SolverSystemName>("solid_energy_system"))
@@ -145,6 +176,10 @@ LinearAssemblySegregatedSolve::LinearAssemblySegregatedSolve(Executioner & ex)
   if (_has_solid_energy_system && !_should_solve_energy && _should_solve_solid_energy)
     paramError("should_solve_solid_energy",
                "Solid energy solve cannot be enabled when the fluid energy solve is disabled.");
+  if (_max_temperature_correctors < _min_temperature_correctors)
+    paramError("max_temperature_correctors",
+               "The maximum number of temperature correctors must be greater than or equal to "
+               "the minimum.");
 
   // Even when the explicit momentum predictor solve is disabled, the pressure
   // corrector still needs the assembled momentum operator to build HbyA, rAU, and the transient
@@ -429,6 +464,10 @@ LinearAssemblySegregatedSolve::addMomentumPredictorExplicitForcing(const unsigne
 void
 LinearAssemblySegregatedSolve::initialSetup()
 {
+  if (!_liquid_fraction_corrector && !getParam<UserObjectName>("liquid_fraction_corrector").empty())
+    _liquid_fraction_corrector = const_cast<LaserBeamFoamLiquidFractionCorrector *>(
+        &getUserObject<LaserBeamFoamLiquidFractionCorrector>("liquid_fraction_corrector"));
+
   if (_cht.enabled())
   {
     _cht.deduceCHTBoundaryCoupling();
@@ -782,6 +821,7 @@ LinearAssemblySegregatedSolve::solve()
   const auto & momentum_indices = residual_storage.momentum_indices;
   const auto pressure_index = residual_storage.pressure_index;
   const auto energy_index = residual_storage.energy_index;
+  const auto liquid_fraction_correction_index = residual_storage.liquid_fraction_correction_index;
   const auto solid_energy_index = residual_storage.solid_energy_index;
   const auto & active_scalar_indices = residual_storage.active_scalar_indices;
   const auto & turbulence_indices = residual_storage.turbulence_indices;
@@ -837,20 +877,47 @@ LinearAssemblySegregatedSolve::solve()
     {
       // If there is no CHT specified this will just do go once through this block
       _cht.resetCHTConvergence();
+      if (liquid_fraction_correction_index != Moose::invalid_size_t)
+        ns_residuals[liquid_fraction_correction_index] = std::make_pair(0, 0.0);
       while (!_cht.converged())
       {
         if (_cht.enabled())
           _cht.updateCHTBoundaryCouplingFields(NS::CHTSide::FLUID);
 
-        // We set the preconditioner/controllable parameters through petsc options. Linear
-        // tolerances will be overridden within the solver.
-        Moose::PetscSupport::petscSetOptions(_energy_petsc_options, solver_params);
-        ns_residuals[energy_index] = solveAdvectedSystem(_energy_sys_number,
-                                                         *_energy_system,
-                                                         _energy_equation_relaxation,
-                                                         _energy_linear_control,
-                                                         _energy_l_abs_tol,
-                                                         _energy_field_relaxation);
+        unsigned int temperature_corrector = 0;
+        Real liquid_fraction_correction = std::numeric_limits<Real>::max();
+        Real liquid_fraction_outer_correction = 0;
+        do
+        {
+          // We set the preconditioner/controllable parameters through petsc options. Linear
+          // tolerances will be overridden within the solver.
+          Moose::PetscSupport::petscSetOptions(_energy_petsc_options, solver_params);
+          ns_residuals[energy_index] = solveAdvectedSystem(_energy_sys_number,
+                                                           *_energy_system,
+                                                           _energy_equation_relaxation,
+                                                           _energy_linear_control,
+                                                           _energy_l_abs_tol,
+                                                           _energy_field_relaxation);
+
+          temperature_corrector++;
+          if (_liquid_fraction_corrector)
+          {
+            liquid_fraction_correction = _liquid_fraction_corrector->correctLiquidFraction();
+            liquid_fraction_outer_correction =
+                std::max(liquid_fraction_outer_correction, liquid_fraction_correction);
+            _console << "Correcting liquid fraction, mean residual = "
+                     << _liquid_fraction_corrector->meanCorrection()
+                     << ", max residual = " << liquid_fraction_correction << std::endl;
+            _problem.execute(EXEC_NONLINEAR);
+          }
+        } while (_liquid_fraction_corrector &&
+                 temperature_corrector < _max_temperature_correctors &&
+                 (temperature_corrector < _min_temperature_correctors ||
+                  liquid_fraction_correction > _liquid_fraction_tolerance));
+
+        if (liquid_fraction_correction_index != Moose::invalid_size_t)
+          ns_residuals[liquid_fraction_correction_index] =
+              std::make_pair(temperature_corrector, liquid_fraction_outer_correction);
 
         if (_has_pm_radiation_systems && _should_solve_pm_radiation)
         {
@@ -939,7 +1006,8 @@ LinearAssemblySegregatedSolve::solve()
                                 _active_scalar_equation_relaxation[i],
                                 _active_scalar_linear_control,
                                 _active_scalar_l_abs_tol);
-        // ns_residuals[momentum_residual.size() + 1 + _has_energy_system + _has_solid_energy_system +
+        // ns_residuals[momentum_residual.size() + 1 + _has_energy_system + _has_solid_energy_system
+        // +
         //              _pm_radiation_system_names.size() + i] =
         //              solveAdvectedSystem(_active_scalar_system_numbers[i],
         //                                       *_active_scalar_systems[i],
@@ -959,8 +1027,10 @@ LinearAssemblySegregatedSolve::solve()
       for (const auto i : index_range(_turbulence_system_names))
       {
         ns_residuals[turbulence_indices[i]] =
-        // ns_residuals[momentum_residual.size() + 1 + _has_energy_system + _has_solid_energy_system +
-        //              _pm_radiation_system_names.size() + _active_scalar_system_names.size() + i] =
+            // ns_residuals[momentum_residual.size() + 1 + _has_energy_system +
+            // _has_solid_energy_system +
+            //              _pm_radiation_system_names.size() + _active_scalar_system_names.size() +
+            //              i] =
             solveAdvectedSystem(_turbulence_system_numbers[i],
                                 *_turbulence_systems[i],
                                 _turbulence_equation_relaxation[i],
@@ -1050,6 +1120,13 @@ LinearAssemblySegregatedSolve::setupResidualStorage() const
     storage.energy_index = storage.ns_residuals.size();
     storage.ns_residuals.push_back(std::make_pair(0, 1.0));
     storage.ns_abs_tols.push_back(_energy_absolute_tolerance);
+
+    if (_liquid_fraction_corrector)
+    {
+      storage.liquid_fraction_correction_index = storage.ns_residuals.size();
+      storage.ns_residuals.push_back(std::make_pair(0, 1.0));
+      storage.ns_abs_tols.push_back(_liquid_fraction_tolerance);
+    }
   }
 
   if (_has_solid_energy_system && _should_solve_solid_energy)

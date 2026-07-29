@@ -112,6 +112,10 @@ private:
   Real cellAlpha(const ElemInfo & elem_info) const;
   Real oldCellAlpha(const ElemInfo & elem_info) const;
   Real boundedAlpha(Real value) const;
+  Real sourceSp(const ElemInfo & elem_info) const;
+  Real sourceSu(const ElemInfo & elem_info) const;
+  Real
+  sourceAwareAlpha(const ElemInfo & elem_info, Real net_alpha_flux, Real dt, Real old_alpha) const;
   Real cellRhoCp(const ElemInfo & elem_info, Real alpha) const;
   Real thermalEnergyTemperature(const ElemInfo & elem_info) const;
   Real donorFlux(const FaceInfo & fi, const FaceTransportData & face_data, Real elem_alpha) const;
@@ -145,6 +149,8 @@ private:
   const Moose::Functor<RealVectorValue> & _interface_normal;
   const Moose::Functor<Real> & _liquid_density;
   const Moose::Functor<Real> & _gas_density;
+  const Moose::Functor<Real> & _source_sp;
+  const Moose::Functor<Real> & _source_su;
   const Moose::Functor<Real> * const _liquid_specific_heat;
   const Moose::Functor<Real> * const _gas_specific_heat;
   const Moose::Functor<Real> * const _thermal_energy_temperature;

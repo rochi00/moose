@@ -29,7 +29,7 @@ protected:
 private:
   void addScalarAdvectionKernels() override;
   void addScalarDiffusionKernels() override {}
-  void addScalarSourceKernels() override {}
+  void addScalarSourceKernels() override;
   void addScalarInletBC() override {}
   void addScalarWallBC() override {}
   void addScalarOutletBC() override;
@@ -39,4 +39,6 @@ private:
                                  const MooseFunctorName & phase_1_name,
                                  const MooseFunctorName & phase_2_name,
                                  bool limit_phase_fraction);
+
+  bool _phase_change_source_kernel_added = false;
 };
