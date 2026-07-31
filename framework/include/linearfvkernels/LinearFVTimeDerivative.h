@@ -27,6 +27,11 @@ public:
    */
   LinearFVTimeDerivative(const InputParameters & params);
 
+  bool usesConservativeFactor(const MooseFunctorName & factor_name) const
+  {
+    return _use_old_state_factor_for_rhs && getParam<MooseFunctorName>("factor") == factor_name;
+  }
+
   virtual Real computeMatrixContribution() override;
 
   virtual Real computeRightHandSideContribution() override;

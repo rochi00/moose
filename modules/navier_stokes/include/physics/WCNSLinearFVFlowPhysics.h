@@ -77,8 +77,14 @@ protected:
   virtual void checkIncompatibleRhieChowUserObject(const RhieChowMassFlux & rc_obj) const;
   virtual void setRhieChowUserObjectParams(InputParameters & params) const;
   virtual std::string momentumFluxKernelType() const { return "LinearWCNSFVMomentumFlux"; }
-  virtual MooseFunctorName momentumFluxMassFluxFunctorName() const { return ""; }
-  virtual bool momentumFluxMassFluxFunctorIsIntegrated() const { return false; }
+  virtual MooseFunctorName momentumFluxMassFluxFunctorName() const
+  {
+    return getParam<MooseFunctorName>("momentum_mass_flux");
+  }
+  virtual bool momentumFluxMassFluxFunctorIsIntegrated() const
+  {
+    return getParam<bool>("momentum_mass_flux_is_integrated");
+  }
   virtual std::string momentumOutletBCType(const BoundaryName & boundary,
                                            const MooseEnum & momentum_outlet_type) const;
   virtual void setMomentumOutletBCParams(InputParameters & params,

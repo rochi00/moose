@@ -57,6 +57,14 @@ WCNSLinearFVFlowPhysics::validParams()
   params.suppressParameter<MooseEnum>("velocity_interpolation");
 
   params.transferParam<MooseEnum>(RhieChowMassFlux::validParams(), "pressure_projection_method");
+  params.addParam<MooseFunctorName>(
+      "momentum_mass_flux",
+      "",
+      "Optional common face mass-flux functor used by momentum advection instead of the live "
+      "Rhie-Chow mass flux.");
+  params.addParam<bool>("momentum_mass_flux_is_integrated",
+                        false,
+                        "Whether momentum_mass_flux already includes the face area.");
 
   return params;
 }
@@ -233,8 +241,10 @@ WCNSLinearFVFlowPhysics::addMomentumTimeKernels()
 }
 
 void
-WCNSLinearFVFlowPhysics::setMomentumTimeKernelParams(InputParameters & /* params */) const
+WCNSLinearFVFlowPhysics::setMomentumTimeKernelParams(InputParameters & params) const
 {
+  if (!momentumFluxMassFluxFunctorName().empty())
+    params.set<bool>("use_old_state_factor_for_rhs") = true;
 }
 
 void

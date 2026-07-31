@@ -29,6 +29,14 @@ LinearTimeIntegratorInterface::timeDerivativeRHSContribution(
              "!");
 }
 
+std::vector<Real>
+LinearTimeIntegratorInterface::timeDerivativeCoefficients() const
+{
+  mooseError("The time derivative coefficients have not been implemented yet",
+             _linear_system ? " for time integrator of system " + _linear_system->name() : "",
+             "!");
+}
+
 Real
 LinearTimeIntegratorInterface::timeDerivativeMatrixContribution(const Real /*factor*/) const
 {

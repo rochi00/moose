@@ -7298,6 +7298,9 @@ FEProblemBase::getTimeFromStateArg(const Moose::StateArg & state) const
     case 1:
       return timeOld();
 
+    case 2:
+      return timeOld() - dtOld();
+
     default:
       mooseError("Unhandled state ", state.state, " in FEProblemBase::getTimeFromStateArg");
   }
@@ -8571,7 +8574,15 @@ FEProblemBase::adaptMesh()
   // We're done with all intermediate changes; now get systems ready
   // for real if necessary.
   if (mesh_changed)
+  {
     es().reinit_systems();
+
+    // Intermediate mesh changes only project the libMesh solution vectors. Once the final DOF
+    // maps are available, rebuild MOOSE system data such as Linear FV gradient storage.
+    for (auto & sys : _solver_systems)
+      sys->reinit();
+    _aux->reinit();
+  }
 
   // Execute multi-apps that need to run after adaptivity, but before the next timestep.
   execMultiApps(EXEC_POST_ADAPTIVITY);
@@ -8645,10 +8656,10 @@ FEProblemBase::meshChanged(const bool intermediate_change,
 {
   TIME_SECTION("meshChanged", 3, "Handling Mesh Changes");
 
-  if (_material_props.hasStatefulProperties() || _bnd_material_props.hasStatefulProperties() ||
+  if (haveFV() || _material_props.hasStatefulProperties() ||
+      _bnd_material_props.hasStatefulProperties() ||
       _neighbor_material_props.hasStatefulProperties())
-    _mesh.cacheChangedLists(); // Currently only used with adaptivity and stateful material
-                               // properties
+    _mesh.cacheChangedLists(); // Used by FV prolongation and stateful material projection.
 
   // Clear these out because they corresponded to the old mesh
   _ghosted_elems.clear();

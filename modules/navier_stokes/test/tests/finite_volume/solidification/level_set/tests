@@ -1,0 +1,224 @@
+[Tests]
+  [material_advection_constant]
+    type = CSVDiff
+    input = material_advection_constant.i
+    csvdiff = material_advection_constant.csv
+    requirement = 'The implicit level-set material-advection operator shall exactly preserve a '
+                  'constant signed-distance field under a non-divergence-free volumetric flux.'
+    max_threads = 1
+  []
+
+  [material_advection_translation]
+    type = CSVDiff
+    input = material_advection_translation.i
+    csvdiff = material_advection_translation.csv
+    requirement = 'The BDF2 Linear FV level-set system shall translate a planar signed-distance '
+                  'field exactly and its regularized Heaviside shall remain bounded.'
+    max_threads = 1
+  []
+
+  [material_advection_amr_affine]
+    type = CSVDiff
+    input = material_advection_amr_affine.i
+    csvdiff = material_advection_amr_affine.csv
+    requirement = 'The geometry-aware linear finite-volume material-advection reconstruction '
+                  'shall preserve an affine field across every subface of a static 2:1 AMR '
+                  'interface.'
+    max_threads = 1
+  []
+
+  [material_advection_amr_affine_reverse]
+    type = CSVDiff
+    input = material_advection_amr_affine.i
+    csvdiff = material_advection_amr_affine_reverse.csv
+    cli_args = "Functions/velocity_x/expression=-1 Functions/velocity_y/expression=-0.5 "
+               "Functions/manufactured_source/expression='-1 + x + 2 * y' "
+               'Outputs/file_base=material_advection_amr_affine_reverse'
+    prereq = material_advection_amr_affine
+    requirement = 'The geometry-aware linear finite-volume material-advection reconstruction '
+                  'shall preserve an affine field when flow crosses a static 2:1 AMR interface '
+                  'from fine cells into a coarse cell.'
+    max_threads = 1
+  []
+
+  [mass_conserved_translation]
+    type = CSVDiff
+    input = mass_conserved_translation.i
+    csvdiff = mass_conserved_translation.csv
+    requirement = 'The finite-volume signed-distance transport shall preserve a bounded '
+                  'regularized material fraction and conserve its material mass through a '
+                  'uniform interface correction.'
+    max_threads = 1
+  []
+
+  [redistance_distorted_plane]
+    type = CSVDiff
+    input = redistance_distorted_plane.i
+    csvdiff = redistance_distorted_plane.csv
+    requirement = 'The mass-conserved finite-volume level-set correction shall restore a '
+                  'distorted planar signed-distance field before applying its material-mass '
+                  'constraint.'
+    max_threads = 1
+  []
+
+  [redistance_distorted_circle]
+    type = CSVDiff
+    input = redistance_distorted_circle.i
+    csvdiff = redistance_distorted_circle.csv
+    requirement = 'The subcell-locked finite-volume level-set redistancing shall restore a curved '
+                  'signed-distance field without moving its reconstructed zero contour or '
+                  'changing its discrete enclosed mass.'
+    max_threads = 1
+  []
+
+  [redistance_adaptive_circle]
+    type = CSVDiff
+    input = redistance_adaptive_circle.i
+    csvdiff = redistance_adaptive_circle.csv
+    requirement = 'The mass-conserved finite-volume level-set redistancing shall use quadratic '
+                  'virtual samples across 2:1 coarse-fine faces and preserve enclosed material '
+                  'mass on an interface-adapted mesh.'
+    max_threads = 1
+  []
+
+  [redistance_adaptive_circle_distributed]
+    type = CSVDiff
+    input = redistance_adaptive_circle.i
+    csvdiff = redistance_adaptive_circle.csv
+    cli_args = 'Mesh/parallel_type=distributed Outputs/exodus=false'
+    prereq = redistance_adaptive_circle
+    min_parallel = 2
+    max_parallel = 2
+    max_threads = 1
+    requirement = 'The adaptive finite-volume redistance stencil shall produce the same result '
+                  'when its quadratic patches cross MPI partitions.'
+  []
+
+  [redistance_adaptive_circle_mesh_change]
+    type = CSVDiff
+    input = redistance_adaptive_circle.i
+    csvdiff = redistance_adaptive_circle_mesh_change.csv
+    cli_args = 'Mesh/uniform_refine=2 Adaptivity/initial_steps=0 '
+               'Adaptivity/marker=interface_band Adaptivity/cycles_per_step=1 '
+               'Adaptivity/stop_time=0.015 Executioner/num_steps=3 '
+               'Outputs/file_base=redistance_adaptive_circle_mesh_change Outputs/exodus=false'
+    prereq = redistance_adaptive_circle
+    requirement = 'The adaptive finite-volume redistance stencil shall rebuild after cells away '
+                  'from the interface are coarsened and retain the material-mass constraint.'
+    max_threads = 1
+  []
+
+  [redistance_adaptive_circle_mesh_change_distributed]
+    type = CSVDiff
+    input = redistance_adaptive_circle.i
+    csvdiff = redistance_adaptive_circle_mesh_change.csv
+    cli_args = 'Mesh/uniform_refine=2 Mesh/parallel_type=distributed '
+               'Adaptivity/initial_steps=0 Adaptivity/marker=interface_band '
+               'Adaptivity/cycles_per_step=1 Adaptivity/stop_time=0.015 '
+               'Executioner/num_steps=3 '
+               'Outputs/file_base=redistance_adaptive_circle_mesh_change Outputs/exodus=false'
+    prereq = redistance_adaptive_circle_mesh_change
+    min_parallel = 2
+    max_parallel = 2
+    max_threads = 1
+    requirement = 'The adaptive redistance stencil shall rebuild after distributed coarsening '
+                  'and retain the same signed-distance and mass-conservation result.'
+  []
+
+  [conservative_prolongation_affine]
+    type = CSVDiff
+    input = conservative_prolongation_affine.i
+    csvdiff = conservative_prolongation_affine.csv
+    requirement = 'The level-set interface marker shall prolong every BDF2 solution state with '
+                  'exact affine child-cell averages while preserving the parent-cell integral.'
+    max_threads = 1
+  []
+
+  [conservative_prolongation_affine_distributed]
+    type = CSVDiff
+    input = conservative_prolongation_affine.i
+    csvdiff = conservative_prolongation_affine.csv
+    cli_args = 'Mesh/parallel_type=distributed'
+    prereq = conservative_prolongation_affine
+    min_parallel = 2
+    max_parallel = 2
+    max_threads = 1
+    requirement = 'The conservative affine FV prolongation shall remain exact when refined '
+                  'children and projected gradient histories cross MPI partitions.'
+  []
+
+  [conservative_indicator_remap]
+    type = CSVDiff
+    input = conservative_indicator_remap.i
+    csvdiff = conservative_indicator_remap.csv
+    requirement = 'Transient AMR shall preserve an affine signed distance to roundoff, transfer '
+                  'a bounded nested-quadrature material fraction, and reconstruct every BDF2 '
+                  'history state before the next solve.'
+    max_threads = 1
+  []
+
+  [conservative_indicator_remap_distributed]
+    type = CSVDiff
+    input = conservative_indicator_remap.i
+    csvdiff = conservative_indicator_remap.csv
+    cli_args = 'Mesh/parallel_type=distributed'
+    prereq = conservative_indicator_remap
+    min_parallel = 2
+    max_parallel = 2
+    max_threads = 1
+    requirement = 'The bounded cell-average material-fraction AMR transfer shall be invariant '
+                  'under distributed mesh partitioning.'
+  []
+
+  [redistance_adaptive_circle_refine]
+    type = CSVDiff
+    input = redistance_adaptive_circle.i
+    csvdiff = redistance_adaptive_circle_refine.csv
+    cli_args = 'Adaptivity/initial_steps=1 Adaptivity/marker=interface_band '
+               'Adaptivity/cycles_per_step=1 Adaptivity/stop_time=0.015 '
+               'Executioner/num_steps=3 Outputs/file_base=redistance_adaptive_circle_refine '
+               'Outputs/exodus=false'
+    prereq = conservative_prolongation_affine
+    requirement = 'The conservative FV prolongation shall prevent parent-value plateaus when a '
+                  'redistanced curved interface is refined during a transient calculation.'
+    max_threads = 1
+  []
+
+  [redistance_adaptive_circle_refine_distributed]
+    type = CSVDiff
+    input = redistance_adaptive_circle.i
+    csvdiff = redistance_adaptive_circle_refine.csv
+    cli_args = 'Mesh/parallel_type=distributed Adaptivity/initial_steps=1 '
+               'Adaptivity/marker=interface_band Adaptivity/cycles_per_step=1 '
+               'Adaptivity/stop_time=0.015 Executioner/num_steps=3 '
+               'Outputs/file_base=redistance_adaptive_circle_refine Outputs/exodus=false'
+    prereq = redistance_adaptive_circle_refine
+    min_parallel = 2
+    max_parallel = 2
+    max_threads = 1
+    requirement = 'The bounded conservative FV prolongation shall preserve the same curved '
+                  'interface accuracy and mass during distributed runtime refinement.'
+  []
+
+  [interface_marker_circle]
+    type = CSVDiff
+    input = interface_marker_circle.i
+    csvdiff = interface_marker_circle.csv
+    requirement = 'The linear-FV level-set interface marker shall refine a cell-width-scaled band '
+                  'around a signed-distance interface to the requested maximum refinement level.'
+    max_threads = 1
+  []
+
+  [interface_marker_circle_distributed]
+    type = CSVDiff
+    input = interface_marker_circle.i
+    csvdiff = interface_marker_circle.csv
+    cli_args = 'Mesh/parallel_type=distributed Outputs/exodus=false'
+    prereq = interface_marker_circle
+    min_parallel = 2
+    max_parallel = 2
+    max_threads = 1
+    requirement = 'The linear-FV level-set interface marker shall produce the same adaptive mesh '
+                  'when face neighbors are distributed between two MPI ranks.'
+  []
+[]

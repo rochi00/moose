@@ -8,7 +8,9 @@
 //* https://www.gnu.org/licenses/lgpl-2.1.html
 
 #include "BDF2.h"
+#include "FEProblemBase.h"
 #include "NonlinearSystem.h"
+#include "MooseUtils.h"
 
 registerMooseObject("MooseApp", BDF2);
 
@@ -16,6 +18,11 @@ InputParameters
 BDF2::validParams()
 {
   InputParameters params = TimeIntegrator::validParams();
+  params.addParam<std::vector<Real>>(
+      "restart_times",
+      {},
+      "Times at which to discard the pre-event BDF2 history. The first step beginning at each "
+      "listed time uses the one-step implicit BDF startup formula.");
   params.addClassDescription(
       "Second order backward differentiation formula time integration scheme.");
   return params;
@@ -24,6 +31,7 @@ BDF2::validParams()
 BDF2::BDF2(const InputParameters & parameters)
   : TimeIntegrator(parameters),
     _weight(declareRestartableData<std::vector<Real>>("weight")),
+    _restart_times(getParam<std::vector<Real>>("restart_times")),
     _solution_older(_sys.solutionState(2))
 {
   _weight.resize(3);
@@ -32,8 +40,31 @@ BDF2::BDF2(const InputParameters & parameters)
 void
 BDF2::preStep()
 {
+  _restart_this_step = false;
   if (_t_step > 1)
   {
+    for (const Real restart_time : _restart_times)
+    {
+      if (MooseUtils::absoluteFuzzyEqual(_fe_problem.timeOld(), restart_time))
+      {
+        _restart_this_step = true;
+        break;
+      }
+      if (_fe_problem.timeOld() < restart_time && restart_time < _fe_problem.time() &&
+          !MooseUtils::absoluteFuzzyEqual(_fe_problem.time(), restart_time))
+        mooseError("BDF2 restart time ",
+                   restart_time,
+                   " lies inside the current time step [",
+                   _fe_problem.timeOld(),
+                   ", ",
+                   _fe_problem.time(),
+                   "]. Add it as a synchronization time so BDF2 can restart exactly at the "
+                   "event.");
+    }
+
+    if (_restart_this_step)
+      return;
+
     Real sum = _dt + _dt_old;
     _weight[0] = 1. + _dt / sum;
     _weight[1] = -sum / _dt_old;
@@ -49,7 +80,7 @@ BDF2::computeTimeDerivatives()
                "uDotRequested() to true in FEProblemBase befor requesting `u_dot`.");
 
   NumericVector<Number> & u_dot = *_sys.solutionUDot();
-  if (_t_step == 1)
+  if (_t_step == 1 || _restart_this_step)
     u_dot = *_solution;
   else
     u_dot.zero();
@@ -64,7 +95,7 @@ BDF2::computeADTimeDerivatives(ADReal & ad_u_dot,
                                ADReal & /*ad_u_dotdot*/) const
 {
   auto ad_sln = ad_u_dot;
-  if (_t_step != 1)
+  if (_t_step != 1 && !_restart_this_step)
     ad_u_dot = 0;
   computeTimeDerivativeHelper(ad_u_dot, ad_sln, _solution_old(dof), _solution_older(dof));
 }
@@ -80,7 +111,7 @@ BDF2::postResidual(NumericVector<Number> & residual)
 Real
 BDF2::duDotDuCoeff() const
 {
-  if (_t_step == 1)
+  if (_t_step == 1 || _restart_this_step)
     return 1;
   else
     return _weight[0];
@@ -92,7 +123,7 @@ BDF2::timeDerivativeRHSContribution(dof_id_type dof_id, const std::vector<Real> 
   mooseAssert(factors.size() == numStatesRequired(),
               "Either too many or too few states are given!");
 
-  if (_t_step == 1)
+  if (_t_step == 1 || _restart_this_step)
     return factors[0] * _solution_old(dof_id) / _dt;
   else
     return -(_weight[1] * factors[0] * _solution_old(dof_id) +
@@ -100,10 +131,16 @@ BDF2::timeDerivativeRHSContribution(dof_id_type dof_id, const std::vector<Real> 
            _dt;
 }
 
+std::vector<Real>
+BDF2::timeDerivativeCoefficients() const
+{
+  return _t_step == 1 || _restart_this_step ? std::vector<Real>{1.0, -1.0} : _weight;
+}
+
 Real
 BDF2::timeDerivativeMatrixContribution(const Real factor) const
 {
-  if (_t_step == 1)
+  if (_t_step == 1 || _restart_this_step)
     return factor / _dt;
   else
     return factor * _weight[0] / _dt;

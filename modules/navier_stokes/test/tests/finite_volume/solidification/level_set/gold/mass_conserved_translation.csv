@@ -1,0 +1,4 @@
+time,alpha_maximum,alpha_minimum,mass_relative_change,material_mass
+0,1,0,0,0.2
+0.005,1,0,0,0.2
+0.01,1,0,6.7224004141053e-13,0.19999999999987

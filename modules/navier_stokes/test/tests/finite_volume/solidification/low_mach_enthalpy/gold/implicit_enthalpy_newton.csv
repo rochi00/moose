@@ -1,0 +1,3 @@
+time,divergence_source_value,enthalpy,eos_density,liquid_fraction,material_fraction,solid_drag,temperature,temporary_density
+0,0,0,0,0,0,0,0,0
+1,0.16666666666667,88,6.8571428571429,0.57142857142857,1,7.8330199089256,12,6.8571428571429

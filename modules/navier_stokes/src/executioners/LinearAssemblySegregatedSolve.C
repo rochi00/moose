@@ -10,9 +10,11 @@
 #include "LinearAssemblySegregatedSolve.h"
 #include "FEProblem.h"
 #include "LaserBeamFoamLiquidFractionCorrector.h"
+#include "LinearFVMaterialAdvection.h"
 #include "SegregatedSolverUtils.h"
 #include "LinearSystem.h"
 #include "Executioner.h"
+#include "TheWarehouse.h"
 
 #include <iostream>
 #include <limits>
@@ -65,13 +67,24 @@ LinearAssemblySegregatedSolve::validParams()
       "active_scalar_l_max_its",
       10000,
       "The maximum allowed iterations in the linear solver of the turbulence equation.");
+  params.addRangeCheckedParam<unsigned int>(
+      "active_scalar_deferred_correction_max_its",
+      25,
+      "active_scalar_deferred_correction_max_its>0",
+      "Maximum nonlinear correction iterations for bounded cubic-upwind active-scalar fluxes.");
+  params.addRangeCheckedParam<Real>(
+      "active_scalar_deferred_correction_tol",
+      1e-10,
+      "active_scalar_deferred_correction_tol>0",
+      "Relative solution-update tolerance for bounded cubic-upwind active-scalar fluxes.");
 
   params.addParamNamesToGroup(
       "active_scalar_systems active_scalar_equation_relaxation active_scalar_petsc_options "
       "active_scalar_petsc_options_iname "
       "active_scalar_petsc_options_value active_scalar_petsc_options_value "
       "active_scalar_absolute_tolerance "
-      "active_scalar_l_tol active_scalar_l_abs_tol active_scalar_l_max_its",
+      "active_scalar_l_tol active_scalar_l_abs_tol active_scalar_l_max_its "
+      "active_scalar_deferred_correction_max_its active_scalar_deferred_correction_tol",
       "Active Scalars Equations");
 
   /*
@@ -168,6 +181,10 @@ LinearAssemblySegregatedSolve::LinearAssemblySegregatedSolve(Executioner & ex)
     _active_scalar_l_abs_tol(getParam<Real>("active_scalar_l_abs_tol")),
     _active_scalar_absolute_tolerance(
         getParam<std::vector<Real>>("active_scalar_absolute_tolerance")),
+    _active_scalar_deferred_correction_max_its(
+        getParam<unsigned int>("active_scalar_deferred_correction_max_its")),
+    _active_scalar_deferred_correction_tol(
+        getParam<Real>("active_scalar_deferred_correction_tol")),
     _cht(ex.parameters())
 {
   if (_should_solve_momentum && !_should_solve_pressure)
@@ -728,6 +745,82 @@ LinearAssemblySegregatedSolve::solveAdvectedSystem(const unsigned int system_num
   return residuals;
 }
 
+bool
+LinearAssemblySegregatedSolve::activeScalarUsesDeferredCorrection(
+    const unsigned int system_num) const
+{
+  std::vector<LinearFVFluxKernel *> flux_kernels;
+  _problem.theWarehouse()
+      .query()
+      .condition<AttribThread>(0)
+      .condition<AttribSysNum>(system_num)
+      .condition<AttribSystem>("LinearFVFluxKernel")
+      .queryInto(flux_kernels);
+
+  for (const auto * kernel : flux_kernels)
+    if (const auto * material_advection =
+            dynamic_cast<const LinearFVMaterialAdvection *>(kernel);
+        material_advection && material_advection->usesDeferredCorrection())
+      return true;
+
+  return false;
+}
+
+std::pair<unsigned int, Real>
+LinearAssemblySegregatedSolve::solveActiveScalarSystem(const unsigned int system_i)
+{
+  const auto system_num = _active_scalar_system_numbers[system_i];
+  auto & system = *_active_scalar_systems[system_i];
+
+  if (!activeScalarUsesDeferredCorrection(system_num))
+    return solveAdvectedSystem(system_num,
+                               system,
+                               _active_scalar_equation_relaxation[system_i],
+                               _active_scalar_linear_control,
+                               _active_scalar_l_abs_tol);
+
+  auto & linear_system = libMesh::cast_ref<LinearImplicitSystem &>(system.system());
+  auto & solution = *linear_system.solution;
+  unsigned int total_linear_iterations = 0;
+  Real relative_update = std::numeric_limits<Real>::max();
+
+  for (const auto correction : make_range(_active_scalar_deferred_correction_max_its))
+  {
+    auto previous_solution = solution.clone();
+    const auto linear_residual =
+        solveAdvectedSystem(system_num,
+                            system,
+                            _active_scalar_equation_relaxation[system_i],
+                            _active_scalar_linear_control,
+                            _active_scalar_l_abs_tol);
+    total_linear_iterations += linear_residual.first;
+
+    system.computeGradients();
+    _problem.execute(EXEC_NONLINEAR);
+
+    const Real solution_norm = solution.l2_norm();
+    relative_update = solution.l2_norm_diff(*previous_solution) /
+                      std::max(solution_norm, std::sqrt(std::numeric_limits<Real>::epsilon()));
+
+    _console << " Active-scalar bounded CUI correction " << correction + 1 << ": " << COLOR_GREEN
+             << relative_update << COLOR_DEFAULT << std::endl;
+
+    if (relative_update <= _active_scalar_deferred_correction_tol)
+      break;
+  }
+
+  if (relative_update > _active_scalar_deferred_correction_tol)
+    mooseError("The bounded CUI correction for active-scalar system '",
+               system.name(),
+               "' did not converge in ",
+               _active_scalar_deferred_correction_max_its,
+               " iterations. Final relative solution update: ",
+               relative_update,
+               ".");
+
+  return std::make_pair(total_linear_iterations, relative_update);
+}
+
 void
 LinearAssemblySegregatedSolve::preSolveSetup(const SolverParams & /* solver_params */)
 {
@@ -787,6 +880,12 @@ LinearAssemblySegregatedSolve::assembleMomentumPredictorWithoutSolve()
 
 bool
 LinearAssemblySegregatedSolve::shouldSolveActiveScalarsAfterFlowLoop() const
+{
+  return true;
+}
+
+bool
+LinearAssemblySegregatedSolve::shouldSolveEnergyAfterFlowLoop() const
 {
   return true;
 }
@@ -873,7 +972,7 @@ LinearAssemblySegregatedSolve::solve()
     // If we have an energy equation, solve it here.We assume the material properties in the
     // Navier-Stokes equations depend on temperature, therefore we can not solve for temperature
     // outside of the velocity-pressure loop
-    if (_has_energy_system && _should_solve_energy)
+    if (_has_energy_system && _should_solve_energy && shouldSolveEnergyAfterFlowLoop())
     {
       // If there is no CHT specified this will just do go once through this block
       _cht.resetCHTConvergence();
@@ -1000,12 +1099,7 @@ LinearAssemblySegregatedSolve::solve()
       Moose::PetscSupport::petscSetOptions(_active_scalar_petsc_options, solver_params);
       for (const auto i : index_range(_active_scalar_system_names))
       {
-        ns_residuals[active_scalar_indices[i]] =
-            solveAdvectedSystem(_active_scalar_system_numbers[i],
-                                *_active_scalar_systems[i],
-                                _active_scalar_equation_relaxation[i],
-                                _active_scalar_linear_control,
-                                _active_scalar_l_abs_tol);
+        ns_residuals[active_scalar_indices[i]] = solveActiveScalarSystem(i);
         // ns_residuals[momentum_residual.size() + 1 + _has_energy_system + _has_solid_energy_system
         // +
         //              _pm_radiation_system_names.size() + i] =

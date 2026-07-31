@@ -1,0 +1,3 @@
+time,density,inlet_mass_flux,mass,outlet_mass_flux
+0,0,0,0,0
+0.1,1.0909090909091,-2,1.0909090909091,1.0909090909091

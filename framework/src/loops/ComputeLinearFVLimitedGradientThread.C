@@ -15,6 +15,8 @@
 #include "FEProblemBase.h"
 #include "FVUtils.h"
 
+#include "libmesh/dense_matrix.h"
+#include "libmesh/dense_vector.h"
 #include "libmesh/dof_object.h"
 
 #include <algorithm>
@@ -113,37 +115,87 @@ ComputeLinearFVLimitedGradientThread::operator()(const ElemInfoRange & range)
 
       dof_indices[elem_i] = dof;
 
+      const Elem * const elem = elem_info->elem();
       const Real phi_elem = solution_reader(dof);
+      const Real scale = elem->hmin();
       Real max_value = phi_elem;
       Real min_value = phi_elem;
+      DenseMatrix<Real> normal_matrix(_dim, _dim);
+      DenseVector<Real> right_hand_side(_dim);
+      std::vector<std::pair<Point, Real>> neighbor_samples;
+      std::vector<Point> internal_face_points;
 
-      // Gather one-ring min/max values.
-      const Elem * const elem = elem_info->elem();
-      for (const auto side : make_range(elem->n_sides()))
+      auto gather_neighbor = [this,
+                              &solution_reader,
+                              &elem_info,
+                              phi_elem,
+                              scale,
+                              &max_value,
+                              &min_value,
+                              &normal_matrix,
+                              &right_hand_side,
+                              &neighbor_samples,
+                              &internal_face_points](const Elem &,
+                                                     const Elem * const neighbor,
+                                                     const FaceInfo * const face_info,
+                                                     const Point & surface_vector,
+                                                     const Real,
+                                                     const bool)
       {
-        const Elem * const neighbor = elem->neighbor_ptr(side);
-        if (!neighbor)
-          continue;
+        if (!neighbor || !_current_var->hasBlocks(neighbor->subdomain_id()))
+          return;
 
         const auto & neighbor_info = _fe_problem.mesh().elemInfo(neighbor->id());
-        if (!_current_var->hasBlocks(neighbor_info.subdomain_id()))
-          continue;
-
         const dof_id_type neighbor_dof =
             neighbor_info.dofIndices()[_system_number][_current_var->number()];
         if (neighbor_dof == libMesh::DofObject::invalid_id)
-          continue;
+          return;
 
         const Real phi_neighbor = solution_reader(neighbor_dof);
         max_value = std::max(max_value, phi_neighbor);
         min_value = std::min(min_value, phi_neighbor);
-      }
 
-      // Read the raw cell gradient.
+        const Point normalized_offset = (neighbor_info.centroid() - elem_info->centroid()) / scale;
+        const Real offset_norm_sq = normalized_offset.norm_sq();
+        if (offset_norm_sq <= std::numeric_limits<Real>::epsilon())
+          return;
+
+        // Face measure prevents the multiple fine children on one split coarse face from
+        // receiving more aggregate influence merely because that face has been subdivided.
+        const Real weight = surface_vector.norm() / offset_norm_sq;
+        const Real value_delta = phi_neighbor - phi_elem;
+        for (const auto row : make_range(_dim))
+        {
+          right_hand_side(row) += weight * normalized_offset(row) * value_delta;
+          for (const auto column : make_range(_dim))
+            normal_matrix(row, column) +=
+                weight * normalized_offset(row) * normalized_offset(column);
+        }
+
+        neighbor_samples.emplace_back(normalized_offset, value_delta);
+        internal_face_points.push_back(face_info->faceCentroid());
+      };
+
+      const auto coordinate_system = _fe_problem.mesh().getCoordSystem(elem_info->subdomain_id());
+      Moose::FV::loopOverElemFaceInfo(*elem,
+                                      _fe_problem.mesh(),
+                                      gather_neighbor,
+                                      coordinate_system,
+                                      _fe_problem.mesh().getAxisymmetricRadialCoord());
+
+      // Keep the preexisting Green-Gauss result only as a fallback for a rank-deficient stencil.
       VectorValue<Real> raw_grad;
       raw_grad.zero();
       for (const auto dim_index : make_range(_dim))
         raw_grad(dim_index) = grad_reader[dim_index](dof);
+
+      if (neighbor_samples.size() >= _dim)
+      {
+        DenseVector<Real> scaled_gradient(_dim);
+        normal_matrix.svd_solve(right_hand_side, scaled_gradient);
+        for (const auto dim_index : make_range(_dim))
+          raw_grad(dim_index) = scaled_gradient(dim_index) / scale;
+      }
 
       // If the stencil is constant (or nearly constant), don't attempt to limit.
       if (std::abs(max_value - min_value) < 1e-14)
@@ -156,50 +208,38 @@ ComputeLinearFVLimitedGradientThread::operator()(const ElemInfoRange & range)
       Real alpha = 1.0;
       const Point & elem_centroid = elem_info->centroid();
 
-      for (const auto side : make_range(elem->n_sides()))
+      // An affine field is represented exactly by the least-squares polynomial. Do not let the
+      // nonlinear limiter destroy that consistency on unequal coarse-fine center spacings.
+      Real maximum_fit_residual = 0.0;
+      Real value_scale = std::max(1.0, std::abs(phi_elem));
+      for (const auto & [normalized_offset, value_delta] : neighbor_samples)
       {
-        const Elem * const neighbor = elem->neighbor_ptr(side);
-        if (!neighbor)
-          continue;
-
-        const auto & neighbor_info = _fe_problem.mesh().elemInfo(neighbor->id());
-        if (!_current_var->hasBlocks(neighbor_info.subdomain_id()))
-          continue;
-
-        const dof_id_type neighbor_dof =
-            neighbor_info.dofIndices()[_system_number][_current_var->number()];
-        if (neighbor_dof == libMesh::DofObject::invalid_id)
-          continue;
-
-        const bool elem_has_face_info = Moose::FV::elemHasFaceInfo(*elem, neighbor);
-        const Elem * const fi_elem = elem_has_face_info ? elem : neighbor;
-        const unsigned int fi_side =
-            elem_has_face_info ? side : neighbor->which_neighbor_am_i(elem);
-        const auto * fi = _fe_problem.mesh().faceInfo(fi_elem, fi_side);
-        mooseAssert(fi,
-                    "Missing FaceInfo for neighboring elements with centroid " +
-                        Moose::stringify(elem_info->centroid()) + " and " +
-                        Moose::stringify(neighbor->vertex_average()) +
-                        " while computing limited gradients.");
-
-        const Point face_point = fi->faceCentroid();
-
-        const Real delta_face = raw_grad * (face_point - elem_centroid);
-
-        Real h = elem->hmin();
-        Real grad_mag = raw_grad.norm();
-
-        Real eps = 0.1 * (grad_mag * h) * (grad_mag * h) + 1e-20;
-
-        const Real delta_max = std::abs(max_value - phi_elem) + eps;
-        const Real delta_min = std::abs(min_value - phi_elem) + eps;
-
-        const Real rf = (delta_face >= 0.0) ? std::abs(delta_face) / delta_max
-                                            : std::abs(delta_face) / delta_min;
-
-        const Real beta = (2.0 * rf + 1.0) / (rf * (2.0 * rf + 1.0) + 1.0);
-        alpha = std::min(alpha, beta);
+        maximum_fit_residual = std::max(
+            maximum_fit_residual, std::abs(value_delta - raw_grad * (scale * normalized_offset)));
+        value_scale = std::max(value_scale, std::abs(phi_elem + value_delta));
       }
+
+      const bool affine_stencil = maximum_fit_residual <= 1e-12 * value_scale;
+
+      if (!affine_stencil)
+        for (const auto & face_point : internal_face_points)
+        {
+          const Real delta_face = raw_grad * (face_point - elem_centroid);
+          const Real admissible_delta =
+              delta_face >= 0.0 ? max_value - phi_elem : phi_elem - min_value;
+          if (std::abs(delta_face) <= admissible_delta * (1.0 + 1e-12))
+            continue;
+
+          if (admissible_delta <= 0.0)
+          {
+            alpha = 0.0;
+            continue;
+          }
+
+          const Real ratio = std::abs(delta_face) / admissible_delta;
+          const Real beta = (2.0 * ratio + 1.0) / (ratio * (2.0 * ratio + 1.0) + 1.0);
+          alpha = std::min(alpha, beta);
+        }
 
       const VectorValue<Real> limited_grad = alpha * raw_grad;
       for (const auto dim_index : make_range(_dim))

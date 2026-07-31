@@ -34,8 +34,17 @@ private:
   MooseFunctorName pressureDivergenceFluxName() const override { return "pressure_predictor_flux"; }
   bool pressureDivergenceFluxIsIntegrated() const override { return true; }
   void setMomentumTimeKernelParams(InputParameters & params) const override;
-  MooseFunctorName momentumFluxMassFluxFunctorName() const override { return "rho_phi"; }
-  bool momentumFluxMassFluxFunctorIsIntegrated() const override { return true; }
+  MooseFunctorName momentumFluxMassFluxFunctorName() const override
+  {
+    const auto common_mass_flux = WCNSLinearFVFlowPhysics::momentumFluxMassFluxFunctorName();
+    return common_mass_flux.empty() ? MooseFunctorName("rho_phi") : common_mass_flux;
+  }
+  bool momentumFluxMassFluxFunctorIsIntegrated() const override
+  {
+    return WCNSLinearFVFlowPhysics::momentumFluxMassFluxFunctorName().empty()
+               ? true
+               : WCNSLinearFVFlowPhysics::momentumFluxMassFluxFunctorIsIntegrated();
+  }
   std::string momentumOutletBCType(const BoundaryName & boundary,
                                    const MooseEnum & momentum_outlet_type) const override;
   void setMomentumOutletBCParams(InputParameters & params,

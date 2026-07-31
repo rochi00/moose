@@ -23,6 +23,7 @@
 class LinearSystem;
 class SystemBase;
 class LinearFVBoundaryCondition;
+class TimeIntegrator;
 
 /**
  * Applies an explicit bounded correction to a donor/upwind alpha solve, following the same
@@ -46,11 +47,13 @@ public:
 
   void resetSubcycleFluxes();
   void refreshPublishedRhoPhi();
-  void cachePreSubcycleAlpha();
+  void cachePreSubcycleAlpha(const bool use_timestep_old);
   void applyCorrection(const Real dt, const Real subcycle_fraction = 1.0);
 
   const SolverSystemName & systemName() const { return _system_name; }
   const VariableName & variableName() const { return _variable_name; }
+  const MooseFunctorName & faceFluxName() const { return _face_flux_name; }
+  const MooseFunctorName & sourceSpName() const { return _source_sp_name; }
 
 private:
   enum class BoundaryFaceKind : unsigned char
@@ -69,8 +72,10 @@ private:
     dof_id_type neighbor_dof = DofObject::invalid_id;
     Real elem_alpha = 0.0;
     Real neighbor_alpha = 0.0;
+    Real integrated_volumetric_flux = 0.0;
     Real donor_flux = 0.0;
     Real correction_flux = 0.0;
+    Real compression_flux = 0.0;
     bool has_neighbor = false;
     BoundaryFaceKind boundary_kind = BoundaryFaceKind::Internal;
   };
@@ -98,6 +103,7 @@ private:
   void initializeFluxStorage();
   void publishFaceFluxes(const std::vector<FaceCorrectionData> & face_corrections,
                          const std::vector<Real> & accumulated_alpha_fluxes,
+                         const std::vector<Real> & accumulated_compression_fluxes,
                          const Real subcycle_fraction);
   bool partitionFace(const FaceCorrectionData & data) const;
   bool locallyOwnedCell(const ElemInfo & elem_info) const;
@@ -111,11 +117,15 @@ private:
   Real faceMeasure(const FaceInfo & fi) const;
   Real cellAlpha(const ElemInfo & elem_info) const;
   Real oldCellAlpha(const ElemInfo & elem_info) const;
+  Real historicalCellAlpha(const ElemInfo & elem_info, unsigned int state_index) const;
   Real boundedAlpha(Real value) const;
   Real sourceSp(const ElemInfo & elem_info) const;
   Real sourceSu(const ElemInfo & elem_info) const;
-  Real
-  sourceAwareAlpha(const ElemInfo & elem_info, Real net_alpha_flux, Real dt, Real old_alpha) const;
+  Real sourceAwareAlpha(const ElemInfo & elem_info,
+                        Real net_alpha_flux,
+                        Real net_volumetric_flux,
+                        Real dt) const;
+  Real sourceDenominator(const ElemInfo & elem_info, Real net_volumetric_flux, Real dt) const;
   Real cellRhoCp(const ElemInfo & elem_info, Real alpha) const;
   Real thermalEnergyTemperature(const ElemInfo & elem_info) const;
   Real donorFlux(const FaceInfo & fi, const FaceTransportData & face_data, Real elem_alpha) const;
@@ -131,6 +141,9 @@ private:
   Real rhoCpPhi(const FaceInfo & fi, const Real limited_alpha_flux) const;
   FaceCorrectionData buildFaceCorrectionData(const FaceInfo & fi) const;
   std::vector<FaceCorrectionData> collectFaceCorrectionData() const;
+  void reportDiagnostics(const std::string & stage,
+                         const std::vector<FaceCorrectionData> & face_corrections,
+                         Real dt) const;
   Real confinedScalarConcentration(const ConfinedScalarData & scalar,
                                    const ElemInfo & elem_info) const;
   void applyConfinedScalarTransport(const std::vector<FaceCorrectionData> & face_corrections,
@@ -144,6 +157,8 @@ private:
   const VariableName _variable_name;
   const std::vector<VariableName> _confined_scalar_variable_names;
   const VariableName _thermal_energy_variable_name;
+  const MooseFunctorName _face_flux_name;
+  const MooseFunctorName _source_sp_name;
   const Moose::Functor<Real> & _face_flux;
   const Moose::Functor<Real> & _compression_factor;
   const Moose::Functor<RealVectorValue> & _interface_normal;
@@ -161,13 +176,19 @@ private:
   const Real _confined_scalar_concentration_max;
   const unsigned int _num_alpha_corrections;
   const unsigned int _num_limiter_iterations;
+  const bool _report_diagnostics;
+  const bool _fail_on_unbounded_alpha;
+  const Real _boundedness_tolerance;
+  const MooseFunctorName _compression_flux_name;
 
   FaceCenteredMapFunctor<Real, std::unordered_map<dof_id_type, Real>> _alpha_phi_limited;
+  FaceCenteredMapFunctor<Real, std::unordered_map<dof_id_type, Real>> _alpha_compression_flux;
   FaceCenteredMapFunctor<Real, std::unordered_map<dof_id_type, Real>> _rho_phi;
   std::unique_ptr<FaceCenteredMapFunctor<Real, std::unordered_map<dof_id_type, Real>>> _rho_cp_phi;
 
   MooseLinearVariableFVReal * _alpha_var = nullptr;
   LinearSystem * _system = nullptr;
+  const TimeIntegrator * _time_integrator = nullptr;
   unsigned int _sys_num = libMesh::invalid_uint;
   unsigned int _var_num = libMesh::invalid_uint;
   std::vector<ConfinedScalarData> _confined_scalars;

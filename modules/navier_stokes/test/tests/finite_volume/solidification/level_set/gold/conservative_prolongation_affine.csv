@@ -1,0 +1,4 @@
+time,active_elements,field_integral,l2_error
+0,16,1.5,0
+0.01,16,1.5,0
+0.02,64,1.5,0

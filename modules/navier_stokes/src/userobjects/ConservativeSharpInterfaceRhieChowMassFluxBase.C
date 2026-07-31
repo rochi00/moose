@@ -221,6 +221,9 @@ ConservativeSharpInterfaceRhieChowMassFluxBase::ConservativeSharpInterfaceRhieCh
 Real
 ConservativeSharpInterfaceRhieChowMassFluxBase::getMassFlux(const FaceInfo & fi) const
 {
+  if (!_vof_rho_phi)
+    return RhieChowMassFlux::getMassFlux(fi);
+
   const Real face_measure = faceMeasure(fi);
   return face_measure > 0.0 ? vofRhoPhiIntegrated(fi) / face_measure : 0.0;
 }
@@ -553,9 +556,11 @@ ConservativeSharpInterfaceRhieChowMassFluxBase::initialSetup()
       UserObject::_subproblem.hasFunctorWithType<Real>(_vof_rho_phi_name, _tid))
     _vof_rho_phi = &getFunctor<Real>(_vof_rho_phi_name);
 
-  if (!_vof_rho_phi)
+  if (!_vof_rho_phi_name.empty() && !_vof_rho_phi)
     paramError("vof_rho_phi_functor",
-               "The conservative sharp-interface path requires the VOF-owned rhoPhi functor.");
+               "The requested VOF-owned rhoPhi functor '",
+               _vof_rho_phi_name,
+               "' was not found.");
 
   const bool any_surface_tension_param =
       !_surface_tension_coefficient_name.empty() || !_surface_tension_volume_fraction_name.empty();

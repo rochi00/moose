@@ -130,6 +130,19 @@ WCNSLinearFVConservativeSharpInterfaceVOFPhysics::validParams()
       3,
       "n_limiter_iterations>0",
       "Number of limiter tightening passes inside each correction sweep.");
+  params.addParam<bool>(
+      "report_vof_diagnostics",
+      false,
+      "Report stagewise VOF bounds, face-flux/source divergence mismatch, and source Courant "
+      "number.");
+  params.addParam<bool>("fail_on_unbounded_alpha",
+                        false,
+                        "Stop at the first VOF predictor or correction stage outside [0,1].");
+  params.addRangeCheckedParam<Real>(
+      "vof_boundedness_tolerance",
+      1e-12,
+      "vof_boundedness_tolerance>=0",
+      "Absolute tolerance used by the stagewise VOF boundedness diagnostic.");
   params.addParam<MooseFunctorName>(
       "mixture_density_name", "rho_mixture", "Name of the generated mixture density functor.");
   params.addParam<MooseFunctorName>("mixture_dynamic_viscosity_name",
@@ -160,7 +173,8 @@ WCNSLinearFVConservativeSharpInterfaceVOFPhysics::validParams()
                               "confined_scalar_concentration_max thermal_energy_variable "
                               "thermal_energy_temperature thermal_energy_backflow_temperature "
                               "conserved_enthalpy_variable conserved_enthalpy_temperature "
-                              "conserved_enthalpy_backflow_temperature",
+                              "conserved_enthalpy_backflow_temperature report_vof_diagnostics "
+                              "fail_on_unbounded_alpha vof_boundedness_tolerance",
                               "Numerical scheme");
   params.addParamNamesToGroup("liquid_specific_heat_name gas_specific_heat_name rho_cp_phi_name",
                               "Material properties");
@@ -299,6 +313,9 @@ WCNSLinearFVConservativeSharpInterfaceVOFPhysics::addUserObjects()
       getParam<MooseFunctorName>("interface_normal_functor");
   params.set<unsigned int>("n_alpha_corrections") = getParam<unsigned int>("n_alpha_corrections");
   params.set<unsigned int>("n_limiter_iterations") = getParam<unsigned int>("n_limiter_iterations");
+  params.set<bool>("report_diagnostics") = getParam<bool>("report_vof_diagnostics");
+  params.set<bool>("fail_on_unbounded_alpha") = getParam<bool>("fail_on_unbounded_alpha");
+  params.set<Real>("boundedness_tolerance") = getParam<Real>("vof_boundedness_tolerance");
   params.set<MooseFunctorName>("liquid_density") =
       getParam<MooseFunctorName>("liquid_density_name");
   params.set<MooseFunctorName>("gas_density") = getParam<MooseFunctorName>("gas_density_name");
@@ -356,16 +373,13 @@ WCNSLinearFVConservativeSharpInterfaceVOFPhysics::addUserObjects()
 void
 WCNSLinearFVConservativeSharpInterfaceVOFPhysics::addScalarAdvectionKernels()
 {
-  addLinearFVScalarAdvectionKernel(
-      _passive_scalar_names[0],
-      prefix() + "alpha_advection",
-      _flow_equations_physics->rhieChowUOName(),
-      getParam<MooseEnum>("passive_scalar_advection_interpolation"),
-      _blocks,
-      [](InputParameters & params)
-      { params.set<MooseFunctorName>("face_flux") = "vof_transport_phi"; });
-
-  addScalarSourceKernels();
+  const std::string kernel_type = "LinearFVMaterialAdvection";
+  auto params = getFactory().getValidParams(kernel_type);
+  assignBlocks(params, _blocks);
+  params.set<LinearVariableName>("variable") = _passive_scalar_names[0];
+  params.set<MooseFunctorName>("volumetric_face_flux") = "vof_transport_phi";
+  params.set<MooseEnum>("advected_interp_method") = "upwind";
+  getProblem().addLinearFVKernel(kernel_type, prefix() + "alpha_advection", params);
 }
 
 void

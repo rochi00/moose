@@ -1,0 +1,238 @@
+[Tests]
+  [analytical_stefan_reference]
+    type = PythonUnitTest
+    input = test_stefan_reference.py
+    requirement = 'The variable-density Stefan validation shall use an independently tested '
+                  'analytical reference for interface position, temperature, liquid velocity, '
+                  'and the interfacial energy balance.'
+  []
+
+  [stefan_validation_tools]
+    type = PythonUnitTest
+    input = test_stefan_validation.py
+    requirement = 'The Stefan validation shall extract the liquid-fraction half-height interface '
+                  'and compute a normalized temperature RMSE against the analytical solution.'
+  []
+
+  [vof_divergence_validation_tools]
+    type = PythonUnitTest
+    input = test_vof_divergence_validation.py
+    requirement = 'The low-Mach VOF validation shall independently check bounded bulk states '
+                  'and the conservative phase-fraction balance.'
+  []
+
+  [complete_melting_validation_tools]
+    type = PythonUnitTest
+    input = test_complete_melting_validation.py
+    requirement = 'The complete-melting validation shall independently check PCM mass, the '
+                  'density-ratio free-surface displacement, and completion of melting.'
+  []
+
+  [matched_density_stefan_coarse]
+    type = RunApp
+    input = variable_density_stefan.i
+    cli_args = 'Outputs/file_base=matched_density_stefan_coarse'
+    requirement = 'The implicit low-Mach enthalpy method shall advance the matched-density '
+                  'one-dimensional Stefan problem on a multi-cell mesh.'
+    max_threads = 1
+    max_time = 120
+  []
+
+  [matched_density_stefan_compare]
+    type = RunCommand
+    command = 'python3 validate_stefan.py --case matched --time 0.1 '
+              '--file-base matched_density_stefan_coarse '
+              '--interface-relative-tolerance 0.06 '
+              '--temperature-rmse-tolerance 0.01 '
+              '--velocity-absolute-tolerance 1e-12'
+    prereq = matched_density_stefan_coarse
+    requirement = 'The matched-density low-Mach Stefan result shall agree with the analytical '
+                  'interface, temperature, and zero-liquid-velocity reference on the coarse '
+                  'regression mesh.'
+  []
+
+  [expansion_stefan]
+    type = RunApp
+    input = variable_density_stefan.i
+    cli_args = 'Nx=320 rho_solid=500 rho_liquid=2700 time_step=5e-6 end_time=0.001 '
+               'Outputs/file_base=expansion_stefan'
+    requirement = 'The globalized implicit low-Mach enthalpy method shall advance the '
+                  'unequal-density Stefan expansion problem while resolving the mushy zone.'
+    max_threads = 1
+    max_time = 120
+  []
+
+  [expansion_stefan_compare]
+    type = RunCommand
+    command = 'python3 validate_stefan.py --case expansion --time 0.001 '
+              '--file-base expansion_stefan '
+              '--interface-relative-tolerance 0.15 '
+              '--temperature-rmse-tolerance 0.015 '
+              '--velocity-absolute-tolerance 0.15'
+    prereq = expansion_stefan
+    requirement = 'The unequal-density low-Mach Stefan result shall agree with the analytical '
+                  'interface, temperature, and expansion-velocity reference on a mesh that '
+                  'resolves the diffuse mushy zone.'
+  []
+
+  [shrinkage_stefan]
+    type = RunApp
+    input = variable_density_stefan.i
+    cli_args = 'Nx=320 rho_solid=2700 rho_liquid=500 time_step=5e-6 end_time=0.001 '
+               'Outputs/file_base=shrinkage_stefan'
+    requirement = 'The globalized implicit low-Mach enthalpy method shall advance the '
+                  'unequal-density Stefan shrinkage problem without a gas-interface transport '
+                  'dependency.'
+    max_threads = 1
+    max_time = 120
+  []
+
+  [shrinkage_stefan_compare]
+    type = RunCommand
+    command = 'python3 validate_stefan.py --case shrinkage --time 0.001 '
+              '--file-base shrinkage_stefan '
+              '--interface-relative-tolerance 0.08 '
+              '--temperature-rmse-tolerance 0.005 '
+              '--velocity-absolute-tolerance 0.1'
+    prereq = shrinkage_stefan
+    requirement = 'The unequal-density low-Mach Stefan result shall agree with the analytical '
+                  'interface, temperature, and bulk shrinkage-velocity reference on a mesh that '
+                  'resolves the diffuse mushy zone.'
+  []
+
+  [conservative_transient]
+    type = CSVDiff
+    input = conservative_enthalpy.i
+    csvdiff = conservative_transient.csv
+    cli_args = 'temporary_density=2 density=3 mass_flux_scale=0 Outputs/file_base=conservative_transient'
+    requirement = 'The low-Mach enthalpy temperature solve shall conserve rho times specific '
+                  'enthalpy when the temporary and old EOS densities differ.'
+    max_threads = 1
+  []
+
+  [shared_mass_flux_advection]
+    type = CSVDiff
+    input = conservative_enthalpy.i
+    csvdiff = shared_mass_flux_advection.csv
+    cli_args = 'Outputs/file_base=shared_mass_flux_advection'
+    requirement = 'The low-Mach enthalpy temperature solve shall explicitly advect specific '
+                  'enthalpy with the supplied common face mass flux.'
+    max_threads = 1
+  []
+
+  [variable_step_bdf2_enthalpy]
+    type = CSVDiff
+    input = variable_step_bdf2_enthalpy.i
+    csvdiff = variable_step_bdf2_enthalpy.csv
+    cli_args = 'Executioner/num_steps=3 Outputs/file_base=variable_step_bdf2_enthalpy'
+    requirement = 'The low-Mach enthalpy time derivative shall use MOOSE variable-step BDF2 '
+                  'weights for unequal consecutive time steps.'
+    max_threads = 1
+  []
+
+  [implicit_mass_boundary_conservation]
+    type = CSVDiff
+    input = implicit_mass.i
+    csvdiff = implicit_mass.csv
+    cli_args = 'Outputs/file_base=implicit_mass'
+    requirement = 'The implicit low-Mach mass equation shall use MOOSE time-integrator history, '
+                  'preserve the conservative inlet/outlet balance, and publish its exact '
+                  'boundary flux.'
+    max_threads = 1
+  []
+
+  [implicit_enthalpy_newton]
+    type = CSVDiff
+    input = implicit_enthalpy_newton.i
+    csvdiff = implicit_enthalpy_newton.csv
+    cli_args = 'Outputs/file_base=implicit_enthalpy_newton'
+    requirement = 'The low-Mach solve shall conservatively transport the gas/PCM indicator with '
+                  'the common volumetric flux and low-Mach divergence correction, perform two '
+                  'fixed-point sweeps, advance mass before enthalpy, restore the exact '
+                  'constitutive state after a Newton step crossing into the mushy interval, and '
+                  'complete enthalpy convergence before momentum-pressure.'
+    max_threads = 1
+  []
+
+  [enthalpy_flux_partition_sync]
+    type = CSVDiff
+    input = complete_melting_free_surface.i
+    csvdiff = enthalpy_flux_partition_sync.csv
+    cli_args = 'Executioner/num_steps=20 Outputs/file_base=enthalpy_flux_partition_sync'
+    requirement = 'The low-Mach divergence source shall exchange the final assembled enthalpy '
+                  'flux on processor-partition faces and reproduce the serial melting result.'
+    min_parallel = 4
+    max_parallel = 4
+    max_threads = 1
+  []
+
+  [vof_divergence_transport]
+    type = RunApp
+    input = vof_divergence_transport.i
+    cli_args = 'Outputs/file_base=vof_divergence_transport'
+    requirement = 'The conservative VOF equation shall transport a gas/PCM interface with the '
+                  'nonzero divergence generated by the implicit low-Mach enthalpy update while '
+                  'applying a bounded interface-compression correction.'
+    max_threads = 1
+    max_time = 120
+  []
+
+  [vof_divergence_transport_compare]
+    type = RunCommand
+    command = 'python3 validate_vof_divergence.py --csv vof_divergence_transport.csv'
+    prereq = vof_divergence_transport
+    requirement = 'The low-Mach VOF solve shall remain bounded, preserve the PCM and gas bulk '
+                  'states, and satisfy its discrete source-plus-boundary-flux balance.'
+  []
+
+  [bdf2_vof_subcycling_rejected]
+    type = RunException
+    input = vof_divergence_transport.i
+    cli_args = 'Executioner/volume_fraction_subcycles=2'
+    expect_err = 'Volume-fraction subcycling is not compatible with the configured multistep '
+                 'time integrator'
+    requirement = 'The BDF2 VOF solve shall reject time subcycling rather than applying global '
+                  'multistep weights to subcycle states.'
+    max_threads = 1
+  []
+
+  [complete_melting_free_surface]
+    type = RunApp
+    input = complete_melting_free_surface.i
+    cli_args = 'Outputs/file_base=complete_melting_free_surface'
+    requirement = 'The coupled implicit low-Mach enthalpy and conservative VOF method shall melt '
+                  'an initially solid PCM while displacing its gas/PCM free surface.'
+    max_threads = 1
+    max_time = 120
+  []
+
+  [complete_melting_free_surface_compare]
+    type = RunCommand
+    command = 'python3 validate_complete_melting.py --csv complete_melting_free_surface.csv'
+    prereq = complete_melting_free_surface
+    requirement = 'Complete melting shall conserve PCM mass and expand the final liquid volume '
+                  'according to the solid-to-liquid density ratio while preserving bounded bulk '
+                  'gas and PCM states.'
+  []
+
+  [complete_melting_free_surface_compressed]
+    type = RunApp
+    input = complete_melting_free_surface.i
+    cli_args = 'Physics/NavierStokes/ConservativeSharpInterfaceVOFSegregated/'
+               'material_indicator/compression_factor=1 '
+               'Outputs/file_base=complete_melting_free_surface_compressed'
+    requirement = 'The coupled implicit low-Mach enthalpy and conservative VOF method shall '
+                  'include its interface-compression flux in the common mass flux.'
+    max_threads = 1
+    max_time = 120
+  []
+
+  [complete_melting_free_surface_compressed_compare]
+    type = RunCommand
+    command = 'python3 validate_complete_melting.py '
+              '--csv complete_melting_free_surface_compressed.csv'
+    prereq = complete_melting_free_surface_compressed
+    requirement = 'Interface compression shall preserve bounded bulk states while satisfying '
+                  'the complete-melting PCM-mass and density-ratio volume checks.'
+  []
+[]

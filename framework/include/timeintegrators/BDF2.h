@@ -32,6 +32,7 @@ public:
   virtual bool overridesSolve() const override { return false; }
   virtual Real timeDerivativeRHSContribution(const dof_id_type dof_id,
                                              const std::vector<Real> & factors) const override;
+  virtual std::vector<Real> timeDerivativeCoefficients() const override;
   virtual Real timeDerivativeMatrixContribution(const Real factor) const override;
   virtual unsigned int numStatesRequired() const override { return 2; }
 
@@ -46,6 +47,12 @@ protected:
   virtual Real duDotDuCoeff() const override;
 
   std::vector<Real> & _weight;
+
+  /// Times at which the multistep history must not cross a temporal discontinuity
+  const std::vector<Real> _restart_times;
+
+  /// Whether the current step is the one-step implicit restart after an event
+  bool _restart_this_step = false;
 
   /// The older solution
   const NumericVector<Number> & _solution_older;
@@ -62,7 +69,7 @@ BDF2::computeTimeDerivativeHelper(T & u_dot,
                                   const T3 & u_old,
                                   const T4 & u_older) const
 {
-  if (_t_step == 1)
+  if (_t_step == 1 || _restart_this_step)
   {
     u_dot -= u_old;
     u_dot *= 1 / _dt;

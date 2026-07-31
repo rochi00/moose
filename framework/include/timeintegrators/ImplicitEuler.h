@@ -32,6 +32,7 @@ public:
 
   virtual Real timeDerivativeRHSContribution(const dof_id_type dof_id,
                                              const std::vector<Real> & factors) const override;
+  virtual std::vector<Real> timeDerivativeCoefficients() const override;
   virtual Real timeDerivativeMatrixContribution(const Real factor) const override;
 
 protected:

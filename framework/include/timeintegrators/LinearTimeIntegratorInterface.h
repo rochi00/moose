@@ -39,6 +39,14 @@ public:
   virtual Real timeDerivativeRHSContribution(dof_id_type dof_id,
                                              const std::vector<Real> & factors = {}) const;
 
+  /**
+   * Coefficients for applying this time integrator to an arbitrary conserved quantity.
+   *
+   * The returned values multiply the current, old, older, ... states in that order, with the
+   * complete sum divided by the current time-step size.
+   */
+  virtual std::vector<Real> timeDerivativeCoefficients() const;
+
   /// The time derivative's contribution to the right hand side of a linear system.
   /// For now, this does not depend of the DoF index, might change in the future.
   virtual Real timeDerivativeMatrixContribution(const Real factor) const;

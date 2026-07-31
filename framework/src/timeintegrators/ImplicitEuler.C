@@ -91,6 +91,12 @@ ImplicitEuler::timeDerivativeRHSContribution(dof_id_type dof_id,
   return factors[0] * _solution_old(dof_id) / _dt;
 }
 
+std::vector<Real>
+ImplicitEuler::timeDerivativeCoefficients() const
+{
+  return {1.0, -1.0};
+}
+
 Real
 ImplicitEuler::timeDerivativeMatrixContribution(const Real factor) const
 {

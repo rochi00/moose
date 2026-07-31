@@ -88,6 +88,12 @@ protected:
                       const Real field_relaxation = 1.0,
                       const Real min_value_limiter = std::numeric_limits<Real>::min());
 
+  /// Whether an active-scalar system contains a nonlinear deferred-correction flux.
+  bool activeScalarUsesDeferredCorrection(const unsigned int system_num) const;
+
+  /// Solve one active scalar, converging any nonlinear deferred correction before returning.
+  std::pair<unsigned int, Real> solveActiveScalarSystem(const unsigned int system_i);
+
   /// Aggregated storage for residuals, tolerances, and indices used in convergence checks
   struct ResidualStorage
   {
@@ -124,6 +130,7 @@ protected:
   virtual bool shouldCopyMomentumNonlinearSolutionHistory() const;
   virtual bool shouldAssembleMomentumPredictorWithoutSolve() const;
   virtual void assembleMomentumPredictorWithoutSolve();
+  virtual bool shouldSolveEnergyAfterFlowLoop() const;
   virtual bool shouldSolveActiveScalarsAfterFlowLoop() const;
   virtual void finalizeSolve(const bool converged);
 
@@ -225,6 +232,12 @@ protected:
 
   /// The user-defined absolute tolerance for determining the convergence in active scalars
   const std::vector<Real> _active_scalar_absolute_tolerance;
+
+  /// Maximum nonlinear corrections for a deferred-correction active-scalar flux.
+  const unsigned int _active_scalar_deferred_correction_max_its;
+
+  /// Relative solution-update tolerance for a deferred-correction active-scalar flux.
+  const Real _active_scalar_deferred_correction_tol;
 
   /// ********************** Conjugate heat transfer variables ************** //
 

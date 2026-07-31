@@ -1,0 +1,4 @@
+time,active_elements,level_set_l2_error,material_fraction_error,material_fraction_integral,material_fraction_maximum,material_fraction_minimum
+0,16,0,0.0012747340688571,0.61872526593114,1,0
+0.01,16,0,0.0012747340688571,0.61872526593114,1,0
+0.02,64,8.1955954525467e-16,3.1710218764025e-05,0.61996828978124,1,0

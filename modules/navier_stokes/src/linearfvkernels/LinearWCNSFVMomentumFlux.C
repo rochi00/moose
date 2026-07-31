@@ -60,6 +60,9 @@ LinearWCNSFVMomentumFlux::LinearWCNSFVMomentumFlux(const InputParameters & param
     _mass_flux_functor(params.isParamValid("mass_flux_functor")
                            ? &getFunctor<Real>("mass_flux_functor")
                            : nullptr),
+    _mass_flux_functor_name(params.isParamValid("mass_flux_functor")
+                                ? getParam<MooseFunctorName>("mass_flux_functor")
+                                : MooseFunctorName()),
     _mass_flux_is_integrated(getParam<bool>("mass_flux_is_integrated")),
     _mu(getFunctor<Real>(getParam<MooseFunctorName>(NS::mu))),
     _use_nonorthogonal_correction(getParam<bool>("use_nonorthogonal_correction")),

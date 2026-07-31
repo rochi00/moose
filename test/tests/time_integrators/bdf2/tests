@@ -37,4 +37,23 @@
       test_case = TestLinearFV
     []
   []
+
+  [history_restart]
+    type = CSVDiff
+    input = restart.i
+    csvdiff = restart_out.csv
+    requirement = 'The BDF2 integrator shall discard history across a prescribed temporal '
+                  'discontinuity and restart with an implicit one-step formula.'
+    max_parallel = 1
+  []
+
+  [history_restart_linearfv]
+    type = CSVDiff
+    input = restart-linearfv.i
+    csvdiff = restart-linearfv_out.csv
+    prereq = history_restart
+    requirement = 'The Linear FV BDF2 matrix and right-hand-side weights shall use the same '
+                  'implicit history restart across a prescribed temporal discontinuity.'
+    max_parallel = 1
+  []
 []

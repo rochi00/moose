@@ -51,6 +51,12 @@ public:
    */
   virtual void setupFaceData(const FaceInfo * face_info) override;
 
+  bool usesMassFlux(const std::string & mass_flux_name) const
+  {
+    return _mass_flux_functor && _mass_flux_functor_name == mass_flux_name &&
+           !_mass_flux_is_integrated;
+  }
+
 protected:
   /// Computes the matrix contribution of the advective flux on the element side of current face
   /// when the face is an internal face (doesn't have associated boundary conditions).
@@ -95,6 +101,9 @@ protected:
 
   /// Optional face-centered mass-flux functor used instead of the live Rhie-Chow mass flux
   const Moose::Functor<Real> * const _mass_flux_functor;
+
+  /// Requested name of the optional face-centered mass-flux functor
+  const MooseFunctorName _mass_flux_functor_name;
 
   /// Whether the optional face mass-flux functor is already multiplied by face area
   const bool _mass_flux_is_integrated;
