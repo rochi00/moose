@@ -27,7 +27,7 @@ interface_width = 0.12
 [Functions]
   [plane]
     type = ParsedFunction
-    expression = 'x + 0.2 * y - 0.48'
+    expression = '(x + 0.2 * y - 0.48) / sqrt(1.04)'
   []
 []
 

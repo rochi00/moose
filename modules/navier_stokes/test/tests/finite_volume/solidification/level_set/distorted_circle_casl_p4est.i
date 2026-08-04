@@ -61,12 +61,12 @@ dt = ${finest_h}
   []
   [vortex_u]
     type = ParsedFunction
-    expression = 's:=if(t <= ${half_time}, 1, -1); '
+    expression = 's:=if(t < ${half_time}, 1, -1); '
                  '-s * sin(pi*x)^2 * sin(2*pi*y)'
   []
   [vortex_v]
     type = ParsedFunction
-    expression = 's:=if(t <= ${half_time}, 1, -1); '
+    expression = 's:=if(t < ${half_time}, 1, -1); '
                  's * sin(pi*y)^2 * sin(2*pi*x)'
   []
 []
@@ -148,16 +148,11 @@ dt = ${finest_h}
 []
 
 [LinearFVKernels]
-  [time]
-    type = LinearFVTimeDerivative
-    variable = level_set_phi
-  []
-  [advection]
-    type = LinearFVMaterialAdvection
+  [semi_lagrangian]
+    type = LinearFVQuadraticSemiLagrangianAdvection
     variable = level_set_phi
     u = vortex_u
     v = vortex_v
-    advected_interp_method = venkatakrishnan
   []
 []
 
@@ -306,11 +301,6 @@ dt = ${finest_h}
   dt = ${dt}
   end_time = ${end_time}
   l_tol = 1e-12
-  [TimeIntegrator]
-    type = BDF2
-    # Do not let the first reverse-flow step use pre-reversal BDF2 history.
-    restart_times = '${half_time}'
-  []
 []
 
 [Outputs]
@@ -318,7 +308,7 @@ dt = ${finest_h}
   exodus = true
   file_base = distorted_circle_casl_p4est
   execute_on = 'INITIAL TIMESTEP_END'
-  # This also makes the history restart exact if dt is overridden adaptively.
+  # Keep the forward/reverse velocity switch on an exact timestep boundary.
   sync_times = '${half_time}'
   [console]
     type = Console

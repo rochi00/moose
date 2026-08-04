@@ -101,28 +101,8 @@ MassConservedLevelSetCorrector::validParams()
       "redistance_iterations",
       50,
       "redistance_iterations>0",
-      "Maximum number of second-order implicit pseudo-time steps used to restore signed "
+      "Number of second-order explicit TVD Runge-Kutta pseudo-time steps used to restore signed "
       "distance.");
-  params.addRangeCheckedParam<unsigned int>(
-      "redistance_max_nonlinear_iterations",
-      80,
-      "redistance_max_nonlinear_iterations>0",
-      "Maximum fixed-point iterations used to converge each implicit SDIRK2 stage.");
-  params.addRangeCheckedParam<Real>(
-      "redistance_nonlinear_tolerance",
-      1e-10,
-      "redistance_nonlinear_tolerance>0",
-      "Normalized residual and update tolerance for each implicit SDIRK2 stage.");
-  params.addRangeCheckedParam<Real>(
-      "redistance_steady_tolerance",
-      1e-6,
-      "redistance_steady_tolerance>0",
-      "Normalized update and Eikonal-defect tolerance for terminating pseudo-time integration.");
-  params.addRangeCheckedParam<Real>(
-      "redistance_pseudo_cfl",
-      0.5,
-      "redistance_pseudo_cfl>0 & redistance_pseudo_cfl<=1",
-      "Pseudo-time accuracy and monotonicity factor applied to the local Cartesian step.");
   params.addParam<bool>("report", false, "Report the mass correction and interface shift.");
   params.addRelationshipManager("ElementSideNeighborLayers",
                                 Moose::RelationshipManagerType::GEOMETRIC |
@@ -151,11 +131,6 @@ MassConservedLevelSetCorrector::MassConservedLevelSetCorrector(const InputParame
     _relative_tolerance(getParam<Real>("relative_tolerance")),
     _maximum_iterations(getParam<unsigned int>("maximum_iterations")),
     _redistance_iterations(getParam<unsigned int>("redistance_iterations")),
-    _redistance_max_nonlinear_iterations(
-        getParam<unsigned int>("redistance_max_nonlinear_iterations")),
-    _redistance_nonlinear_tolerance(getParam<Real>("redistance_nonlinear_tolerance")),
-    _redistance_steady_tolerance(getParam<Real>("redistance_steady_tolerance")),
-    _redistance_pseudo_cfl(getParam<Real>("redistance_pseudo_cfl")),
     _report(getParam<bool>("report")),
     _conserved_mass(
         declareRestartableData<Real>("conserved_mass", std::numeric_limits<Real>::quiet_NaN())),
@@ -833,26 +808,21 @@ MassConservedLevelSetCorrector::redistance(const Moose::StateArg & state)
                                         ? std::abs(center_value) / gradient_magnitude
                                         : std::numeric_limits<Real>::max();
     const Real convergence_band_width = _interface_width + 2.0 * local_maximum_spacing;
-    const Real update_band_width = convergence_band_width + 2.0 * local_maximum_spacing;
     const auto dof = elem_info->dofIndices()[_system_number][_variable_number];
-    if (touches_interface || estimated_distance <= update_band_width)
-      active_cells.insert(dof);
+    // CASL advances every node during each redistance stage. Restricting the update to a narrow
+    // band introduces a frozen internal boundary whose values enter the second-order stencil and
+    // contaminate the interface under repeated RK2 sweeps.
+    active_cells.insert(dof);
     if (touches_interface || estimated_distance <= convergence_band_width)
       convergence_cells.insert(dof);
   }
 
-  // The two-stage L-stable SDIRK method has order two and the same diagonal coefficient in both
-  // stages. Each stage is converged as an implicit equation using synchronized fixed-point
-  // iterates. The iteration vectors are distinct so neither element traversal nor an MPI
-  // partition changes the time-discrete operator.
-  const Real sdirk_gamma = 1.0 - 1.0 / std::sqrt(2.0);
   std::unordered_map<dof_id_type, Real> pseudo_time_steps;
   for (const auto * const elem_info : _owned_redistance_cells)
   {
     const auto dof = elem_info->dofIndices()[_system_number][_variable_number];
     if (active_cells.count(dof))
-      pseudo_time_steps.emplace(
-          dof, _redistance_pseudo_cfl * localPseudoTimeStep(*elem_info, initial_values));
+      pseudo_time_steps.emplace(dof, localPseudoTimeStep(*elem_info, initial_values));
   }
 
   const auto reinitialization_operator =
@@ -863,187 +833,55 @@ MassConservedLevelSetCorrector::redistance(const Moose::StateArg & state)
            (godunovHamiltonian(elem_info, initial_value, stage_values, initial_values) - 1.0);
   };
 
-  const auto solve_implicit_stage = [this,
-                                     &active_cells,
-                                     &convergence_cells,
-                                     &initial_values,
-                                     &pseudo_time_steps,
-                                     &reinitialization_operator,
-                                     &state](const LevelSetValues & right_hand_side,
-                                             LevelSetValues & stage_values,
-                                             const Real diagonal_coefficient,
-                                             const Real pseudo_time_factor,
-                                             const unsigned int pseudo_step,
-                                             const unsigned int stage_number)
+  const auto forward_euler_step =
+      [this,
+       &active_cells,
+       &initial_values,
+       &pseudo_time_steps,
+       &reinitialization_operator,
+       &state](const LevelSetValues & current_values, LevelSetValues & next_values)
   {
-    synchronizeLevelSet(stage_values, state);
-    Real normalized_residual = std::numeric_limits<Real>::max();
-    Real normalized_update = std::numeric_limits<Real>::max();
-
-    for (const auto nonlinear_iteration : make_range(_redistance_max_nonlinear_iterations))
-    {
-      LevelSetValues next_values(stage_values);
-      Real local_maximum_update = 0.0;
-      for (const auto * const elem_info : _owned_redistance_cells)
-      {
-        const auto dof = elem_info->dofIndices()[_system_number][_variable_number];
-        if (!active_cells.count(dof))
-          continue;
-
-        const Real initial_value = value(*elem_info, initial_values);
-        if (initial_value == 0.0)
-        {
-          next_values[dof] = 0.0;
-          continue;
-        }
-
-        const Real old_value = value(*elem_info, stage_values);
-        const Real stage_scale =
-            diagonal_coefficient * pseudo_time_factor * pseudo_time_steps.at(dof);
-        Real new_value = value(*elem_info, right_hand_side) -
-                         stage_scale * reinitialization_operator(*elem_info, stage_values);
-
-        // The subcell interface is frozen during redistancing. Reflect an unexpected stage sign
-        // in the same way as the continuous sign-preserving reinitialization equation.
-        if (initial_value * new_value < 0.0)
-          new_value *= -1.0;
-
-        next_values[dof] = new_value;
-        if (convergence_cells.count(dof))
-          local_maximum_update = std::max(local_maximum_update, std::abs(new_value - old_value));
-      }
-
-      synchronizeLevelSet(next_values, state);
-
-      Real local_maximum_residual = 0.0;
-      for (const auto * const elem_info : _owned_redistance_cells)
-      {
-        const auto dof = elem_info->dofIndices()[_system_number][_variable_number];
-        if (!convergence_cells.count(dof))
-          continue;
-
-        const Real initial_value = value(*elem_info, initial_values);
-        const Real stage_scale =
-            diagonal_coefficient * pseudo_time_factor * pseudo_time_steps.at(dof);
-        Real constrained_fixed_point =
-            value(*elem_info, right_hand_side) -
-            stage_scale * reinitialization_operator(*elem_info, next_values);
-        if (initial_value * constrained_fixed_point < 0.0)
-          constrained_fixed_point *= -1.0;
-        const Real residual = value(*elem_info, next_values) - constrained_fixed_point;
-        local_maximum_residual = std::max(local_maximum_residual, std::abs(residual));
-      }
-
-      _communicator.max(local_maximum_update);
-      _communicator.max(local_maximum_residual);
-      normalized_update = local_maximum_update / _minimum_grid_spacing;
-      normalized_residual = local_maximum_residual / _minimum_grid_spacing;
-      stage_values.swap(next_values);
-
-      if (normalized_update <= _redistance_nonlinear_tolerance &&
-          normalized_residual <= _redistance_nonlinear_tolerance)
-        return;
-
-      if (nonlinear_iteration + 1 == _redistance_max_nonlinear_iterations)
-        mooseError(name(),
-                   ": implicit SDIRK2 redistance stage ",
-                   stage_number,
-                   " at pseudo-time step ",
-                   pseudo_step + 1,
-                   " failed to converge in ",
-                   _redistance_max_nonlinear_iterations,
-                   " nonlinear iterations. Normalized residual: ",
-                   normalized_residual,
-                   "; normalized update: ",
-                   normalized_update,
-                   ".");
-    }
-  };
-
-  const auto maximum_eikonal_defect =
-      [this, &convergence_cells, &initial_values](const LevelSetValues & stage_values)
-  {
-    Real local_defect = 0.0;
+    next_values = current_values;
     for (const auto * const elem_info : _owned_redistance_cells)
     {
       const auto dof = elem_info->dofIndices()[_system_number][_variable_number];
-      if (!convergence_cells.count(dof))
+      if (!active_cells.count(dof))
         continue;
-      local_defect = std::max(local_defect,
-                              std::abs(godunovHamiltonian(*elem_info,
-                                                          value(*elem_info, initial_values),
-                                                          stage_values,
-                                                          initial_values) -
-                                       1.0));
+
+      const Real initial_value = value(*elem_info, initial_values);
+      if (initial_value == 0.0)
+      {
+        next_values[dof] = 0.0;
+        continue;
+      }
+
+      Real new_value =
+          value(*elem_info, current_values) -
+          pseudo_time_steps.at(dof) * reinitialization_operator(*elem_info, current_values);
+      if (initial_value * new_value < 0.0)
+        new_value *= -1.0;
+      next_values[dof] = new_value;
     }
-    _communicator.max(local_defect);
-    return local_defect;
+
+    synchronizeLevelSet(next_values, state);
   };
 
   Real final_normalized_update = 0.0;
-  Real final_eikonal_defect = maximum_eikonal_defect(values);
-  unsigned int completed_pseudo_steps = 0;
-  unsigned int rejected_pseudo_steps = 0;
   for (const auto pseudo_step : make_range(_redistance_iterations))
   {
+    (void)pseudo_step;
     const LevelSetValues previous_values(values);
-    const Real previous_eikonal_defect = maximum_eikonal_defect(previous_values);
-    Real pseudo_time_factor = 1.0;
-    bool accepted = false;
-    LevelSetValues accepted_values(previous_values);
+    LevelSetValues first_stage;
+    forward_euler_step(previous_values, first_stage);
+    LevelSetValues second_stage;
+    forward_euler_step(first_stage, second_stage);
 
-    for (const auto cutback : make_range(8))
+    for (const auto * const elem_info : _owned_redistance_cells)
     {
-      LevelSetValues first_stage(previous_values);
-      solve_implicit_stage(previous_values,
-                           first_stage,
-                           sdirk_gamma,
-                           pseudo_time_factor,
-                           pseudo_step,
-                           /* stage_number = */ 1);
-
-      LevelSetValues second_stage_right_hand_side(previous_values);
-      for (const auto * const elem_info : _owned_redistance_cells)
-      {
-        const auto dof = elem_info->dofIndices()[_system_number][_variable_number];
-        if (!active_cells.count(dof))
-          continue;
-        second_stage_right_hand_side[dof] = value(*elem_info, previous_values) -
-                                            (1.0 - sdirk_gamma) * pseudo_time_factor *
-                                                pseudo_time_steps.at(dof) *
-                                                reinitialization_operator(*elem_info, first_stage);
-      }
-
-      LevelSetValues second_stage(first_stage);
-      solve_implicit_stage(second_stage_right_hand_side,
-                           second_stage,
-                           sdirk_gamma,
-                           pseudo_time_factor,
-                           pseudo_step,
-                           /* stage_number = */ 2);
-      const Real candidate_eikonal_defect = maximum_eikonal_defect(second_stage);
-      const Real admissible_defect =
-          std::max(_redistance_steady_tolerance,
-                   previous_eikonal_defect * (1.0 + _redistance_steady_tolerance));
-      if (candidate_eikonal_defect <= admissible_defect)
-      {
-        accepted_values.swap(second_stage);
-        final_eikonal_defect = candidate_eikonal_defect;
-        accepted = true;
-        break;
-      }
-
-      ++rejected_pseudo_steps;
-      values = previous_values;
-      synchronizeLevelSet(values, state);
-      pseudo_time_factor *= 0.5;
-      (void)cutback;
+      const auto dof = elem_info->dofIndices()[_system_number][_variable_number];
+      if (active_cells.count(dof))
+        values[dof] = 0.5 * (value(*elem_info, previous_values) + value(*elem_info, second_stage));
     }
-
-    if (!accepted)
-      break;
-
-    values.swap(accepted_values);
     synchronizeLevelSet(values, state);
 
     Real local_maximum_update = 0.0;
@@ -1058,11 +896,6 @@ MassConservedLevelSetCorrector::redistance(const Moose::StateArg & state)
     }
     _communicator.max(local_maximum_update);
     final_normalized_update = local_maximum_update / _minimum_grid_spacing;
-    completed_pseudo_steps = pseudo_step + 1;
-
-    if (final_normalized_update <= _redistance_steady_tolerance &&
-        final_eikonal_defect <= _redistance_steady_tolerance)
-      break;
   }
 
   unsigned int changed_phase_signs = 0;
@@ -1081,12 +914,11 @@ MassConservedLevelSetCorrector::redistance(const Moose::StateArg & state)
                " narrow-band cells.");
 
   if (_report)
-    _console << name() << ": SDIRK2 redistance completed " << completed_pseudo_steps
+    _console << name() << ": TVD RK2 redistance completed " << _redistance_iterations
              << " pseudo-time iterations over " << convergence_cells.size()
              << " owned core cells and " << active_cells.size()
-             << " owned guard-band cells with normalized update " << final_normalized_update
-             << ", Eikonal defect " << final_eikonal_defect << ", and " << rejected_pseudo_steps
-             << " rejected steps" << std::endl;
+             << " owned active cells with normalized update " << final_normalized_update
+             << std::endl;
   return final_normalized_update;
 }
 

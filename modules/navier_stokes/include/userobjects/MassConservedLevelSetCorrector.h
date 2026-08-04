@@ -21,9 +21,9 @@ class LinearSystem;
 class ElemInfo;
 
 /**
- * Restores a transported level set to signed distance with an implicit second-order SDIRK method
- * and applies a uniform shift so its regularized-Heaviside material mass equals the conserved
- * reference mass captured before the first correction.
+ * Restores a transported level set to signed distance with an explicit second-order TVD
+ * Runge-Kutta method and applies a uniform shift so its regularized-Heaviside material mass equals
+ * the conserved reference mass captured before the first correction.
  *
  * A uniform shift leaves grad(phi), normals, and curvature unchanged. Weighting the Heaviside by
  * the material phase density conserves mass while allowing the represented material volume to
@@ -115,10 +115,6 @@ protected:
   const Real _relative_tolerance;
   const unsigned int _maximum_iterations;
   const unsigned int _redistance_iterations;
-  const unsigned int _redistance_max_nonlinear_iterations;
-  const Real _redistance_nonlinear_tolerance;
-  const Real _redistance_steady_tolerance;
-  const Real _redistance_pseudo_cfl;
   const bool _report;
   Real & _conserved_mass;
 

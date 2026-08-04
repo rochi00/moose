@@ -1,4 +1,26 @@
 [Tests]
+  [quadratic_semi_lagrangian]
+    type = CSVDiff
+    input = quadratic_semi_lagrangian.i
+    csvdiff = quadratic_semi_lagrangian.csv
+    requirement = 'The quadratic semi-Lagrangian linear-FV operator shall exactly translate a '
+                  'quadratic field under a constant velocity in one time step.'
+    max_threads = 1
+  []
+
+  [quadratic_semi_lagrangian_distributed]
+    type = CSVDiff
+    input = quadratic_semi_lagrangian.i
+    csvdiff = quadratic_semi_lagrangian.csv
+    cli_args = 'Mesh/parallel_type=distributed'
+    prereq = quadratic_semi_lagrangian
+    min_parallel = 2
+    max_parallel = 2
+    max_threads = 1
+    requirement = 'The quadratic semi-Lagrangian reconstruction shall produce the same result '
+                  'when its departure-point patches cross MPI partitions.'
+  []
+
   [material_advection_constant]
     type = CSVDiff
     input = material_advection_constant.i
@@ -33,7 +55,7 @@
     csvdiff = material_advection_amr_affine_reverse.csv
     cli_args = "Functions/velocity_x/expression=-1 Functions/velocity_y/expression=-0.5 "
                "Functions/manufactured_source/expression='-1 + x + 2 * y' "
-               'Outputs/file_base=material_advection_amr_affine_reverse'
+               "Outputs/file_base=material_advection_amr_affine_reverse"
     prereq = material_advection_amr_affine
     requirement = 'The geometry-aware linear finite-volume material-advection reconstruction '
                   'shall preserve an affine field when flow crosses a static 2:1 AMR interface '
