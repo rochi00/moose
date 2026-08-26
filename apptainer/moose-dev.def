@@ -586,7 +586,7 @@ EOF
         if [ -n "${CUDA_DIR:-}" ]; then
             MFEM_OPTIONS+=(
                 "-DMFEM_USE_CUDA=ON"
-                "-DCUDA_ARCH=sm_80"
+                "-DCUDA_ARCH=sm_90"
                 # The build environment lacks libnvidia-ml.so.1, which PETSc needs,
                 # so we bypass the test that MFEM uses to check PETSc's installation
                 # during CMake configuration.

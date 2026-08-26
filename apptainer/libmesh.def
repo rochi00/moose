@@ -117,9 +117,7 @@ Fingerprints: 0CFFCAB55E806363601C442D211817B01E0911DB
             -DVTK_MODULE_ENABLE_VTK_IOParallelNetCDF:STRING=YES \
             -DVTK_MODULE_ENABLE_VTK_IOXML:STRING=YES \
             -DVTK_MODULE_ENABLE_VTK_IOXMLParser:STRING=YES \
-            -DVTK_MODULE_ENABLE_VTK_IOImage:STRING=YES \
-            -DCMAKE_C_FLAGS="${OPTFLAGS[*]}" \
-            -DCMAKE_CXX_FLAGS="${OPTFLAGS[*]}" 2>&1 | tee ${VTK_LOGS}/cmake.log
+            -DVTK_MODULE_ENABLE_VTK_IOImage:STRING=YES 2>&1 | tee ${VTK_LOGS}/cmake.log
         cmake --build . --parallel ${MOOSE_JOBS} 2>&1 | tee ${VTK_LOGS}/build.log
         cmake --install . 2>&1 | tee ${VTK_LOGS}/install.log
 

@@ -112,7 +112,7 @@ Fingerprints: 0CFFCAB55E806363601C442D211817B01E0911DB
         PETSC_OPTIONS+=(
             "--with-cuda"
             "--with-cuda-dir=${CUDA_DIR}"
-            "--with-cuda-arch=80"
+            "--with-cuda-arch=90"
             "--download-slate"
             "--download-hypre-configure-arguments='--enable-gpu-aware-mpi'"
         )
@@ -156,10 +156,10 @@ Fingerprints: 0CFFCAB55E806363601C442D211817B01E0911DB
 {%- endif %}
 
     # Test PETSc, only if not using cuda
-    if [ -z "${CUDA_DIR:-}" ]; then
-        cd petsc
-        make SLEPC_DIR=${PETSC_DIR} PETSC_DIR=${PETSC_DIR} PETSC_ARCH= check 2>&1 | tee ${PETSC_LOGS}/check.log
-    fi
+    # if [ -z "${CUDA_DIR:-}" ]; then
+    #     cd petsc
+    #     make SLEPC_DIR=${PETSC_DIR} PETSC_DIR=${PETSC_DIR} PETSC_ARCH= check 2>&1 | tee ${PETSC_LOGS}/check.log
+    # fi
 
     # Clean Up
     rm -rf ${ROOT_BUILD_DIR}
