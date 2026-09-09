@@ -43,8 +43,119 @@
     max_threads = 1 # see libmesh issue #3808
   []
 
+
+
+  [phase_slip_wall_conservation]
+    type = CSVDiff
+    input = 'phase-slip-wall-conservation.i'
+    csvdiff = 'phase-slip-wall-conservation_out.csv'
+    abs_zero = 1e-6
+    design = 'LinearFVScalarAdvection.md'
+    requirement = 'The system shall conserve the dispersed phase in a closed cavity when a slip velocity is present, by not transporting the phase across impermeable boundaries, even when those boundaries constrain the phase fraction.'
+    max_threads = 1 # see libmesh issue #3808
+  []
+
+  [mass_density_transient]
+    type = CSVDiff
+    input = 'mass-balance-transient.i'
+    csvdiff = 'mass-balance-transient_out.csv'
+    abs_zero = 1e-6
+    design = 'WCNSLinearFVTwoPhaseMixturePhysics.md'
+    requirement = 'The system shall close the mixture mass balance in a transient in which the domain gains or loses mass, by carrying the density transient of the mixture continuity equation into the pressure equation. Without that term the pressure equation forces the mass flow in to equal the mass flow out at every instant, and the whole of the storage rate is unaccounted for; the imbalance in this case is then three per cent of the inlet mass flow rather than the six significant figures the term recovers. The test is also sensitive to the sign of the term, which doubles the imbalance rather than closing it when reversed.'
+    max_threads = 1 # see libmesh issue #3808
+  []
+
+
+  [conservative_transient_energy]
+    type = CSVDiff
+    input = 'conservative-transient-energy.i'
+    csvdiff = 'conservative-transient-energy_out.csv'
+    abs_zero = 1e-6
+    design = 'WCNSLinearFVTwoPhaseMixturePhysics.md LinearFVTimeDerivative.md'
+    requirement = 'The system shall conserve the mixture enthalpy of a closed quiescent cavity whose dispersed phase density varies in time, by assembling the energy transient in conservative form: a factor of rho_m cp_m gives d(rho_m cp_m T)/dt, whose discrete sum telescopes, so the integral of rho_m cp_m T holds to round-off over a tripling of the dispersed phase density. Holding the multiplier outside the derivative instead gives rho_m cp_m dT/dt, and the temperature does not move at all and the integral rises by a factor of two and two thirds, so the assertion fails by nine orders of magnitude rather than by a margin comparable to the tolerance.'
+    max_threads = 1 # see libmesh issue #3808
+  []
+
+  [conservative_transient_interfacial_area]
+    type = CSVDiff
+    input = 'conservative-transient-interfacial-area.i'
+    csvdiff = 'conservative-transient-interfacial-area_out.csv'
+    abs_zero = 1e-6
+    design = 'LinearWCNSFV2PInterfaceAreaSourceSink.md LinearFVTimeDerivative.md'
+    requirement = 'The system shall conserve the interfacial area of a closed quiescent cavity whose dispersed phase density varies in time, by assembling the transient of its conservative transport equation as d(rho_d xi)/dt, whose discrete sum telescopes, so the integral of rho_d xi holds to round-off over a tripling of the dispersed phase density. Holding the multiplier outside the derivative instead gives rho_d d(xi)/dt, and the interfacial area does not move at all and the integral triples, so the assertion fails by nine orders of magnitude rather than by a margin comparable to the tolerance.'
+    max_threads = 1 # see libmesh issue #3808
+  []
+
+
+  [energy_slip_wall_conservation]
+    type = CSVDiff
+    input = 'energy-slip-wall-conservation.i'
+    csvdiff = 'energy-slip-wall-conservation_out.csv'
+    # The enthalpy integral is 1515, and the imbalance left by the segregated solve is 6e-5 of it.
+    # Declaring the walls permeable, which is the defect this guards against, moves the integral by
+    # 1.07, so this tolerance separates the two by four orders of magnitude.
+    abs_zero = 1e-3
+    design = 'LinearWCNSFV2PEnergyDriftFlux.md'
+    requirement = 'The system shall conserve the mixture enthalpy in a closed cavity when the phases move relative to one another, by not carrying enthalpy across impermeable boundaries, even when those boundaries constrain the temperature.'
+    max_threads = 1 # see libmesh issue #3808
+  []
+
+  [slip_closure_verification]
+    type = CSVDiff
+    input = 'slip-closure-verification.i'
+    csvdiff = 'slip-closure-verification_out.csv'
+    design = 'LinearWCNSFV2PSlipVelocityFunctorMaterial.md'
+    requirement = 'The system shall compute the algebraic slip velocity of a two phase mixture, the diffusion velocity derived from it, and the slip velocity obtained by solving the drag correlation together with the force balance, in agreement with their analytic values.'
+    max_threads = 1 # see libmesh issue #3808
+  []
+
+
+  [interface_area_hibiki_ishii]
+    type = CSVDiff
+    input = 'interface-area-verification.i'
+    csvdiff = 'interface-area-verification_out.csv'
+    design = 'LinearWCNSFV2PInterfaceAreaSourceSink.md'
+    requirement = 'The system shall reproduce the analytic steady state of the Hibiki and Ishii interfacial area closure, at which coalescence balances breakage.'
+    max_threads = 1 # see libmesh issue #3808
+  []
+  [interface_area_ishii_kim]
+    type = CSVDiff
+    input = 'interface-area-verification.i'
+    cli_args = "model=ishii-kim Outputs/file_base=interface-area-verification-ik"
+    csvdiff = 'interface-area-verification-ik.csv'
+    design = 'LinearWCNSFV2PInterfaceAreaSourceSink.md'
+    requirement = 'The system shall reproduce the analytic steady state of the Ishii and Kim interfacial area closure, at which random collision and wake entrainment balance turbulent impact.'
+    max_threads = 1 # see libmesh issue #3808
+  []
+
+
+
+
+
+  [mass_drift_flux_vanishes]
+    type = CSVDiff
+    input = 'channel-drift-flux-physics.i'
+    cli_args = "rho_d=10.0 Physics/NavierStokes/TwoPhaseMixtureSegregated/mixture/add_drift_flux_mass_term=true Outputs/file_base=mass-drift-flux-vanishes"
+    csvdiff = 'mass-drift-flux-vanishes.csv'
+    design = 'LinearWCNSFV2PMassDriftFlux.md'
+    # The gold was produced with the term switched off and the phase densities set equal. The
+    # dilatation the relative motion produces carries the factor alpha - c_d, and c_d = alpha when
+    # the densities are equal, so the term must vanish identically rather than merely become small.
+    # This is an analytic property of the closure and holds to the last digit.
+    requirement = 'The system shall produce no mixture dilatation from the relative motion of the phases when the two phase densities are equal, since the volumetric and mass averaged mixture velocities then coincide.'
+    max_threads = 1 # see libmesh issue #3808
+  []
+
   [errors]
     requirement = "The system shall return an error if"
+    [active_scalar_subcycles_without_reordering]
+      type = RunException
+      input = 'channel-drift-flux-physics.i'
+      cli_args = "Executioner/active_scalar_subcycles=4"
+      expect_err = 'Subcycling the active scalar equations requires them to be solved ahead of the flow'
+      detail = 'the active scalar equations are subcycled without being moved ahead of the flow, since the flux transporting them would then change between subcycles.'
+      max_threads = 1 # see libmesh issue #3808
+    []
     [skewness]
       type = RunException
       input = 'lid-driven-two-phase-physics.i'
