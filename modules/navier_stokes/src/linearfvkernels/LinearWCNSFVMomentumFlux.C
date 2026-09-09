@@ -16,6 +16,12 @@
 #include "LinearFVGradientInterface.h"
 
 registerMooseObject("NavierStokesApp", LinearWCNSFVMomentumFlux);
+// Renamed for consistency with the other linear finite volume Navier Stokes objects,
+// which all carry the WCNSLinearFV prefix
+registerMooseObjectRenamed("NavierStokesApp",
+                           LinearWCNSFVMomentumFlux,
+                           "08/18/2027 00:00",
+                           LinearWCNSFVMomentumFlux);
 
 InputParameters
 LinearWCNSFVMomentumFlux::validParams()
