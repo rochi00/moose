@@ -13,13 +13,24 @@
 #include "LinearFVBoundaryCondition.h"
 #include "LinearFVAdvectionDiffusionBC.h"
 
+#include <limits>
+
 registerMooseObject("NavierStokesApp", LinearWCNSFV2PMomentumDriftFlux);
+// Renamed for consistency with the other linear finite volume Navier Stokes objects,
+// which all carry the WCNSLinearFV prefix
+registerMooseObjectRenamed("NavierStokesApp",
+                           LinearWCNSFV2PMomentumDriftFlux,
+                           "08/18/2027 00:00",
+                           LinearWCNSFV2PMomentumDriftFlux);
 
 InputParameters
 LinearWCNSFV2PMomentumDriftFlux ::validParams()
 {
   auto params = LinearFVFluxKernel::validParams();
-  params.addClassDescription("Implements the drift momentum flux source.");
+  params.addClassDescription(
+      "Implements the diffusion (drift) stress of the two-phase mixture model, "
+      "div(beta_d beta_c / rho_m * u_slip (x) u_slip), on the left hand side of the mixture "
+      "momentum equation.");
   params.addRequiredParam<UserObjectName>(
       "rhie_chow_user_object",
       "The rhie-chow user-object which is used to determine the face velocity.");
@@ -27,6 +38,7 @@ LinearWCNSFV2PMomentumDriftFlux ::validParams()
   params.addParam<MooseFunctorName>("v_slip", "The slip velocity in the y direction.");
   params.addParam<MooseFunctorName>("w_slip", "The slip velocity in the z direction.");
   params.addRequiredParam<MooseFunctorName>("rho_d", "Dispersed phase density.");
+  params.addRequiredParam<MooseFunctorName>("rho_c", "Continuous phase density.");
   params.addParam<MooseFunctorName>("fd", 0.0, "Fraction dispersed phase.");
   params.renameParam("fd", "fraction_dispersed", "");
 
@@ -51,13 +63,18 @@ LinearWCNSFV2PMomentumDriftFlux ::LinearWCNSFV2PMomentumDriftFlux(const InputPar
     _dim(_subproblem.mesh().dimension()),
     _mass_flux_provider(getUserObject<RhieChowMassFlux>("rhie_chow_user_object")),
     _rho_d(getFunctor<Real>("rho_d")),
+    _rho_c(getFunctor<Real>("rho_c")),
     _f_d(getFunctor<Real>("fd")),
     _u_slip(getFunctor<Real>("u_slip")),
     _v_slip(isParamValid("v_slip") ? &getFunctor<Real>("v_slip") : nullptr),
     _w_slip(isParamValid("w_slip") ? &getFunctor<Real>("w_slip") : nullptr),
     _index(getParam<MooseEnum>("momentum_component")),
     _density_interp_method(
-        Moose::FV::selectInterpolationMethod(getParam<MooseEnum>("density_interp_method")))
+        Moose::FV::selectInterpolationMethod(getParam<MooseEnum>("density_interp_method"))),
+    _face_flux(0.0),
+    _slip_mass_flux(0.0),
+    _gamma(0.0),
+    _boundary_normal_factor(1.0)
 {
   if (_dim >= 2 && !_v_slip)
     mooseError("In two or more dimensions, the v_slip velocity must be supplied using the 'v_slip' "
@@ -94,68 +111,83 @@ LinearWCNSFV2PMomentumDriftFlux::computeFlux()
 
   const auto uslipdotn = normal * u_slip_vel_vec;
 
-  Real face_rho_fd;
+  // The exact diffusion stress coefficient, beta_d beta_c / rho_m, evaluated on the face
+  Real face_coefficient;
   if (on_boundary)
-    face_rho_fd = _rho_d(face_arg, state) * _f_d(face_arg, state);
+    face_coefficient = diffusionStressCoefficient(face_arg, state);
   else
   {
     const auto elem_arg = makeElemArg(_current_face_info->elemPtr());
     const auto neigh_arg = makeElemArg(_current_face_info->neighborPtr());
 
-    Moose::FV::interpolate(_density_interp_method,
-                           face_rho_fd,
-                           _rho_d(elem_arg, state) * _f_d(elem_arg, state),
-                           _rho_d(neigh_arg, state) * _f_d(neigh_arg, state),
+    const auto elem_coefficient = diffusionStressCoefficient(elem_arg, state);
+    const auto neighbor_coefficient = diffusionStressCoefficient(neigh_arg, state);
+
+    // beta_d beta_c / rho_m vanishes wherever either phase is absent, at a phase fraction of zero
+    // and again at one, and the harmonic mean is not defined there. Fall back to the arithmetic
+    // average on those faces. The coefficient weights an advective flux rather than acting as a
+    // diffusivity, so the arithmetic average is the natural choice for it in any case; the
+    // harmonic option is retained for continuity with the parameter's previous meaning.
+    const auto interp_method = (elem_coefficient > 0.0 && neighbor_coefficient > 0.0)
+                                   ? _density_interp_method
+                                   : Moose::FV::InterpMethod::Average;
+
+    Moose::FV::interpolate(interp_method,
+                           face_coefficient,
+                           elem_coefficient,
+                           neighbor_coefficient,
                            *_current_face_info,
                            true);
   }
 
-  _face_flux = -face_rho_fd * uslipdotn * u_slip_vel_vec(_index);
+  // The term is written as a flux carried by the slip velocity, so that the flux scale can be
+  // reused below as the scale of the implicit surrogate.
+  //
+  // Sign. A LinearFVFluxKernel assembles its face flux onto the left hand side, so the flux set
+  // here is the left hand side form of the term. Summing the phase momentum equations puts
+  // +div(sum_k a_k rho_k u_Mk u_Mk) on the left hand side, hence the positive sign. This differs
+  // from the nonlinear WCNSFV2PMomentumDriftFlux, which carries the opposite sign and is left
+  // unchanged; the two discretizations therefore disagree on this term by construction.
+  _slip_mass_flux = face_coefficient * uslipdotn;
+  _face_flux = _slip_mass_flux * u_slip_vel_vec(_index);
 }
 
 Real
 LinearWCNSFV2PMomentumDriftFlux::computeElemMatrixContribution()
 {
-  const auto u_old = _var(makeCDFace(*_current_face_info), Moose::previousNonlinearState()).value();
-  if (std::abs(u_old) > 1e-6)
-    return _velocity_interp_coeffs.first * _face_flux / u_old * _current_face_area;
-  else
-    return 0.;
+  return std::max(_gamma, 0.0) * _current_face_area;
 }
 
 Real
 LinearWCNSFV2PMomentumDriftFlux::computeNeighborMatrixContribution()
 {
-  const auto u_old = _var(makeCDFace(*_current_face_info), Moose::previousNonlinearState()).value();
-  if (std::abs(u_old) > 1e-6)
-    return _velocity_interp_coeffs.second * _face_flux / u_old * _current_face_area;
-  else
-    // place term on RHS if u_old is too close to 0
-    return 0.;
+  return -std::max(-_gamma, 0.0) * _current_face_area;
+}
+
+Real
+LinearWCNSFV2PMomentumDriftFlux::deferredCorrection() const
+{
+  // Upwind value of the previous iterate with respect to the slip mass flux
+  const auto old_state = Moose::previousNonlinearState();
+  const auto u_upwind_old =
+      _gamma > 0 ? _var(makeElemArg(_current_face_info->elemPtr()), old_state).value()
+                 : _var(makeElemArg(_current_face_info->neighborPtr()), old_state).value();
+
+  return (_gamma * u_upwind_old - _face_flux) * _current_face_area;
 }
 
 Real
 LinearWCNSFV2PMomentumDriftFlux::computeElemRightHandSideContribution()
 {
-  // Get old velocity
-  const auto u_old = _var(makeCDFace(*_current_face_info), Moose::previousNonlinearState()).value();
-  const auto u = _var(makeCDFace(*_current_face_info), Moose::currentState()).value();
-  if (std::abs(u_old) > 1e-6)
-    return _velocity_interp_coeffs.first * _face_flux * (u / u_old - 1) * _current_face_area;
-  else
-    return -_face_flux * _current_face_area;
+  return deferredCorrection();
 }
 
 Real
 LinearWCNSFV2PMomentumDriftFlux::computeNeighborRightHandSideContribution()
 {
-  // Get old velocity
-  const auto u_old = _var(makeCDFace(*_current_face_info), Moose::previousNonlinearState()).value();
-  const auto u = _var(makeCDFace(*_current_face_info), Moose::currentState()).value();
-  if (std::abs(u_old) > 1e-6)
-    return _velocity_interp_coeffs.second * _face_flux * (u / u_old - 1) * _current_face_area;
-  else
-    return -_face_flux * _current_face_area;
+  // The right hand side contributions are not negated by the assembly routine, unlike the matrix
+  // ones, so the neighbour row has to be given the opposite sign here
+  return -deferredCorrection();
 }
 
 Real
@@ -164,7 +196,7 @@ LinearWCNSFV2PMomentumDriftFlux::computeBoundaryRHSContribution(
 {
   // Lagging the whole term for now
   // TODO: make sure this only gets called once, and not once per BC
-  return -_face_flux * _current_face_area;
+  return -_boundary_normal_factor * _face_flux * _current_face_area;
 }
 
 void
@@ -172,15 +204,30 @@ LinearWCNSFV2PMomentumDriftFlux::setupFaceData(const FaceInfo * face_info)
 {
   LinearFVFluxKernel::setupFaceData(face_info);
 
-  // Caching the mass flux on the face which will be reused in the advection term's matrix and right
-  // hand side contributions
+  // Multiplier that ensures the normal of the boundary always points outwards, even in cases
+  // when the boundary is within the mesh
+  _boundary_normal_factor = (_current_face_type == FaceInfo::VarFaceNeighbors::ELEM) ? 1.0 : -1.0;
+
+  // Caching the flux on the face which will be reused in the matrix and right hand side
+  // contributions
   computeFlux();
 
-  // Caching the interpolation coefficients so they will be reused for the matrix and right hand
-  // side terms
-  _velocity_interp_coeffs =
-      Moose::FV::interpCoeffs(_density_interp_method,
-                              *_current_face_info,
-                              true,
-                              _mass_flux_provider.getMassFlux(*_current_face_info));
+  // Coefficient of the implicit surrogate. This term has no genuine linear dependence on the
+  // velocity component being solved for: the slip velocity is driven by the pressure gradient and
+  // by gravity through its algebraic closure, not by the local cell value. The matrix contribution
+  // is therefore a deferred correction rather than a linearization, and the deferredCorrection()
+  // added to the right hand side cancels it exactly at convergence. The converged solution does
+  // not depend on _gamma, which is chosen for convergence alone.
+  //
+  // The natural choice is the Picard ratio flux / u_old, but that grows without bound as u_old
+  // approaches zero and carries no controlled sign. We cap its magnitude with the slip mass flux,
+  // which is the scale of the term itself, and take the sign of the slip mass flux. Combined with
+  // the upwind structure of the matrix contributions this puts a non-negative coefficient on both
+  // diagonals and a non-positive one on both off-diagonals, on every face, with no special case
+  // near stagnation.
+  const auto u_old = _var(makeCDFace(*_current_face_info), Moose::previousNonlinearState()).value();
+  const auto ratio = (std::abs(u_old) > libMesh::TOLERANCE)
+                         ? std::abs(_face_flux / u_old)
+                         : std::numeric_limits<Real>::max();
+  _gamma = std::copysign(std::min(ratio, std::abs(_slip_mass_flux)), _slip_mass_flux);
 }
