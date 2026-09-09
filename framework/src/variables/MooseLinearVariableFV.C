@@ -22,6 +22,7 @@
 #include "FVFluxBC.h"
 #include "FVDirichletBCBase.h"
 #include "LinearFVBoundaryCondition.h"
+#include "LinearFVAdvectionDiffusionBC.h"
 #include "LinearFVAdvectionDiffusionFunctorDirichletBC.h"
 #include "FVGradientMethod.h"
 
@@ -267,10 +268,85 @@ MooseLinearVariableFV<OutputType>::evaluateDot(const ElemArg &, const StateArg &
 
 template <>
 ADReal
-MooseLinearVariableFV<Real>::evaluateDot(const ElemArg & /*elem_arg*/,
-                                         const StateArg & /*state*/) const
+MooseLinearVariableFV<Real>::evaluateDot(const ElemArg & elem_arg, const StateArg & state) const
+{
+  // A steady problem has no time derivative to report
+  if (!_subproblem.isTransient())
+    return 0;
+
+  const auto * const time_integrator = this->_sys.queryTimeIntegrator(this->_var_num);
+  if (!time_integrator)
+    timeIntegratorError();
+
+  const auto & elem_info = this->_mesh.elemInfo(elem_arg.elem->id());
+  const auto dof_id = elem_info.dofIndices()[this->_sys_num][this->_var_num];
+
+  // We deliberately build the time derivative out of the very same discrete operator that
+  // LinearFVTimeDerivative assembles, rather than a hand-rolled (u - u_old) / dt. Consumers of
+  // this routine (e.g. the two-phase slip velocity closure) feed their result back into
+  // equations that are integrated by this same integrator, so using a first-order difference
+  // here would silently drop the scheme to first order under, say, BDF2.
+  //
+  //   du/dt = c_t * u^{n+1} - sum_{m >= 1} c_m * u^{n+1-m}
+  //
+  // where timeDerivativeMatrixContribution(1) supplies c_t and timeDerivativeRHSContribution
+  // supplies the history sum for a unit multiplier at every required state.
+  const std::vector<Real> unit_factors(time_integrator->numStatesRequired(), 1.0);
+  return time_integrator->timeDerivativeMatrixContribution(1.0) * getElemValue(elem_info, state) -
+         time_integrator->timeDerivativeRHSContribution(dof_id, unit_factors);
+}
+
+template <typename OutputType>
+typename MooseLinearVariableFV<OutputType>::DotType
+MooseLinearVariableFV<OutputType>::evaluateDot(const FaceArg &, const StateArg &) const
 {
   timeIntegratorError();
+}
+
+template <>
+ADReal
+MooseLinearVariableFV<Real>::evaluateDot(const FaceArg & face, const StateArg & state) const
+{
+  const FaceInfo * const fi = face.fi;
+  mooseAssert(fi, "The face information must be non-null");
+
+  const auto face_type = fi->faceType(std::make_pair(this->_var_num, this->_sys_num));
+
+  // On an internal face we interpolate the two adjacent cell time derivatives with the very
+  // same interpolation the value evaluation uses, so that d/dt and the value stay consistent
+  if (face_type == FaceInfo::VarFaceNeighbors::BOTH)
+    return Moose::FV::interpolate<ADReal, Moose::FunctorEvaluationKind::Dot>(*this, face, state);
+  else if (face_type != FaceInfo::VarFaceNeighbors::ELEM &&
+           face_type != FaceInfo::VarFaceNeighbors::NEIGHBOR)
+    mooseError("We should never get here!");
+
+  mooseAssert(fi->boundaryIDs().size() == 1, "We should only have one boundary on every face.");
+
+  // The cell the face value is built from
+  const auto elem_arg = ElemArg(
+      {face_type == FaceInfo::VarFaceNeighbors::ELEM ? &fi->elem() : fi->neighborPtr(),
+       face.correct_skewness});
+
+  auto * const bc_pointer = this->getBoundaryCondition(*fi->boundaryIDs().begin());
+
+  // Without a boundary condition the face value is the adjacent cell value, so the face time
+  // derivative is that cell's time derivative
+  if (!bc_pointer)
+    return evaluateDot(elem_arg, state);
+
+  // A boundary condition writes the face value as u_f = m u_C + r, with m the sensitivity of the
+  // face value to the cell value that computeBoundaryValueMatrixContribution() supplies and r the
+  // part independent of it. The chain rule gives du_f/dt = m du_C/dt. A Dirichlet condition has
+  // m = 0 and so pins the face and carries no time derivative of its own; extrapolated, Neumann
+  // and symmetry conditions have m = 1 and follow their cell; a Robin condition blends the two.
+  // The dr/dt term is dropped, which is the same approximation MooseVariableFV makes when it
+  // reports zero on a Dirichlet face whose prescribed value is itself a function of time.
+  auto * const adv_bc = dynamic_cast<LinearFVAdvectionDiffusionBC *>(bc_pointer);
+  if (!adv_bc)
+    return 0;
+
+  adv_bc->setupFaceData(fi, face_type);
+  return adv_bc->computeBoundaryValueMatrixContribution() * evaluateDot(elem_arg, state);
 }
 
 template <typename OutputType>
