@@ -27,19 +27,60 @@ public:
 
 private:
   virtual void addFVKernels() override;
+
+  /// Adds the dilatation the relative motion produces to the pressure equation
+  void addMassDriftFluxTerm();
   virtual void addMaterials() override;
   virtual void checkIntegrity() const override;
 
-  /// Adds the slip velocity parameters
+  /**
+   * Sets the velocity at which the phase fraction travels relative to the mixture. This is the
+   * diffusion (drift) velocity, not the slip velocity: see
+   * LinearWCNSFV2PSlipVelocityFunctorMaterial for the distinction. The base class calls this when
+   * building the scalar advection kernel of the phase transport equation.
+   */
   virtual void setSlipVelocityParams(InputParameters & params) const override;
+
+  /// The phase transport equation is assembled as the dispersed phase mass equation, so every
+  /// term carries the dispersed phase density.
+  virtual MooseFunctorName scalarConservativeDensity(const VariableName & vname) const override;
+
+  /// Sets the slip velocity, u_d - u_c, on objects that consume the relative motion of the phases
+  /// directly, namely the momentum and energy diffusion flux kernels
+  void setRelativeVelocityParams(InputParameters & params) const;
 
   /**
    * Functions adding kernels for the other physics
    */
   void addPhaseInterfaceTerm();
+
+  /// Adds d(rho_m)/dt to the pressure equation, the storage term of mixture continuity
+  void addMassDensityTransientTerm();
+  /// Builds d(rho_m)/dt once, on demand, and returns the functor name. Several equations need it.
+  MooseFunctorName buildMixtureDensityTimeDerivative();
+  /// Builds d(rho_m)/dp at fixed phase fraction, the coefficient the pressure driven part of
+  /// the storage term carries onto the matrix diagonal
+  MooseFunctorName buildMixtureDensityPressureDerivative();
+
+  /// Adds the interfacial mass transfer source to the dispersed phase equation
+  void addInterfacialMassTransferTerm();
+
+  /// Adds the latent heat absorbed or released by the interfacial mass transfer
+  void addLatentHeatTransferTerm();
   void addPhaseChangeEnergySource();
+  /// Adds the functor material holding the coefficient of the phase change energy term
+  void addPhaseChangeCoefficientMaterial();
   void addPhaseDriftFluxTerm();
+  /// Adds the enthalpy carried by the relative motion of the phases to the energy equation
+  void addPhaseEnergyDriftFluxTerm();
   void addAdvectionSlipTerm();
+  /// Adds the mass-weighted mixture specific heat, the weighting required for rho_m cp_m T to be
+  /// the mixture enthalpy density
+  void addMixtureSpecificHeatMaterial();
+
+  /// Whether d(rho_m)/dt has already been constructed, so it is built at most once
+  bool _built_drho_m_dt = false;
+  bool _built_drho_m_dp = false;
 
   /// Fluid heat transfer physics
   const WCNSLinearFVFluidHeatTransferPhysics * _fluid_energy_physics;

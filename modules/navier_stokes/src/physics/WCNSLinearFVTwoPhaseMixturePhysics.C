@@ -39,6 +39,108 @@ WCNSLinearFVTwoPhaseMixturePhysics::validParams()
                              "weakly-compressible Navier Stokes equations using the linearized "
                              "segregated finite volume discretization");
 
+  MooseEnum drag_model("schiller-naumann distorted-particle automatic ishii-zuber",
+                       "schiller-naumann");
+  params.addParam<MooseEnum>(
+      "slip_drag_model",
+      drag_model,
+      "Drag law closing the slip velocity when 'use_dispersed_phase_drag_model' is set. See "
+      "LinearWCNSFV2PSlipVelocityFunctorMaterial. The distorted particle law reproduces Ishii's "
+      "drift velocity correlation and is the appropriate one for bubbles large enough to deform.");
+  params.addParam<MooseFunctorName>(
+      "surface_tension",
+      "Surface tension between the phases, required by the distorted particle drag law.");
+  params.addParam<Real>(
+      "slip_swarm_exponent",
+      0.0,
+      "Exponent of the hindrance factor (1 - alpha)^p on the slip velocity, correcting the "
+      "single-particle drag laws for the presence of a swarm. 0.75 reproduces the swarm "
+      "dependence of Ishii's drift velocity correlation.");
+  params.addParam<MooseFunctorName>(
+      "slip_friction_pressure_gradient",
+      "0",
+      "Frictional pressure gradient of the two phase flow, used by the 'ishii-zuber' drag law to "
+      "carry the effect of wall friction on the relative velocity.");
+  params.addParam<MooseFunctorName>(
+      "slip_single_particle_friction_pressure_gradient",
+      "0",
+      "Frictional pressure gradient of the corresponding single particle system, used by the "
+      "'ishii-zuber' drag law in both its terminal velocity and its concentration factor.");
+  params.addParamNamesToGroup("slip_drag_model surface_tension slip_swarm_exponent "
+                              "slip_friction_pressure_gradient "
+                              "slip_single_particle_friction_pressure_gradient",
+                              "Friction model");
+
+  params.addParam<MooseFunctorName>(
+      "interfacial_latent_heat",
+      "Latent heat of the transition the interfacial mass transfer represents, per unit mass. "
+      "Supplied together with 'interfacial_mass_transfer' to place the energy that transfer "
+      "carries into the energy equation. Available from a TwoPhaseFluidProperties object as "
+      "h_lat(p, T), which is why it is taken as a functor rather than a constant.");
+  params.addParam<MooseFunctorName>(
+      "interfacial_mass_transfer",
+      "Rate at which mass is transferred into the dispersed phase per unit mixture volume, the "
+      "Gamma of the dispersed phase mass balance. Positive generates the dispersed phase. It is "
+      "taken as a functor rather than computed here, so that the coupling can be exercised "
+      "independently of any closure for it. Note that no counterpart is needed in the mixture mass "
+      "or momentum equations: mass and momentum are conserved in the exchange, and the volume the "
+      "phase change creates reaches the pressure equation through the phase fraction, by way of "
+      "'add_mass_density_transient'.");
+  params.addParam<MooseFunctorName>(
+      "phase_1_density_time_derivative",
+      "Time derivative of the continuous phase density. Optional counterpart of "
+      "'phase_2_density_time_derivative'. It is zero for every case reported so far, but the "
+      "formulation does not assume it.");
+  params.addParam<bool>(
+      "add_mass_density_transient",
+      false,
+      "Whether to add the storage term d(rho_m)/dt to the pressure equation. Mixture continuity is "
+      "d(rho_m)/dt + div(rho_m u_m) = 0, and the pressure equation of the segregated algorithm "
+      "realises the second term alone, which is exact in a steady state and not otherwise. Setting "
+      "this lets a cell accumulate mass rather than pass a divergence free mass flux at every "
+      "instant, which is what separates the assembled system from a compressible SIMPLE.");
+  params.addParam<MooseFunctorName>(
+      "phase_2_density_time_derivative",
+      "Time derivative of the dispersed phase density, needed by the mixture density storage term "
+      "of 'add_mass_density_transient' and by nothing else. The phase equation does not need it: "
+      "its LinearFVTimeDerivative is assembled in conservative form and takes the whole of "
+      "d(rho_d alpha)/dt from the multiplier's own state history. Leaving this unset asserts that "
+      "the dispersed phase density does not change in time.");
+  params.addParam<MooseFunctorName>(
+      "phase_2_density_pressure_derivative",
+      "Partial derivative of the dispersed phase density with respect to pressure, at fixed phase "
+      "fraction. Supply this whenever 'phase_2_density_name' is read from the solved pressure. It "
+      "is what lets the pressure driven part of d(rho_m)/dt be assembled implicitly rather than "
+      "lagged. Supply the compressibility of the phase itself: for an isothermal ideal gas it is "
+      "rho_d / p_absolute. The factor of rho_c/rho_d by which the phase equation's conservative "
+      "form amplifies it is applied here rather than asked for. Without this the pressure driven "
+      "part rides on the right hand side, and the outer iteration of the segregated solve stops "
+      "contracting at high void fraction or small time step. Optional: omitted, the term is "
+      "assembled explicitly exactly as before.");
+  params.addParam<MooseFunctorName>(
+      "phase_1_density_pressure_derivative",
+      "Partial derivative of the continuous phase density with respect to pressure. Optional "
+      "counterpart of 'phase_2_density_pressure_derivative'; it is zero for every case reported "
+      "so far, the continuous phase being a liquid.");
+
+  params.addParam<InterpolationMethodName>(
+      "phase_drift_advection_interpolation",
+      "Scheme for the drift flux in the phase transport equation. The drift is always interpolated "
+      "separately from the mixture flux; this chooses which scheme the drift half uses, and "
+      "defaults to 'phase_advection_interpolation'. Setting it is what allows a limiter to act on "
+      "the drift correction alone.");
+  params.addParamNamesToGroup("phase_drift_advection_interpolation", "Numerical scheme");
+
+  params.addParam<bool>(
+      "add_drift_flux_mass_term",
+      false,
+      "Whether to add the dilatation the relative motion of the phases produces to the pressure "
+      "equation. The mixture momentum equation is written for the mass averaged velocity, which is "
+      "not solenoidal wherever the mixture density varies, so constraining it to be divergence "
+      "free omits that dilatation. The term is an exact identity and vanishes when the two phase "
+      "densities are equal.");
+  params.addParamNamesToGroup("add_drift_flux_mass_term", "Numerical scheme");
+
   // This is added to match a nonlinear test result. If the underlying issue is fixed, remove it
   params.addParam<bool>("add_gravity_term_in_slip_velocity",
                         true,
@@ -124,6 +226,16 @@ WCNSLinearFVTwoPhaseMixturePhysics::WCNSLinearFVTwoPhaseMixturePhysics(
     paramError("alpha_exchange",
                "A phase exchange coefficient cannot be specified if the phase change is handled "
                "with a phase change heat loss model");
+  // The phase change term is 'coefficient * dT/dt', so it must be added to the equation that
+  // actually solves for the temperature. When the energy physics solves for enthalpy instead,
+  // the temperature is only an auxiliary variable and the term cannot be assembled as written.
+  if (_has_energy_equation && getParam<bool>("add_phase_change_energy_term") &&
+      _fluid_energy_physics->parameters().get<bool>("solve_for_enthalpy"))
+    paramError("add_phase_change_energy_term",
+               "The phase change energy term is currently only implemented for an energy equation "
+               "solved for the temperature. Physics '",
+               _fluid_energy_physics->name(),
+               "' is solving for the enthalpy instead.");
   if (_phase_1_fraction_name == _phase_2_fraction_name)
     paramError("phase_1_fraction_name",
                "First phase fraction name should be different from second phase fraction name");
@@ -134,6 +246,13 @@ WCNSLinearFVTwoPhaseMixturePhysics::WCNSLinearFVTwoPhaseMixturePhysics(
     errorDependentParameter("add_drift_flux_momentum_terms", "true", {"density_interp_method"});
   if (!getParam<bool>("use_dispersed_phase_drag_model"))
     errorDependentParameter("use_dispersed_phase_drag_model", "true", {"particle_diameter"});
+  if (getParam<bool>("use_dispersed_phase_drag_model") &&
+      isParamSetByUser("slip_linear_friction_name"))
+    paramError("slip_linear_friction_name",
+               "A prescribed slip friction factor cannot be combined with "
+               "'use_dispersed_phase_drag_model'. The drag model forms its particle Reynolds "
+               "number from the slip velocity, so it is solved inside the slip closure rather "
+               "than supplied to it.");
 }
 
 void
@@ -165,21 +284,108 @@ WCNSLinearFVTwoPhaseMixturePhysics::addFVKernels()
 {
   WCNSLinearFVScalarTransportPhysics::addFVKernels();
 
+  // The phase fraction equation is an advection equation whose boundedness rests on the time
+  // derivative. Solved steady, the discrete operator loses the property that each cell value is a
+  // convex combination of its neighbours wherever the dispersed phase velocity is compressive, and
+  // the phase fraction can leave [0, 1]. That is not hypothetical: the same case which converges
+  // when marched in time diverges when solved steady, the phase fraction reaching -18 before the
+  // residual goes non-finite. It is tolerable at low void fraction, where the drift flux is a
+  // small part of the transport, and it is not at moderate void fraction.
+  if (_add_phase_equation && !isTransient())
+    mooseInfoRepeated(
+        "The phase transport equation is being solved without a time derivative. Its boundedness "
+        "is not guaranteed in that form and the phase fraction may leave [0, 1], which in turn "
+        "drives the mixture properties and the slip closure outside their range of validity. "
+        "Whether it bites depends on how large the drift flux is: it is benign when the slip is "
+        "small, as it is without gravity, and it is not when the slip is a significant part of "
+        "the transport. Prefer a transient executioner, marching to steady state if a steady "
+        "answer is wanted.");
+
   if (_add_phase_equation && isParamSetByUser("alpha_exchange"))
     addPhaseInterfaceTerm();
+
+  if (_flow_equations_physics && _flow_equations_physics->hasFlowEquations() &&
+      getParam<bool>("add_mass_density_transient"))
+    addMassDensityTransientTerm();
+
+  if (_add_phase_equation && isParamValid("interfacial_mass_transfer"))
+    addInterfacialMassTransferTerm();
+
+  if (_has_energy_equation && isParamValid("interfacial_mass_transfer") &&
+      isParamValid("interfacial_latent_heat"))
+    addLatentHeatTransferTerm();
 
   if (_fluid_energy_physics && _fluid_energy_physics->hasEnergyEquation() &&
       getParam<bool>("add_phase_change_energy_term"))
     addPhaseChangeEnergySource();
 
+  if (_flow_equations_physics && _flow_equations_physics->hasFlowEquations() &&
+      getParam<bool>("add_drift_flux_mass_term"))
+    addMassDriftFluxTerm();
+
   if (_flow_equations_physics && _flow_equations_physics->hasFlowEquations() && _use_drift_flux)
+  {
     addPhaseDriftFluxTerm();
+    // The enthalpy carried by the relative motion is the energy counterpart of the diffusion
+    // stress, so it belongs wherever the diffusion stress does
+    if (_has_energy_equation)
+      addPhaseEnergyDriftFluxTerm();
+  }
   if (_flow_equations_physics && _flow_equations_physics->hasFlowEquations() && _use_advection_slip)
     addAdvectionSlipTerm();
 }
 
+MooseFunctorName
+WCNSLinearFVTwoPhaseMixturePhysics::scalarConservativeDensity(const VariableName & vname) const
+{
+  // Only the phase fraction is transported as a mass. Any other scalar carried by this Physics is
+  // solved for itself.
+  return (vname == _phase_2_fraction_name) ? _phase_2_density : MooseFunctorName();
+}
+
+void
+WCNSLinearFVTwoPhaseMixturePhysics::addMassDriftFluxTerm()
+{
+  const std::string object_type = "LinearWCNSFV2PMassDriftFlux";
+  auto params = getFactory().getValidParams(object_type);
+  assignBlocks(params, _blocks);
+  params.set<LinearVariableName>("variable") = _flow_equations_physics->getPressureName();
+  params.set<MooseFunctorName>("fraction_dispersed") = _phase_2_fraction_name;
+  params.set<MooseFunctorName>("rho_d") = _phase_2_density;
+  params.set<MooseFunctorName>(NS::density) = "rho_mixture";
+
+  // The dilatation comes from the relative velocity, since the identity it is derived from is
+  // written in terms of the slip rather than the diffusion velocity
+  setRelativeVelocityParams(params);
+
+  // The phases cannot separate across an impermeable boundary
+  auto slip_boundaries = _flow_equations_physics->getInletBoundaries();
+  const auto & outlet_boundaries = _flow_equations_physics->getOutletBoundaries();
+  slip_boundaries.insert(slip_boundaries.end(), outlet_boundaries.begin(), outlet_boundaries.end());
+  params.set<std::vector<BoundaryName>>("slip_boundaries") = slip_boundaries;
+
+  getProblem().addLinearFVKernel(object_type, prefix() + "mass_drift_flux", params);
+}
+
 void
 WCNSLinearFVTwoPhaseMixturePhysics::setSlipVelocityParams(InputParameters & params) const
+{
+  // Only the phase advection kernel interpolates the drift separately; the momentum and energy
+  // drift terms are kernels of their own already.
+  if (isParamValid("phase_drift_advection_interpolation") &&
+      params.have_parameter<InterpolationMethodName>("slip_advected_interp_method_name"))
+    params.set<InterpolationMethodName>("slip_advected_interp_method_name") =
+        getParam<InterpolationMethodName>("phase_drift_advection_interpolation");
+
+  params.set<MooseFunctorName>("u_slip") = "vel_drift_x";
+  if (dimension() >= 2)
+    params.set<MooseFunctorName>("v_slip") = "vel_drift_y";
+  if (dimension() >= 3)
+    params.set<MooseFunctorName>("w_slip") = "vel_drift_z";
+}
+
+void
+WCNSLinearFVTwoPhaseMixturePhysics::setRelativeVelocityParams(InputParameters & params) const
 {
   params.set<MooseFunctorName>("u_slip") = "vel_slip_x";
   if (dimension() >= 2)
@@ -189,14 +395,312 @@ WCNSLinearFVTwoPhaseMixturePhysics::setSlipVelocityParams(InputParameters & para
 }
 
 void
+WCNSLinearFVTwoPhaseMixturePhysics::addLatentHeatTransferTerm()
+{
+  // Generating the dispersed phase absorbs its latent heat from the mixture, so the energy equation
+  // takes a sink of Gamma * h_lat, and a source of the same size when the transfer runs the other
+  // way. The reference formulation of Wu et al. carries this as -h'_l Gamma_g in a liquid phase
+  // enthalpy equation; the mixture form here is the same energy crossing the interface, written for
+  // the one energy equation this model solves.
+  //
+  // A caveat worth stating, and it is not about the choice of variable. Whether the equation is
+  // solved in temperature or in enthalpy, it is a single energy equation for the mixture, so the
+  // two phases are not thermally distinct and subcooled liquid cannot coexist with saturated
+  // vapour. What this term supports is a transfer at, or close to, thermal equilibrium. Subcooled
+  // boiling needs the energy equation rewritten for one phase with the other held at saturation,
+  // which is a change of formulation rather than of variable.
+  const auto latent_source = prefix() + "latent_heat_source";
+  {
+    auto params = getFactory().getValidParams("ParsedFunctorMaterial");
+    assignBlocks(params, _blocks);
+    params.set<std::string>("expression") = "gamma * h_lat";
+    params.set<std::vector<std::string>>("functor_names") = {
+        getParam<MooseFunctorName>("interfacial_mass_transfer"),
+        getParam<MooseFunctorName>("interfacial_latent_heat")};
+    params.set<std::vector<std::string>>("functor_symbols") = {"gamma", "h_lat"};
+    params.set<std::string>("property_name") = latent_source;
+    getProblem().addMaterial("ParsedFunctorMaterial", latent_source + "_mat", params);
+  }
+  {
+    auto params = getFactory().getValidParams("LinearFVSource");
+    assignBlocks(params, _blocks);
+    // The solved energy variable, not the temperature: with 'solve_for_enthalpy' the temperature
+    // is not a solver variable, and a source placed on it would target the wrong equation. The
+    // term itself is the same either way, a power per unit volume, because both forms of the
+    // energy equation carry their sources in those units.
+    params.set<LinearVariableName>("variable") =
+        _fluid_energy_physics->getFluidEnergyVariableName();
+    params.set<MooseFunctorName>("source_density") = latent_source;
+    // A sink: the energy leaves the mixture with the phase that is generated
+    params.set<MooseFunctorName>("scaling_factor") = "-1";
+    getProblem().addLinearFVKernel("LinearFVSource", prefix() + "latent_heat", params);
+  }
+}
+
+MooseFunctorName
+WCNSLinearFVTwoPhaseMixturePhysics::buildMixtureDensityTimeDerivative()
+{
+  // d(rho_m)/dt = (rho_d - rho_c) d(alpha)/dt + alpha d(rho_d)/dt + (1 - alpha) d(rho_c)/dt,
+  // which assumes nothing about either phase density. The phase fraction derivative comes from the
+  // variable's own dot(), which MooseLinearVariableFV builds from the time integrator's
+  // coefficients: it is therefore the same discrete operator LinearFVTimeDerivative assembles in
+  // the phase equation, so the two cannot disagree. The density derivatives are supplied by the
+  // user and default to zero.
+  //
+  // Several equations need this, so it is built at most once.
+  const auto drho_m_dt = prefix() + "drho_m_dt";
+  if (_built_drho_m_dt)
+    return drho_m_dt;
+
+  const auto alpha_dot = prefix() + "alpha_dot";
+  {
+    auto params = getFactory().getValidParams("GenericFunctorTimeDerivativeMaterial");
+    assignBlocks(params, _blocks);
+    params.set<std::vector<std::string>>("prop_names") = {alpha_dot};
+    params.set<std::vector<MooseFunctorName>>("prop_values") = {_phase_2_fraction_name};
+    getProblem().addMaterial(
+        "GenericFunctorTimeDerivativeMaterial", alpha_dot + "_mat", params);
+  }
+  {
+    auto params = getFactory().getValidParams("ParsedFunctorMaterial");
+    assignBlocks(params, _blocks);
+    params.set<std::string>("expression") =
+        "(rho_d - rho_c) * alpha_dot + alpha * drho_d_dt + (1 - alpha) * drho_c_dt";
+    params.set<std::vector<std::string>>("functor_names") = {
+        _phase_2_density,
+        _phase_1_density,
+        alpha_dot,
+        _phase_2_fraction_name,
+        isParamValid("phase_2_density_time_derivative")
+            ? getParam<MooseFunctorName>("phase_2_density_time_derivative")
+            : MooseFunctorName("0"),
+        isParamValid("phase_1_density_time_derivative")
+            ? getParam<MooseFunctorName>("phase_1_density_time_derivative")
+            : MooseFunctorName("0")};
+    params.set<std::vector<std::string>>("functor_symbols") = {
+        "rho_d", "rho_c", "alpha_dot", "alpha", "drho_d_dt", "drho_c_dt"};
+    params.set<std::string>("property_name") = drho_m_dt;
+    getProblem().addMaterial("ParsedFunctorMaterial", drho_m_dt + "_mat", params);
+  }
+
+  _built_drho_m_dt = true;
+  return drho_m_dt;
+}
+
+MooseFunctorName
+WCNSLinearFVTwoPhaseMixturePhysics::buildMixtureDensityPressureDerivative()
+{
+  // How the mixture density responds to pressure, which is the coefficient the pressure driven
+  // part of the storage term carries onto the matrix diagonal.
+  //
+  // The obvious answer, d(rho_m)/dp at fixed phase fraction, is the wrong one and is wrong by
+  // nearly three orders of magnitude. The phase equation is assembled in conservative form, so
+  // what it holds is the dispersed phase mass m_d = rho_d alpha, not alpha. Raise the pressure and
+  // the dispersed phase compresses, so alpha has to fall to keep that product:
+  //
+  //   d(alpha)/dp = -(alpha / rho_d) d(rho_d)/dp .
+  //
+  // Substituting into rho_m = m_d + (1 - alpha) rho_c, in which the first group is held fixed, the
+  // whole response is carried by the continuous phase that moves in to fill the space:
+  //
+  //   d(rho_m)/dp = (alpha rho_c / rho_d) d(rho_d)/dp + (1 - alpha) d(rho_c)/dp .
+  //
+  // The leading factor is rho_c/rho_d, which for air in water is over eight hundred: a negligible
+  // change in gas density displaces a far from negligible mass of liquid. Left out, the diagonal
+  // is too small to hold the coupling and the segregated iteration diverges at high void fraction,
+  // which was measured before this factor was put in rather than derived.
+  //
+  // Note this is a preconditioning choice and not a modelling one. The same quantity is subtracted
+  // from the explicit source, so it cancels identically at convergence and no choice of it can
+  // change the converged answer; only how fast, and whether, the outer iteration gets there.
+  //
+  // The phase compressibilities have to be supplied rather than differentiated, because the
+  // densities reach this Physics as opaque functors and nothing here can know what they depend on.
+  const auto drho_m_dp = prefix() + "drho_m_dp";
+  if (_built_drho_m_dp)
+    return drho_m_dp;
+
+  auto params = getFactory().getValidParams("ParsedFunctorMaterial");
+  assignBlocks(params, _blocks);
+  params.set<std::string>("expression") =
+      "alpha * rho_c / rho_d * drho_d_dp + (1 - alpha) * drho_c_dp";
+  params.set<std::vector<std::string>>("functor_names") = {
+      _phase_2_fraction_name,
+      _phase_1_density,
+      _phase_2_density,
+      isParamValid("phase_2_density_pressure_derivative")
+          ? getParam<MooseFunctorName>("phase_2_density_pressure_derivative")
+          : MooseFunctorName("0"),
+      isParamValid("phase_1_density_pressure_derivative")
+          ? getParam<MooseFunctorName>("phase_1_density_pressure_derivative")
+          : MooseFunctorName("0")};
+  params.set<std::vector<std::string>>("functor_symbols") = {
+      "alpha", "rho_c", "rho_d", "drho_d_dp", "drho_c_dp"};
+  params.set<std::string>("property_name") = drho_m_dp;
+  getProblem().addMaterial("ParsedFunctorMaterial", drho_m_dp + "_mat", params);
+
+  _built_drho_m_dp = true;
+  return drho_m_dp;
+}
+
+void
+WCNSLinearFVTwoPhaseMixturePhysics::addInterfacialMassTransferTerm()
+{
+  // The dispersed phase mass balance is
+  //
+  //   d(rho_d alpha)/dt + div(rho_d alpha u_d) - div(rho_d D grad(alpha)) = Gamma ,
+  //
+  // so the transfer enters as a source on the right hand side of that equation and nowhere else in
+  // the mass or momentum equations: what leaves one phase enters the other, and the momentum goes
+  // with it. The volume the exchange creates, which is not zero because the phase densities differ,
+  // reaches the pressure equation through d(rho_m)/dt, since rho_m depends on the phase fraction
+  // this term is driving. That is why 'add_mass_density_transient' is a prerequisite for using this
+  // in a flowing case rather than an independent option.
+  //
+  // Gamma is supplied rather than closed here. Separating the coupling from the closure is
+  // deliberate: it lets the four-equation consistency be verified against a prescribed transfer
+  // rate with an analytic answer, before any correlation is written.
+  auto params = getFactory().getValidParams("LinearFVSource");
+  assignBlocks(params, _blocks);
+  params.set<LinearVariableName>("variable") = _phase_2_fraction_name;
+  params.set<MooseFunctorName>("source_density") =
+      getParam<MooseFunctorName>("interfacial_mass_transfer");
+  params.set<MooseFunctorName>("scaling_factor") = "1";
+  getProblem().addLinearFVKernel(
+      "LinearFVSource", prefix() + "interfacial_mass_transfer", params);
+}
+
+void
+WCNSLinearFVTwoPhaseMixturePhysics::addMassDensityTransientTerm()
+{
+  // Mixture continuity is d(rho_m)/dt + div(rho_m u_m) = 0. The pressure equation realises the
+  // divergence alone, so this supplies the storage term. With
+  // rho_m = alpha rho_d + (1-alpha) rho_c,
+  //
+  //   d(rho_m)/dt = (rho_d - rho_c) d(alpha)/dt + alpha d(rho_d)/dt + (1-alpha) d(rho_c)/dt ,
+  //
+  // which assumes nothing about either phase density. The phase fraction derivative comes from the
+  // variable's own dot(), which MooseLinearVariableFV builds from the time integrator's
+  // coefficients: it is therefore the same discrete operator LinearFVTimeDerivative assembles in
+  // the phase equation, so the two cannot disagree. The density derivatives are supplied by the
+  // user, as the nonlinear path does through its 'drho_dt' convention; they default to zero, in
+  // which case the surviving term is the one that dominates in practice.
+  const auto drho_m_dt = buildMixtureDensityTimeDerivative();
+
+  // Where the dispersed phase density is read from the solved pressure, part of d(rho_m)/dt is a
+  // function of the very unknown this equation solves for:
+  //
+  //   d(rho_m)/dt = R + (d(rho_m)/dp) dp/dt ,   R = (rho_d - rho_c) d(alpha)/dt + ... ,
+  //
+  // and a LinearFVSource contributes nothing to the matrix, so that second piece is lagged one
+  // outer iteration. The segregated loop then carries a gain of order
+  // (d(rho_m)/dp) V / (a_P dt), which grows with the phase fraction and with 1/dt, and above unity
+  // the iteration stops contracting: the momentum residual rises an order of magnitude at the
+  // second outer iteration instead of falling, and the solve diverges some tens of steps later.
+  // Reducing the time step makes it worse rather than better, which is what distinguishes this
+  // from an ordinary stability limit.
+  //
+  // The remedy is to assemble that piece where it belongs. LinearFVTimeDerivative in its
+  // non-conservative form is exactly c du/dt with c on the diagonal and c u^n on the right hand
+  // side, so handing it the pressure and d(rho_m)/dp puts the coefficient on the matrix. The
+  // explicit source then carries R alone. The two forms have the same fixed point by construction,
+  // since the piece removed from one is the piece added to the other; what changes is that the
+  // coefficient is now a positive addition to the diagonal, which makes the pressure operator more
+  // diagonally dominant rather than less.
+  //
+  // This needs d(rho_d)/dp, which cannot be inferred: the density arrives as an opaque functor.
+  // Absent it, the old explicit assembly is kept, and the stability limit above comes with it.
+  const bool implicit_pressure_part = isParamValid("phase_2_density_pressure_derivative") ||
+                                      isParamValid("phase_1_density_pressure_derivative");
+  MooseFunctorName source_density = drho_m_dt;
+
+  if (implicit_pressure_part)
+  {
+    const auto drho_m_dp = buildMixtureDensityPressureDerivative();
+    const auto & pressure_name = _flow_equations_physics->getPressureName();
+
+    // dp/dt, built here rather than taken from the user so that the piece subtracted from the
+    // source is the same discrete operator LinearFVTimeDerivative puts on the matrix.
+    const auto p_dot = prefix() + "pressure_dot";
+    {
+      auto params = getFactory().getValidParams("GenericFunctorTimeDerivativeMaterial");
+      assignBlocks(params, _blocks);
+      params.set<std::vector<std::string>>("prop_names") = {p_dot};
+      params.set<std::vector<MooseFunctorName>>("prop_values") = {pressure_name};
+      getProblem().addMaterial(
+          "GenericFunctorTimeDerivativeMaterial", p_dot + "_mat", params);
+    }
+
+    // R = d(rho_m)/dt - (d(rho_m)/dp) dp/dt, the part that is genuinely explicit.
+    source_density = prefix() + "drho_m_dt_explicit";
+    {
+      auto params = getFactory().getValidParams("ParsedFunctorMaterial");
+      assignBlocks(params, _blocks);
+      params.set<std::string>("expression") = "drho_m_dt - drho_m_dp * p_dot";
+      params.set<std::vector<std::string>>("functor_names") = {drho_m_dt, drho_m_dp, p_dot};
+      params.set<std::vector<std::string>>("functor_symbols") = {
+          "drho_m_dt", "drho_m_dp", "p_dot"};
+      params.set<std::string>("property_name") = source_density;
+      getProblem().addMaterial("ParsedFunctorMaterial", source_density + "_mat", params);
+    }
+
+    // The pressure driven part, implicit. Non-conservative form: the coefficient is a partial
+    // derivative held outside the time derivative, not a density being transported, so
+    // d(coefficient p)/dt is not what is wanted here.
+    {
+      auto params = getFactory().getValidParams("LinearFVTimeDerivative");
+      assignBlocks(params, _blocks);
+      params.set<LinearVariableName>("variable") = pressure_name;
+      params.set<MooseFunctorName>("factor") = drho_m_dp;
+      params.set<bool>("conservative_form") = false;
+      getProblem().addLinearFVKernel(
+          "LinearFVTimeDerivative", prefix() + "mass_density_transient_implicit", params);
+    }
+  }
+
+  {
+    // Sign. Substituting u_m = HbyA - Ainv grad(p) into continuity gives
+    //   div(rho_m Ainv grad p) = div(rho_m HbyA) + d(rho_m)/dt ,
+    // which suggests the storage term joins the predictor divergence on the right hand side with
+    // the same sign. It does not: LinearFVDivergence and LinearFVSource do not share a sign
+    // convention on that side, and a positive factor makes the mass balance worse rather than
+    // better, doubling the residual instead of closing it. The factor is negative, and it was the
+    // mass balance test that settled it rather than the derivation. See
+    // mass-balance-transient.i, whose whole purpose is that a sign error there is unmissable.
+    auto params = getFactory().getValidParams("LinearFVSource");
+    assignBlocks(params, _blocks);
+    params.set<LinearVariableName>("variable") = _flow_equations_physics->getPressureName();
+    params.set<MooseFunctorName>("source_density") = source_density;
+    params.set<MooseFunctorName>("scaling_factor") = "-1";
+    getProblem().addLinearFVKernel(
+        "LinearFVSource", prefix() + "mass_density_transient", params);
+  }
+}
+
+void
 WCNSLinearFVTwoPhaseMixturePhysics::addPhaseInterfaceTerm()
 {
-  // Recreate the phase interface term from existing kernels
+  // The phase equation is assembled in conservative form, so the exchange term is scaled by the
+  // dispersed phase density along with every other term of that equation. Built as a functor
+  // rather than folded into the coefficient so that a non-uniform density is handled correctly.
+  const auto scaled_exchange = prefix() + "phase_exchange_coeff";
+  {
+    auto params = getFactory().getValidParams("ParsedFunctorMaterial");
+    assignBlocks(params, _blocks);
+    params.set<std::string>("expression") = "rho_d_exchange * alpha_exchange_coeff";
+    params.set<std::vector<std::string>>("functor_names") = {_phase_2_density,
+                                                            getParam<MooseFunctorName>(
+                                                                NS::alpha_exchange)};
+    params.set<std::vector<std::string>>("functor_symbols") = {"rho_d_exchange",
+                                                              "alpha_exchange_coeff"};
+    params.set<std::string>("property_name") = scaled_exchange;
+    getProblem().addMaterial("ParsedFunctorMaterial", scaled_exchange + "_mat", params);
+  }
   {
     auto params = getFactory().getValidParams("LinearFVReaction");
     assignBlocks(params, _blocks);
     params.set<LinearVariableName>("variable") = _phase_2_fraction_name;
-    params.set<MooseFunctorName>("coeff") = getParam<MooseFunctorName>(NS::alpha_exchange);
+    params.set<MooseFunctorName>("coeff") = scaled_exchange;
     getProblem().addLinearFVKernel(
         "LinearFVReaction", prefix() + "phase_interface_reaction", params);
   }
@@ -205,15 +709,76 @@ WCNSLinearFVTwoPhaseMixturePhysics::addPhaseInterfaceTerm()
     assignBlocks(params, _blocks);
     params.set<LinearVariableName>("variable") = _phase_2_fraction_name;
     params.set<MooseFunctorName>("source_density") = _phase_1_fraction_name;
-    params.set<MooseFunctorName>("scaling_factor") = getParam<MooseFunctorName>(NS::alpha_exchange);
+    params.set<MooseFunctorName>("scaling_factor") = scaled_exchange;
     getProblem().addLinearFVKernel("LinearFVSource", prefix() + "phase_interface_source", params);
   }
 }
 
 void
+WCNSLinearFVTwoPhaseMixturePhysics::addPhaseChangeCoefficientMaterial()
+{
+  // Reproduces the coefficient of NSFVPhaseChangeSource, which is
+  //
+  //   max(6 fl (1 - fl), 0) * L * rho_mixture / (T_liquidus - T_solidus),  fl = (T - T_sol)/(T_liq - T_sol)
+  //
+  // The 6 comes from the integral of x (1 - x) between 0 and 1, and the max() clamps the term
+  // outside of the mushy zone, where 6 fl (1 - fl) goes negative. Note that the nonlinear kernel
+  // computes the liquid fraction from the temperature directly rather than from its
+  // 'liquid_fraction' parameter, and we match that here.
+  auto params = getFactory().getValidParams("ParsedFunctorMaterial");
+  assignBlocks(params, _blocks);
+  params.set<std::string>("expression") =
+      "max(6 * ((T - T_sol) / (T_liq - T_sol)) * (1 - ((T - T_sol) / (T_liq - T_sol))), 0) * L * "
+      "rho_m / (T_liq - T_sol)";
+  params.set<std::vector<std::string>>("functor_names") = {
+      _fluid_energy_physics->getFluidTemperatureName(),
+      NS::T_solidus,
+      NS::T_liquidus,
+      NS::latent_heat,
+      "rho_mixture"};
+  params.set<std::vector<std::string>>("functor_symbols") = {
+      "T", "T_sol", "T_liq", "L", "rho_m"};
+  params.set<std::string>("property_name") = "phase_change_coefficient";
+  if (getParam<bool>("output_all_properties"))
+    params.set<std::vector<OutputName>>("outputs") = {"all"};
+  getProblem().addMaterial("ParsedFunctorMaterial", prefix() + "phase_change_coefficient", params);
+}
+
+void
 WCNSLinearFVTwoPhaseMixturePhysics::addPhaseChangeEnergySource()
 {
-  mooseError("Phase change energy source not implemented at this time for linear finite volume");
+  // The nonlinear NSFVPhaseChangeSource is 'coefficient * dT/dt', which is exactly the operator
+  // LinearFVTimeDerivative assembles when handed a 'factor'. For every time integrator the
+  // matrix contribution is c_t * factor and the right hand side uses the same factor against the
+  // solution history, so the pair evaluates factor * dT/dt with the temporal order of the
+  // scheme preserved. Both FVElementalKernel and LinearFVElementalKernel contribute to the left
+  // hand side, so the sign carries over unchanged.
+  //
+  // The coefficient is lagged to the previous fixed point iterate rather than differentiated, so
+  // the mushy zone may need tighter fixed point tolerances than the Newton implementation.
+  // This term is a coefficient multiplying dT/dt, so unlike the latent heat source of the
+  // interfacial mass transfer it cannot simply be pointed at whichever variable the energy
+  // equation solves. Assembled against a specific enthalpy it would evaluate c dh/dt, which is a
+  // different quantity by a factor of the specific heat. Refusing is better than retargeting:
+  // carrying it into an enthalpy formulation needs the chain rule, not a change of name.
+  if (_fluid_energy_physics->solveForEnthalpy())
+    paramError("add_phase_change_energy_term",
+               "The phase change energy source is a coefficient multiplying the time derivative of "
+               "temperature, and the fluid heat transfer Physics is solving for specific enthalpy. "
+               "Expressing it in that variable requires the specific heat as a chain rule factor, "
+               "which is not implemented. Solve for temperature, or leave this term off.");
+
+  auto params = getFactory().getValidParams("LinearFVTimeDerivative");
+  assignBlocks(params, _blocks);
+  params.set<LinearVariableName>("variable") = _fluid_energy_physics->getFluidTemperatureName();
+  params.set<MooseFunctorName>("factor") = "phase_change_coefficient";
+  // Not the conservative form, which the kernel would otherwise take. The coefficient here is not
+  // a density being transported, so d(coefficient T)/dt is not a storage term of anything; the
+  // term this reproduces is literally the coefficient times the temperature rate, and the
+  // coefficient varies in time through the liquid fraction, so the two forms do differ.
+  params.set<bool>("conservative_form") = false;
+  getProblem().addLinearFVKernel(
+      "LinearFVTimeDerivative", prefix() + "phase_change_energy", params);
 }
 
 void
@@ -226,14 +791,76 @@ WCNSLinearFVTwoPhaseMixturePhysics::addPhaseDriftFluxTerm()
     auto params = getFactory().getValidParams(object_type);
     assignBlocks(params, _blocks);
     params.set<LinearVariableName>("variable") = _flow_equations_physics->getVelocityNames()[dim];
-    setSlipVelocityParams(params);
+    setRelativeVelocityParams(params);
     params.set<MooseFunctorName>("rho_d") = _phase_2_density;
+    params.set<MooseFunctorName>("rho_c") = _phase_1_density;
     params.set<MooseFunctorName>("fraction_dispersed") = _phase_2_fraction_name;
     params.set<MooseEnum>("momentum_component") = components[dim];
     params.set<MooseEnum>("density_interp_method") = getParam<MooseEnum>("density_interp_method");
     params.set<UserObjectName>("rhie_chow_user_object") = _flow_equations_physics->rhieChowUOName();
     getProblem().addLinearFVKernel(object_type, prefix() + "drift_flux_" + components[dim], params);
   }
+}
+
+void
+WCNSLinearFVTwoPhaseMixturePhysics::addPhaseEnergyDriftFluxTerm()
+{
+  // The term is h_d - h_c = (cp_d - cp_c) T, so it is only assemblable against a temperature
+  // variable. When the energy equation solves for the enthalpy the specific heats are not
+  // available as a difference multiplying the solution variable.
+  if (_fluid_energy_physics->parameters().get<bool>("solve_for_enthalpy"))
+    paramError("add_drift_flux_momentum_terms",
+               "The enthalpy carried by the relative motion of the phases is currently only "
+               "implemented for an energy equation solved for the temperature. Physics '",
+               _fluid_energy_physics->name(),
+               "' is solving for the enthalpy instead.");
+
+  const auto object_type = "LinearWCNSFV2PEnergyDriftFlux";
+  auto params = getFactory().getValidParams(object_type);
+  assignBlocks(params, _blocks);
+  params.set<LinearVariableName>("variable") = _fluid_energy_physics->getFluidTemperatureName();
+  setRelativeVelocityParams(params);
+  params.set<MooseFunctorName>("rho_d") = _phase_2_density;
+  params.set<MooseFunctorName>("rho_c") = _phase_1_density;
+  params.set<MooseFunctorName>("cp_d") = _phase_2_specific_heat;
+  params.set<MooseFunctorName>("cp_c") = _phase_1_specific_heat;
+  params.set<MooseFunctorName>("fraction_dispersed") = _phase_2_fraction_name;
+  params.set<MooseEnum>("advected_interp_method") =
+      _fluid_energy_physics->parameters().get<MooseEnum>("energy_advection_interpolation");
+  // The relative motion carries enthalpy only where the dispersed phase itself may travel, which
+  // is the same set of boundaries the phase transport equation uses
+  auto slip_boundaries = _flow_equations_physics->getInletBoundaries();
+  const auto & outlet_boundaries = _flow_equations_physics->getOutletBoundaries();
+  slip_boundaries.insert(
+      slip_boundaries.end(), outlet_boundaries.begin(), outlet_boundaries.end());
+  params.set<std::vector<BoundaryName>>("slip_boundaries") = slip_boundaries;
+  getProblem().addLinearFVKernel(object_type, prefix() + "energy_drift_flux", params);
+}
+
+void
+WCNSLinearFVTwoPhaseMixturePhysics::addMixtureSpecificHeatMaterial()
+{
+  // The mixture energy density is the sum over the phases of each phase's own enthalpy density,
+  // rho_m e_m = sum_k a_k rho_k cp_k T, so the specific heat that reproduces it when multiplied by
+  // the mixture density is the mass-weighted average, not the volume-weighted average used for the
+  // density, the viscosity and the conductivity. See Fluent Theory Guide equation 16.4-7. The
+  // phase fraction is clamped to match the mixture property material.
+  auto params = getFactory().getValidParams("ParsedFunctorMaterial");
+  assignBlocks(params, _blocks);
+  params.set<std::string>("expression") =
+      "(min(max(fd, 0), 1) * rho_d * cp_d + (1 - min(max(fd, 0), 1)) * rho_c * cp_c) / rho_m";
+  params.set<std::vector<std::string>>("functor_names") = {_phase_2_fraction_name,
+                                                          _phase_2_density,
+                                                          _phase_2_specific_heat,
+                                                          _phase_1_density,
+                                                          _phase_1_specific_heat,
+                                                          "rho_mixture"};
+  params.set<std::vector<std::string>>("functor_symbols") = {
+      "fd", "rho_d", "cp_d", "rho_c", "cp_c", "rho_m"};
+  params.set<std::string>("property_name") = "cp_mixture";
+  if (getParam<bool>("output_all_properties"))
+    params.set<std::vector<OutputName>>("outputs") = {"all"};
+  getProblem().addMaterial("ParsedFunctorMaterial", prefix() + "mixture_specific_heat", params);
 }
 
 void
@@ -279,52 +906,81 @@ WCNSLinearFVTwoPhaseMixturePhysics::addMaterials()
   {
     auto params = getFactory().getValidParams("WCNSLinearFVMixtureFunctorMaterial");
     assignBlocks(params, _blocks);
+    // The specific heat is deliberately absent from this list. This object forms a volume-weighted
+    // average, which is correct for the density, the viscosity and the conductivity, but the
+    // specific heat has to be mass-weighted for rho_m cp_m T to be the mixture enthalpy density.
+    // It is added by addMixtureSpecificHeatMaterial below.
     params.set<std::vector<MooseFunctorName>>("prop_names") = {
-        "rho_mixture", "mu_mixture", "cp_mixture", "k_mixture"};
+        "rho_mixture", "mu_mixture", "k_mixture"};
     // The phase_1 and phase_2 assignments are only local to this object.
     // We use the phase 2 variable to save a functor evaluation as we expect
     // the phase 2 variable to be a nonlinear variable in the phase transport equation
-    params.set<std::vector<MooseFunctorName>>("phase_2_names") = {_phase_1_density,
-                                                                  _phase_1_viscosity,
-                                                                  _phase_1_specific_heat,
-                                                                  _phase_1_thermal_conductivity};
-    params.set<std::vector<MooseFunctorName>>("phase_1_names") = {_phase_2_density,
-                                                                  _phase_2_viscosity,
-                                                                  _phase_2_specific_heat,
-                                                                  _phase_2_thermal_conductivity};
+    params.set<std::vector<MooseFunctorName>>("phase_2_names") = {
+        _phase_1_density, _phase_1_viscosity, _phase_1_thermal_conductivity};
+    params.set<std::vector<MooseFunctorName>>("phase_1_names") = {
+        _phase_2_density, _phase_2_viscosity, _phase_2_thermal_conductivity};
     params.set<MooseFunctorName>("phase_1_fraction") = _phase_2_fraction_name;
     if (getParam<bool>("output_all_properties"))
       params.set<std::vector<OutputName>>("outputs") = {"all"};
     params.set<bool>("limit_phase_fraction") = true;
     getProblem().addMaterial(
         "WCNSLinearFVMixtureFunctorMaterial", prefix() + "mixture_material", params);
+
+    addMixtureSpecificHeatMaterial();
   }
 
-  // Compute slip terms as functors, used by the drift flux kernels
-  if (_use_advection_slip || _use_drift_flux || _add_phase_equation)
+  // Compute slip terms as functors, used by the drift flux kernels. The drag model needs them too,
+  // since its particle Reynolds number is formed from the slip velocity.
+  if (_use_advection_slip || _use_drift_flux || _add_phase_equation ||
+      getParam<bool>("use_dispersed_phase_drag_model"))
   {
     mooseAssert(_flow_equations_physics, "We must have coupled to this");
     const std::vector<std::string> vel_components = {"u", "v", "w"};
     const std::vector<std::string> components = {"x", "y", "z"};
     for (const auto dim : make_range(dimension()))
     {
-      auto params = getFactory().getValidParams("WCNSFV2PSlipVelocityFunctorMaterial");
+      const auto object_type = "LinearWCNSFV2PSlipVelocityFunctorMaterial";
+      auto params = getFactory().getValidParams(object_type);
       assignBlocks(params, _blocks);
       params.set<MooseFunctorName>("slip_velocity_name") = "vel_slip_" + components[dim];
       params.set<MooseEnum>("momentum_component") = components[dim];
       for (const auto j : make_range(dimension()))
-        params.set<std::vector<VariableName>>(vel_components[j]) = {
-            _flow_equations_physics->getVelocityNames()[j]};
-      params.set<MooseFunctorName>(NS::density) = _phase_1_density;
-      params.set<MooseFunctorName>(NS::mu) = "mu_mixture";
+        params.set<SolverVariableName>(vel_components[j]) =
+            _flow_equations_physics->getVelocityNames()[j];
+      // The buoyancy factor of the closure is (rho_d - rho_m) / rho_d, which carries the mixture
+      // density, not the continuous phase density, see VTT Publications 288 equation (58)
+      params.set<MooseFunctorName>(NS::density) = "rho_mixture";
+      // The slip closure forms both the relaxation time and the particle Reynolds number
+      // from the continuous phase viscosity, not from the mixture viscosity
+      params.set<MooseFunctorName>(NS::mu) = _phase_1_viscosity;
       params.set<MooseFunctorName>("rho_d") = _phase_2_density;
+      params.set<MooseFunctorName>("fraction_dispersed") = _phase_2_fraction_name;
+      // The phase equation is advected with the diffusion velocity, which this object derives
+      // from the slip velocity it computes
+      params.set<MooseFunctorName>("drift_velocity_name") = "vel_drift_" + components[dim];
       if (getParam<bool>("add_gravity_term_in_slip_velocity"))
         params.set<RealVectorValue>("gravity") = _flow_equations_physics->gravityVector();
-      if (isParamValid("slip_linear_friction_name"))
+      // The drag model is solved inside the slip closure rather than read from the drag material.
+      // The particle Reynolds number of the correlation is formed from the slip velocity, so a
+      // drag functor built the correct way depends on the slip velocity and cannot also be an
+      // input to it; solving the correlation and the force balance together breaks that loop.
+      if (getParam<bool>("use_dispersed_phase_drag_model"))
+      {
+        params.set<bool>("use_dispersed_phase_drag_model") = true;
+        params.set<MooseFunctorName>("rho_c") = _phase_1_density;
+        params.set<MooseEnum>("drag_model") = getParam<MooseEnum>("slip_drag_model");
+        params.set<Real>("swarm_exponent") = getParam<Real>("slip_swarm_exponent");
+        params.set<MooseFunctorName>("friction_pressure_gradient") =
+            getParam<MooseFunctorName>("slip_friction_pressure_gradient");
+        params.set<MooseFunctorName>("single_particle_friction_pressure_gradient") =
+            getParam<MooseFunctorName>("slip_single_particle_friction_pressure_gradient");
+        if (isParamValid("surface_tension"))
+          params.set<MooseFunctorName>("surface_tension") =
+              getParam<MooseFunctorName>("surface_tension");
+      }
+      else if (isParamValid("slip_linear_friction_name"))
         params.set<MooseFunctorName>("linear_coef_name") =
             getParam<MooseFunctorName>("slip_linear_friction_name");
-      else if (getParam<bool>("use_dispersed_phase_drag_model"))
-        params.set<MooseFunctorName>("linear_coef_name") = "Darcy_coefficient";
       else if (_flow_equations_physics)
       {
         if (!_flow_equations_physics->getLinearFrictionCoefName().empty())
@@ -335,8 +991,8 @@ WCNSLinearFVTwoPhaseMixturePhysics::addMaterials()
       }
       else
         paramError("slip_linear_friction_name",
-                   "WCNSFV2PSlipVelocityFunctorMaterial created by this Physics required a scalar "
-                   "field linear friction factor.");
+                   "LinearWCNSFV2PSlipVelocityFunctorMaterial created by this Physics required a "
+                   "scalar field linear friction factor.");
       params.set<MooseFunctorName>("particle_diameter") =
           getParam<MooseFunctorName>("particle_diameter");
       if (getParam<bool>("output_all_properties"))
@@ -348,29 +1004,35 @@ WCNSLinearFVTwoPhaseMixturePhysics::addMaterials()
                     "Slip velocity functor material output currently unsupported in Physics "
                     "in transient conditions.");
       }
-      getProblem().addMaterial(
-          "WCNSFV2PSlipVelocityFunctorMaterial", prefix() + "slip_" + components[dim], params);
+      getProblem().addMaterial(object_type, prefix() + "slip_" + components[dim], params);
     }
   }
+
+  // Coefficient consumed by the phase change term in the energy equation
+  if (_fluid_energy_physics && _fluid_energy_physics->hasEnergyEquation() &&
+      getParam<bool>("add_phase_change_energy_term"))
+    addPhaseChangeCoefficientMaterial();
 
   // Add a default drag model for a dispersed phase
   if (getParam<bool>("use_dispersed_phase_drag_model"))
   {
     const std::vector<std::string> vel_components = {"u", "v", "w"};
+    const std::vector<std::string> components = {"x", "y", "z"};
 
-    auto params = getFactory().getValidParams("NSFVDispersePhaseDragFunctorMaterial");
+    const auto drag_type = "LinearWCNSFVDispersePhaseDragFunctorMaterial";
+    auto params = getFactory().getValidParams(drag_type);
     assignBlocks(params, _blocks);
     params.set<MooseFunctorName>("drag_coef_name") = "Darcy_coefficient";
+    // The particle Reynolds number is formed from the slip velocity and the continuous phase
+    // properties, which is its definition
     for (const auto j : make_range(dimension()))
-      params.set<MooseFunctorName>(vel_components[j]) = {
-          _flow_equations_physics->getVelocityNames()[j]};
-    params.set<MooseFunctorName>(NS::density) = "rho_mixture";
-    params.set<MooseFunctorName>(NS::mu) = "mu_mixture";
+      params.set<MooseFunctorName>(vel_components[j]) = "vel_slip_" + components[j];
+    params.set<MooseFunctorName>(NS::density) = _phase_1_density;
+    params.set<MooseFunctorName>(NS::mu) = _phase_1_viscosity;
     params.set<MooseFunctorName>("particle_diameter") =
         getParam<MooseFunctorName>("particle_diameter");
     if (getParam<bool>("output_all_properties"))
       params.set<std::vector<OutputName>>("outputs") = {"all"};
-    getProblem().addMaterial(
-        "NSFVDispersePhaseDragFunctorMaterial", prefix() + "dispersed_drag", params);
+    getProblem().addMaterial(drag_type, prefix() + "dispersed_drag", params);
   }
 }
