@@ -144,6 +144,7 @@ WCNSFVFluidHeatTransferPhysicsBase::addFVKernels()
 
   addEnergyAdvectionKernels();
   addEnergyHeatConductionKernels();
+  addEnergyPressureWork();
   if (getParam<std::vector<MooseFunctorName>>("ambient_temperature").size())
     addEnergyAmbientConvection();
   if (isParamValid("external_heat_source"))

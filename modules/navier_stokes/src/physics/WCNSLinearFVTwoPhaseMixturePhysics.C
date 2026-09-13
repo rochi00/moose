@@ -319,6 +319,10 @@ WCNSLinearFVTwoPhaseMixturePhysics::addFVKernels()
       getParam<bool>("add_phase_change_energy_term"))
     addPhaseChangeEnergySource();
 
+  if (_fluid_energy_physics && _fluid_energy_physics->hasEnergyEquation() &&
+      _fluid_energy_physics->getParam<bool>("include_pressure_work"))
+    addEnergyPressureWorkDriftTerm();
+
   if (_flow_equations_physics && _flow_equations_physics->hasFlowEquations() &&
       getParam<bool>("add_drift_flux_mass_term"))
     addMassDriftFluxTerm();
@@ -779,6 +783,56 @@ WCNSLinearFVTwoPhaseMixturePhysics::addPhaseChangeEnergySource()
   params.set<bool>("conservative_form") = false;
   getProblem().addLinearFVKernel(
       "LinearFVTimeDerivative", prefix() + "phase_change_energy", params);
+}
+
+void
+WCNSLinearFVTwoPhaseMixturePhysics::addEnergyPressureWorkDriftTerm()
+{
+  // The energy Physics adds dp/dt + u_m . grad(p). What remains is the pressure work the relative
+  // motion carries, which for a mixture is (alpha - c_d) u_s . grad(p) with c_d = alpha rho_d /
+  // rho_m. That group is the same one the dilatation term of the pressure equation carries, being
+  // the difference between the volume averaged and the mass averaged mixture velocity.
+  //
+  // The transient part is left to the mixture piece, so that dp/dt is counted once.
+  const std::vector<std::string> components = {"x", "y", "z"};
+  const auto drift_velocity = prefix() + "pressure_work_drift_velocity_";
+
+  for (const auto d : make_range(dimension()))
+  {
+    auto params = getFactory().getValidParams("ParsedFunctorMaterial");
+    assignBlocks(params, _blocks);
+    params.set<std::string>("expression") = "(alpha - alpha * rho_d / rho_m) * u_slip";
+    params.set<std::vector<std::string>>("functor_names") = {
+        _phase_2_fraction_name, _phase_2_density, "rho_mixture", "vel_slip_" + components[d]};
+    params.set<std::vector<std::string>>("functor_symbols") = {"alpha", "rho_d", "rho_m", "u_slip"};
+    params.set<std::string>("property_name") = drift_velocity + components[d];
+    getProblem().addMaterial(
+        "ParsedFunctorMaterial", drift_velocity + components[d] + "_mat", params);
+  }
+
+  const auto drift_work = prefix() + "pressure_work_drift";
+  {
+    auto params = getFactory().getValidParams("NSFVPressureWorkFunctorMaterial");
+    assignBlocks(params, _blocks);
+    params.set<MooseFunctorName>(NS::pressure) = _flow_equations_physics->getPressureName();
+    params.set<MooseFunctorName>("u") = drift_velocity + "x";
+    if (dimension() >= 2)
+      params.set<MooseFunctorName>("v") = drift_velocity + "y";
+    if (dimension() >= 3)
+      params.set<MooseFunctorName>("w") = drift_velocity + "z";
+    params.set<bool>("include_time_derivative") = false;
+    params.set<MooseFunctorName>("pressure_work_name") = drift_work;
+    getProblem().addMaterial("NSFVPressureWorkFunctorMaterial", drift_work + "_mat", params);
+  }
+  {
+    auto params = getFactory().getValidParams("LinearFVSource");
+    assignBlocks(params, _blocks);
+    params.set<LinearVariableName>("variable") =
+        _fluid_energy_physics->getFluidEnergyVariableName();
+    params.set<MooseFunctorName>("source_density") = drift_work;
+    getProblem().addLinearFVKernel(
+        "LinearFVSource", prefix() + "energy_pressure_work_drift", params);
+  }
 }
 
 void
