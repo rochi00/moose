@@ -146,8 +146,9 @@ protected:
   /// Whether contacts need a history: friction or rolling resistance is on
   bool historyNeeded() const;
   /// Compute all forces: interior particles first, then the boundary ones once the ghost update
-  /// has landed
-  void computeForces();
+  /// has landed, advancing the contact histories by the substep first when asked (once per
+  /// substep; the recomputation after migration must not)
+  void computeForces(const bool advance_histories);
   /// First half of Velocity Verlet: half-kick the velocities and drift the positions and
   /// orientations by one substep
   void kickDrift();

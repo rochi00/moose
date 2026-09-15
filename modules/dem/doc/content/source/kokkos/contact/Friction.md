@@ -29,6 +29,24 @@ zero tangential stiffness, gives frictionless contact. The `sliding_sphere` test
 transition from slipping to rolling of a sphere launched along a wall against the analytic
 $t^* = 2 v_0 / (7 \mu g)$ and rolling speed $5 v_0 / 7$.
 
+## Partial slip
+
+With `partial_slip = true` the tangential spring follows, instead of the linear no-slip law, the
+Mindlin-Deresiewicz loading curve
+
+!equation
+|F_t^s| = \mu F_n \left[ 1 - \left( 1 - \frac{|\delta_t|}{\delta_\text{max}} \right)^{3/2} \right],
+\qquad \delta_\text{max} = \frac{3 \mu F_n}{2 k_t},
+
+along $\delta_t$, whose initial slope is $k_t$ and which reaches the friction limit at
+$\delta_\text{max}$, where the contact slides and the spring is held so that unloading starts
+from the fully slipped state. It is the closed form of Di Renzo and Di Maio (2004): elastic on
+unloading (no hysteresis), and with the Hertz model's $k_t = 8 G^* a$ it is Mindlin's solution
+for a monotonic tangential load under a constant normal force $P$,
+$\delta_\text{max} = 3 \mu P / (16 G^* a)$. The dashpot force is added as before. The
+`mindlin_loading` test checks the curve against a reference integration of a sphere oscillating
+tangentially on a wall under its weight.
+
 ## Rolling resistance
 
 Rolling resistance is the elastic-plastic spring-dashpot model (Luding 2008; Ai et al. 2011,

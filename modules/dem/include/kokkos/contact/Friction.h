@@ -65,7 +65,12 @@ struct Contact
  * spring-dashpot rolling resistance (plan layer L4). The tangential force is
  * -k_t delta_t - gamma_t v_t, limited to mu times the (repulsive part of the) normal force; when
  * it is, the spring is reset so that the spring and dashpot together give exactly the limit, as
- * in LAMMPS's granular pair styles. Rolling resistance works the same way on the rolling
+ * in LAMMPS's granular pair styles. With partial slip, the spring instead follows the
+ * Mindlin-Deresiewicz loading curve mu F_n (1 - (1 - |delta_t| / delta_max)^(3/2)) with
+ * delta_max = 3 mu F_n / (2 k_t), whose initial slope is k_t and which reaches the limit at
+ * delta_max (the closed form of Di Renzo and Di Maio 2004, elastic on unloading; with the Hertz
+ * model's k_t = 8 G* a it is Mindlin's solution for a constant normal force). Rolling
+ * resistance works the same way as the linear spring on the rolling
  * displacement, the integral of the rolling velocity r_eff (omega_i - omega_j) x n, with its own
  * stiffness, damping, and coefficient, and acts as the torque r_eff n x F_r on i and its
  * opposite on j (Luding 2008; LAMMPS's rolling sds).
@@ -74,6 +79,9 @@ struct Friction
 {
   /// Coefficient of friction; zero for a frictionless contact
   Real mu = 0;
+  /// Whether the tangential spring follows the Mindlin-Deresiewicz partial-slip loading curve
+  /// rather than the linear no-slip spring
+  bool partial_slip = false;
   /// Coefficient of rolling friction, limiting the rolling torque to this times the normal force
   /// times the effective radius; zero for no rolling resistance
   Real mu_r = 0;
@@ -109,8 +117,33 @@ struct Friction
       delta_t -= delta_t.dot_product(contact.normal) * contact.normal;
       delta_t += dt * contact.v_t;
     }
-    Moose::Kokkos::Real3 f_t = -k_t * delta_t - gamma_t * contact.v_t;
     const Real f_t_max = mu * (f_n > 0 ? f_n : 0);
+    Moose::Kokkos::Real3 f_t;
+    if (partial_slip)
+    {
+      // The spring saturates at delta_max: beyond it the contact slides and the spring is held
+      // there, so unloading starts from the fully slipped state
+      const Real delta_max = 1.5 * f_t_max / k_t;
+      const Real delta_norm = delta_t.norm();
+      if (delta_norm >= delta_max)
+      {
+        if (update && delta_norm > 0)
+          delta_t *= delta_max / delta_norm;
+        f_t = delta_norm > 0 ? (-f_t_max / delta_norm) * delta_t : Moose::Kokkos::Real3(0);
+      }
+      else
+      {
+        const Real remaining = 1 - delta_norm / delta_max;
+        const Real spring = f_t_max * (1 - remaining * ::Kokkos::sqrt(remaining));
+        f_t = delta_norm > 0 ? (-spring / delta_norm) * delta_t : Moose::Kokkos::Real3(0);
+      }
+      f_t -= gamma_t * contact.v_t;
+      const Real f_t_norm = f_t.norm();
+      if (f_t_norm > f_t_max)
+        f_t *= f_t_max / f_t_norm;
+      return f_t;
+    }
+    f_t = -k_t * delta_t - gamma_t * contact.v_t;
     const Real f_t_norm = f_t.norm();
     if (f_t_norm > f_t_max)
     {

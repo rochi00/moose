@@ -32,4 +32,16 @@
     requirement = 'The system shall give the same result for an oblique collision with friction when a smaller neighbor-list skin makes the list, and the contact histories with it, rebuild five times as often.'
     capabilities = 'kokkos'
   []
+  [mindlin_loading]
+    type = CSVDiff
+    input = mindlin_loading.i
+    csvdiff = 'mindlin_loading_out_state_0005.csv mindlin_loading_out_state_0010.csv'
+    # V7: the force, velocity, and spin match the reference integration of the loading curve to
+    # 3e-8 at both outputs, on both branches of the oscillation
+    rel_err = 1e-6
+    # The normal force balances gravity to roundoff and nothing moves out of the plane
+    abs_zero = 1e-12
+    requirement = 'The system shall, with the Hertz-Mindlin model and partial slip, apply a tangential force following the Mindlin-Deresiewicz loading curve mu P (1 - (1 - delta / delta_max)^(3/2)) of the contact point displacement under a constant normal force, verified through the oscillation of a sphere on a wall against a reference integration.'
+    capabilities = 'kokkos'
+  []
 []

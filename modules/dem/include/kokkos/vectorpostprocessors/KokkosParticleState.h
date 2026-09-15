@@ -26,4 +26,7 @@ protected:
   std::vector<VectorPostprocessorValue *> _x;
   std::vector<VectorPostprocessorValue *> _v;
   std::vector<VectorPostprocessorValue *> _omega;
+  /// Force and torque, only with output_forces
+  std::vector<VectorPostprocessorValue *> _f;
+  std::vector<VectorPostprocessorValue *> _tau;
 };

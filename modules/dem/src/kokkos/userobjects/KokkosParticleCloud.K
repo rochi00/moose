@@ -67,6 +67,11 @@ KokkosParticleCloud::validParams()
       "friction >= 0",
       "Coefficient of friction limiting the tangential force to this times the normal force; "
       "zero for frictionless contact");
+  params.addParam<bool>("partial_slip",
+                        false,
+                        "Follow the Mindlin-Deresiewicz partial-slip loading curve for the "
+                        "tangential spring, which reaches the friction limit at 3/2 of the "
+                        "no-slip slip displacement, instead of the linear no-slip spring");
   params.addRangeCheckedParam<Real>("rolling_friction",
                                     0,
                                     "rolling_friction >= 0",
@@ -156,6 +161,7 @@ KokkosParticleCloud::KokkosParticleCloud(const InputParameters & parameters)
              getParam<Real>("tangential_damping")}),
     _hertz(makeHertz()),
     _friction({getParam<Real>("friction"),
+               getParam<bool>("partial_slip"),
                getParam<Real>("rolling_friction"),
                getParam<Real>("rolling_stiffness"),
                getParam<Real>("rolling_damping")}),
@@ -349,7 +355,7 @@ KokkosParticleCloud::initialSetup()
         }
 
   updateNeighborList();
-  computeForces();
+  computeForces(false);
   // Reduce so the initial values are global before the first execution
   count();
   finalize();
@@ -369,7 +375,7 @@ KokkosParticleCloud::compute()
     walk();
     if (!updateNeighborList())
       startGhostUpdate();
-    computeForces();
+    computeForces(true);
     kick();
   }
 
@@ -398,10 +404,11 @@ KokkosParticleCloud::compute()
     resolveUnresolved();
     walk();
   }
-  // Received particles arrive without forces, and the next step's first half-kick needs them
+  // Received particles arrive without forces, and the next step's first half-kick needs them;
+  // the histories were advanced for this substep already and travelled with the particles
   if (!updateNeighborList())
     startGhostUpdate();
-  computeForces();
+  computeForces(false);
 
   count();
   if (_verify)
@@ -557,14 +564,16 @@ KokkosParticleCloud::computeForces(const ::Kokkos::View<std::size_t *> & subset,
 }
 
 void
-KokkosParticleCloud::computeForces()
+KokkosParticleCloud::computeForces(const bool advance_histories)
 {
   // Interior particles only have pairs of local particles, so their histories and forces do not
   // need the ghost update and overlap its communication
-  updatePairStates(false);
+  if (advance_histories)
+    updatePairStates(false);
   computeForces(_neighbor_list.interior(), _neighbor_list.numInterior());
   finishGhostUpdate();
-  updatePairStates(true);
+  if (advance_histories)
+    updatePairStates(true);
   computeForces(_neighbor_list.boundary(), _neighbor_list.numBoundary());
 }
 
