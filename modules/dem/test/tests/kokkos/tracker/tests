@@ -26,6 +26,19 @@
     requirement = 'The system shall wrap particles that cross a periodic face to the far side of the domain and place them there, on the rank owning the far element, so that no particle exits and every particle is located, on any number of ranks.'
     capabilities = 'kokkos'
   []
+  [walk_2d_empty_rank]
+    type = CSVDiff
+    input = walk_2d.i
+    cli_args = 'Mesh/gen/nx=2 Mesh/gen/ny=1 Outputs/file_base=walk_2d_empty_rank_out'
+    csvdiff = walk_2d_empty_rank_out.csv
+    # Two elements on at least three ranks leaves a rank without elements, whose bounding box
+    # must not be inflated to infinity and which must still take part in the collective ghost
+    # exchange; the hop counts depend on the mesh
+    min_parallel = 3
+    ignore_columns = 'max_hops'
+    requirement = 'The system shall run with a rank that owns no elements, giving the same particle and exit counts as on any other partitioning.'
+    capabilities = 'kokkos'
+  []
   [walk_2d_fallback]
     type = CSVDiff
     input = walk_2d.i

@@ -306,7 +306,12 @@ KokkosParticleCloud::initialSetup()
   // mesh does not move
   _r_max = _initial_radii.size() ? *std::max_element(_initial_radii.begin(), _initial_radii.end())
                                  : _radius;
-  const auto my_box = _fe_problem.mesh().getInflatedProcessorBoundingBox();
+  // A rank without elements has an invalid (inverted) local bounding box, which the inflation
+  // turns into an infinite one that every rank would ghost to; keep it inverted so it neighbors
+  // nothing
+  const auto my_box = mesh.getNumLocalElements()
+                          ? _fe_problem.mesh().getInflatedProcessorBoundingBox()
+                          : libMesh::BoundingBox();
   std::vector<Real> bounds = {my_box.min()(0),
                               my_box.min()(1),
                               my_box.min()(2),
@@ -877,8 +882,8 @@ KokkosParticleCloud::exchangeGhosts()
   _num_ghosts = 0;
   _ghost_send_counts.assign(_neighbor_ranks.size(), 0);
   _ghost_recv.clear();
-  if (_neighbor_ranks.empty())
-    return;
+  // No early return for a rank without neighbors: the exchange below is collective, and a rank
+  // can be neighborless (no elements, or an isolated partition) while others are not
 
   // Flag, per target, the local particles whose shifted image is within the cutoff of that
   // rank's box, then compact the flags into the send index with a scan. The box is shifted the
