@@ -1,0 +1,50 @@
+[Tests]
+  design = 'KokkosParticleCloud.md SidesetWalls.md'
+  issues = '#1'
+
+  [floor_analytic]
+    type = CSVDiff
+    input = floor_analytic.i
+    csvdiff = floor_analytic_out_state_0006.csv
+    # The reference: the gold is this run
+    rel_err = 1e-10
+    requirement = 'The system shall bounce a sphere with friction on an analytic plane, as the reference for the sideset floor.'
+    capabilities = 'kokkos'
+  []
+  [floor]
+    type = CSVDiff
+    input = floor.i
+    csvdiff = floor_out_state_0006.csv
+    # V13: identical to the analytic plane to roundoff
+    rel_err = 1e-10
+    requirement = 'The system shall bounce a sphere with friction on a wall made of a mesh sideset identically to the analytic plane it coincides with, on any number of ranks.'
+    capabilities = 'kokkos'
+  []
+  [plane3d_analytic]
+    type = CSVDiff
+    input = plane3d_analytic.i
+    csvdiff = plane3d_analytic_out_state_0004.csv
+    rel_err = 1e-10
+    requirement = 'The system shall bounce a sphere with friction on an analytic plane in three dimensions, as the reference for the triangulated floor.'
+    capabilities = 'kokkos'
+  []
+  [plane3d]
+    type = CSVDiff
+    input = plane3d.i
+    csvdiff = plane3d_out_state_0004.csv
+    # V12: identical to the analytic plane to roundoff while the contact slides across triangle
+    # edges and a vertex shared by eight triangles
+    rel_err = 1e-10
+    requirement = 'The system shall bounce a sphere with friction on a triangulated sideset floor identically to the analytic plane, with the contact sliding across triangle edges and vertices, on any number of ranks.'
+    capabilities = 'kokkos'
+  []
+  [corner]
+    type = CSVDiff
+    input = corner.i
+    csvdiff = corner_out_state_0008.csv
+    # The collision is first order in the substep, as in the restitution tests: 1e-4 here
+    rel_err = 2e-4
+    requirement = 'The system shall treat the reentrant corner of a mesh, where two sideset wall faces meet in a vertex convex toward the sphere, as a single contact along the line from the vertex, so that a sphere hitting it head-on rebounds with the sphere-wall coefficient of restitution.'
+    capabilities = 'kokkos'
+  []
+[]

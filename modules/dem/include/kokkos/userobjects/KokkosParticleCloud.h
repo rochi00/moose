@@ -219,6 +219,9 @@ protected:
   DEM::PairStateMap _pair_states;
   /// Fixed planar walls
   const DEM::AnalyticWalls _walls;
+  /// Sidesets whose faces are walls, and the walls built from them
+  const std::vector<BoundaryName> _wall_boundaries;
+  DEM::SidesetWalls _sideset_walls;
   /// Directions in which the domain is periodic
   const MultiMooseEnum & _periodic;
   ///@{

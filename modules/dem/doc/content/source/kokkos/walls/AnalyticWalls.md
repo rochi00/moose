@@ -16,7 +16,7 @@ frictionless).
 
 A wall extends without bound and is not tied to the mesh: the mesh must keep the particle centers
 on the inner side of every wall, or a particle exits the mesh before it reaches the wall. Walls
-derived from mesh sidesets and moving walls are a later layer.
+tied to the mesh are [SidesetWalls.md].
 
 The walls are given by the `wall_points` and `wall_normals` parameters of [KokkosParticleCloud.md],
 one entry each per wall; normals are normalized on input.

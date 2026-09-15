@@ -2,6 +2,7 @@
 
 #include "ParticleCloud.h"
 #include "AnalyticWalls.h"
+#include "SidesetWalls.h"
 #include "PairState.h"
 #include "Friction.h"
 
@@ -19,6 +20,7 @@ struct ContactEvaluator
 {
   ParticleCloud cloud;
   AnalyticWalls walls;
+  SidesetWalls sidesets;
   Model model;
   Friction friction;
   PairStateMap states;
@@ -45,6 +47,39 @@ struct ContactEvaluator
                 cloud.r(j),
                 cloud.m(j));
     return true;
+  }
+
+  /// The contacts of particle i with the sideset walls within a reach of its center
+  KOKKOS_INLINE_FUNCTION unsigned int
+  sidesetContacts(const std::size_t i, const Real reach, WallContact * const out) const
+  {
+    return sidesets.contacts(cloud.elem(i),
+                             Moose::Kokkos::Real3(cloud.x(i, 0), cloud.x(i, 1), cloud.x(i, 2)),
+                             cloud.r(i),
+                             reach,
+                             out);
+  }
+
+  /// The contact of particle i with a sideset wall face found by sidesetContacts()
+  KOKKOS_INLINE_FUNCTION Contact sideset(const std::size_t i, const WallContact & wc) const
+  {
+    return Contact(wc.normal,
+                   wc.overlap,
+                   Moose::Kokkos::Real3(cloud.v(i, 0), cloud.v(i, 1), cloud.v(i, 2)),
+                   Moose::Kokkos::Real3(cloud.omega(i, 0), cloud.omega(i, 1), cloud.omega(i, 2)),
+                   cloud.r(i),
+                   cloud.m(i),
+                   Moose::Kokkos::Real3(0),
+                   Moose::Kokkos::Real3(0),
+                   0,
+                   0);
+  }
+
+  /// History key of particle i's contact with a sideset wall: by boundary, numbered after the
+  /// analytic walls
+  KOKKOS_INLINE_FUNCTION PairKey sidesetKey(const std::size_t i, const WallContact & wc) const
+  {
+    return PairKey::wall(cloud.gid(i), walls.n + wc.boundary);
   }
 
   /// The contact of particle i with wall w, if they overlap

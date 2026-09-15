@@ -94,6 +94,10 @@ KokkosParticleCloud::validParams()
                                     "restitution > 0 & restitution <= 1",
                                     "Coefficient of restitution the damping of the Hertz normal "
                                     "contact is set to reproduce; one for no damping");
+  params.addParam<std::vector<BoundaryName>>(
+      "wall_boundaries",
+      {},
+      "Sidesets whose faces are walls, triangulated, with the mesh interior as the inside");
   params.addParam<std::vector<Point>>(
       "wall_points", {}, "A point on each fixed planar wall, one per entry of wall_normals");
   params.addParam<std::vector<RealVectorValue>>(
@@ -167,6 +171,7 @@ KokkosParticleCloud::KokkosParticleCloud(const InputParameters & parameters)
                getParam<Real>("rolling_damping")}),
     _walls(getParam<std::vector<Point>>("wall_points"),
            getParam<std::vector<RealVectorValue>>("wall_normals")),
+    _wall_boundaries(getParam<std::vector<BoundaryName>>("wall_boundaries")),
     _periodic(getParam<MultiMooseEnum>("periodic")),
     _substeps(getParam<unsigned int>("substeps")),
     _max_hops(getParam<unsigned int>("max_hops")),
@@ -191,7 +196,7 @@ KokkosParticleCloud::KokkosParticleCloud(const InputParameters & parameters)
   for (const auto & normal : getParam<std::vector<RealVectorValue>>("wall_normals"))
     if (normal.norm() == 0)
       paramError("wall_normals", "Normals must be nonzero");
-  if (_walls.n && !contactEnabled())
+  if ((_walls.n || _wall_boundaries.size()) && !contactEnabled())
     paramError("wall_points", "Walls need a contact model with a positive stiffness or modulus");
 #ifndef DEM_HAVE_ARBORX
   if (_broad_phase == DEM::BroadPhase::ARBORX_BVH)
@@ -340,6 +345,17 @@ KokkosParticleCloud::initialSetup()
   const Real cutoff = 2 * _r_max + _skin;
   _neighbor_ranks.clear();
   _ghost_targets.clear();
+
+  // Sideset walls of the local and ghost elements; a face is a candidate of the elements within
+  // a particle's reach of it
+  if (_wall_boundaries.size())
+  {
+    _sideset_walls.build(_fe_problem.mesh(),
+                         mesh,
+                         _cid_to_elem,
+                         _fe_problem.mesh().getBoundaryIDs(_wall_boundaries, true),
+                         _r_max + _skin);
+  }
   for (const auto rank : make_range(n_processors()))
     for (int sz = -1; sz <= 1; ++sz)
       for (int sy = -1; sy <= 1; ++sy)
@@ -426,7 +442,7 @@ template <typename Model>
 DEM::ContactEvaluator<Model>
 KokkosParticleCloud::evaluator(const Model & contact) const
 {
-  return {_cloud, _walls, contact, _friction, _pair_states, _dt / _substeps};
+  return {_cloud, _walls, _sideset_walls, contact, _friction, _pair_states, _dt / _substeps};
 }
 
 template <typename Model>
@@ -483,6 +499,17 @@ KokkosParticleCloud::computeForces(const Model & contact,
               f += f_n * c.normal + f_t;
               tau += tau_r - cloud.r(i) * c.normal.cross_product(f_t);
             }
+
+            // Sphere-face narrow phase against the sideset walls near the particle's element
+            DEM::WallContact wc[DEM::SidesetWalls::max_contacts];
+            const auto n_wc = eval.sidesetContacts(i, cloud.r(i), wc);
+            for (unsigned int k = 0; k < n_wc; ++k)
+            {
+              c = eval.sideset(i, wc[k]);
+              eval.forces(c, eval.sidesetKey(i, wc[k]), 1, false, f_n, f_t, tau_r);
+              f += f_n * c.normal + f_t;
+              tau += tau_r - cloud.r(i) * c.normal.cross_product(f_t);
+            }
           }
         }
 
@@ -504,6 +531,7 @@ KokkosParticleCloud::updatePairStates(const Model & contact, const bool ghost_pa
   const auto n_local = _cloud.size();
   const auto eval = evaluator(contact);
   const auto num_walls = _walls.n;
+  const Real skin = _skin;
   const auto offsets = _neighbor_list.offsets();
   const auto pairs = _neighbor_list.pairs();
   const auto ghost_self = _ghost_self;
@@ -537,6 +565,7 @@ KokkosParticleCloud::updatePairStates(const Model & contact, const bool ghost_pa
             eval.reset(key);
         }
         if (!ghost_pairs)
+        {
           for (std::size_t w = 0; w < num_walls; ++w)
           {
             const auto key = DEM::PairKey::wall(cloud.gid(i), w);
@@ -545,6 +574,36 @@ KokkosParticleCloud::updatePairStates(const Model & contact, const bool ghost_pa
             else
               eval.reset(key);
           }
+          // Sideset faces within the skin are listed. Their histories are per boundary, so a
+          // boundary's history is advanced once, from its first overlapping face, and reset
+          // only when none of its listed faces overlaps
+          DEM::WallContact wc[DEM::SidesetWalls::max_contacts];
+          const auto n_wc = eval.sidesetContacts(i, cloud.r(i) + skin, wc);
+          bool advanced[DEM::SidesetWalls::max_contacts];
+          for (unsigned int k = 0; k < n_wc; ++k)
+          {
+            advanced[k] = false;
+            if (wc[k].overlap <= 0)
+              continue;
+            for (unsigned int l = 0; l < k && !advanced[k]; ++l)
+              advanced[k] = advanced[l] && wc[l].boundary == wc[k].boundary;
+            if (advanced[k])
+              continue;
+            c = eval.sideset(i, wc[k]);
+            eval.forces(c, eval.sidesetKey(i, wc[k]), 1, true, f_n, f_t, tau_r);
+            advanced[k] = true;
+          }
+          for (unsigned int k = 0; k < n_wc; ++k)
+          {
+            if (wc[k].overlap > 0)
+              continue;
+            bool touching = false;
+            for (unsigned int l = 0; l < n_wc && !touching; ++l)
+              touching = wc[l].overlap > 0 && wc[l].boundary == wc[k].boundary;
+            if (!touching)
+              eval.reset(eval.sidesetKey(i, wc[k]));
+          }
+        }
       });
 }
 
@@ -821,6 +880,7 @@ KokkosParticleCloud::rebuildPairStates()
   const auto cloud = _cloud;
   const auto n_local = _cloud.size();
   const auto walls = _walls;
+  const auto sidesets = _sideset_walls;
   const Real skin = _skin;
   const auto offsets = _neighbor_list.offsets();
   const auto pairs = _neighbor_list.pairs();
@@ -838,7 +898,7 @@ KokkosParticleCloud::rebuildPairStates()
       KOKKOS_LAMBDA(const std::size_t i, std::size_t & sum) {
         for (auto k = offsets(i); k < offsets(i + 1); ++k)
           sum += pairs(k) >= n_local || i < pairs(k);
-        sum += walls.n;
+        sum += walls.n + sidesets.num_boundaries;
       },
       needed);
   DEM::PairStateMap map(2 * needed + 128);
@@ -863,6 +923,10 @@ KokkosParticleCloud::rebuildPairStates()
           for (std::size_t w = 0; w < walls.n; ++w)
             if (walls.overlap(w, xi, cloud.r(i)) > -skin)
               insert(DEM::PairKey::wall(cloud.gid(i), w));
+          DEM::WallContact wc[DEM::SidesetWalls::max_contacts];
+          const auto n_wc = sidesets.contacts(cloud.elem(i), xi, cloud.r(i), cloud.r(i) + skin, wc);
+          for (unsigned int k = 0; k < n_wc; ++k)
+            insert(DEM::PairKey::wall(cloud.gid(i), walls.n + wc[k].boundary));
         });
     if (!map.failed_insert())
       break;
@@ -1366,9 +1430,24 @@ KokkosParticleCloud::packPairStates(std::map<processor_id_type, std::vector<Real
   const auto cloud = _cloud;
   const auto n_local = _cloud.size();
   const auto num_walls = _walls.n;
+  const auto sidesets = _sideset_walls;
+  const Real skin = _skin;
   const auto offsets = _neighbor_list.offsets();
   const auto pairs = _neighbor_list.pairs();
   const auto states = _pair_states;
+  const auto sideset_key = KOKKOS_LAMBDA(const std::size_t i, const DEM::WallContact & wc)
+  {
+    return DEM::PairKey::wall(cloud.gid(i), num_walls + wc.boundary);
+  };
+  const auto sideset_contacts =
+      KOKKOS_LAMBDA(const std::size_t i, DEM::WallContact * const out)
+  {
+    return sidesets.contacts(cloud.elem(i),
+                             Moose::Kokkos::Real3(cloud.x(i, 0), cloud.x(i, 1), cloud.x(i, 2)),
+                             cloud.r(i),
+                             cloud.r(i) + skin,
+                             out);
+  };
 
   // A departing particle's records are its stretched histories: the key and the spring, as
   // Reals (global IDs are exact below 2^53). Count, scan, fill
@@ -1390,6 +1469,10 @@ KokkosParticleCloud::packPairStates(std::map<processor_id_type, std::vector<Real
             count += packable(i, DEM::PairKey::pair(cloud.gid(i), cloud.gid(pairs(k))));
           for (std::size_t w = 0; w < num_walls; ++w)
             count += packable(i, DEM::PairKey::wall(cloud.gid(i), w));
+          DEM::WallContact wc[DEM::SidesetWalls::max_contacts];
+          const auto n_wc = sideset_contacts(i, wc);
+          for (unsigned int k = 0; k < n_wc; ++k)
+            count += packable(i, sideset_key(i, wc[k]));
         }
         if (final)
           slot(i) = sum;
@@ -1424,6 +1507,10 @@ KokkosParticleCloud::packPairStates(std::map<processor_id_type, std::vector<Real
           pack(DEM::PairKey::pair(cloud.gid(i), cloud.gid(pairs(k))));
         for (std::size_t w = 0; w < num_walls; ++w)
           pack(DEM::PairKey::wall(cloud.gid(i), w));
+        DEM::WallContact wc[DEM::SidesetWalls::max_contacts];
+        const auto n_wc = sideset_contacts(i, wc);
+        for (unsigned int k = 0; k < n_wc; ++k)
+          pack(sideset_key(i, wc[k]));
       });
   auto buffer_host = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, buffer);
   auto ranks_host = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, ranks);
@@ -1578,6 +1665,7 @@ KokkosParticleCloud::countContacts(const Model & contact,
   const auto cloud = _cloud;
   const auto n_local = cloud.size();
   const auto walls = _walls;
+  const auto sidesets = _sideset_walls;
   const auto offsets = _neighbor_list.offsets();
   const auto pairs = _neighbor_list.pairs();
   constexpr auto exited = DEM::ParticleCloud::exited;
@@ -1614,6 +1702,11 @@ KokkosParticleCloud::countContacts(const Model & contact,
             if (overlap > 0)
               energy += contact.energy(overlap, cloud.r(i));
           }
+          DEM::WallContact wc[DEM::SidesetWalls::max_contacts];
+          const auto n_wc = sidesets.contacts(cloud.elem(i), xi, cloud.r(i), cloud.r(i), wc);
+          for (unsigned int k = 0; k < n_wc; ++k)
+            if (wc[k].overlap > 0)
+              energy += contact.energy(wc[k].overlap, cloud.r(i));
         },
         num_contacts,
         pe,

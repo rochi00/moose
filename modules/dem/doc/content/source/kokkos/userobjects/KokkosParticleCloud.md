@@ -13,11 +13,11 @@ device (plan decision D4).
 
 Forces are the body force `m * gravity` and the normal contact force of the selected
 `contact_model`, [LinearSpringDashpot.md] (the default, enabled by a positive `normal_stiffness`)
-or [Hertz.md], between overlapping spheres found through the neighbor list and against the fixed
-planar walls given by `wall_points` and `wall_normals` ([AnalyticWalls.md]). The model is a
-compile-time policy: the force kernel is instantiated once per model and the selection is made
-once at setup (plan decision D5). Tangential contact, rolling resistance, and mesh-derived walls
-are added by later layers.
+or [Hertz.md], between overlapping spheres found through the neighbor list, against the fixed
+planar walls given by `wall_points` and `wall_normals` ([AnalyticWalls.md]), and against the
+sidesets listed in `wall_boundaries` ([SidesetWalls.md]). The model is a compile-time policy: the
+force kernel is instantiated once per model and the selection is made once at setup (plan
+decision D5). Friction and rolling resistance are described in [Friction.md].
 
 ## Neighbor list
 
