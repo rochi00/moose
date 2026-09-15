@@ -2,6 +2,7 @@
 
 #include "KokkosGeneralUserObject.h"
 #include "ParticleCloud.h"
+#include "NeighborList.h"
 
 #include "libmesh/point_locator_base.h"
 
@@ -42,6 +43,8 @@ public:
   std::size_t numLost() const { return _num_lost; }
   std::size_t numMigrated() const { return _num_migrated; }
   unsigned int maxHops() const { return _max_hops_taken; }
+  std::size_t numNeighborPairs() const { return _num_neighbor_pairs; }
+  std::size_t numNeighborListBuilds() const { return _num_neighbor_list_builds; }
   Real kineticEnergy() const { return _kinetic_energy; }
   Real rotationalKineticEnergy() const { return _rotational_kinetic_energy; }
   Real angularMomentum() const { return _angular_momentum; }
@@ -57,6 +60,8 @@ protected:
   void kick();
   /// Re-resolve the containing element of every particle on device, accumulating hops
   void walk();
+  /// Rebuild the neighbor list if some particle has moved more than skin / 2 since the last build
+  void updateNeighborList();
   /// Send every particle that walked into a ghost element to the rank owning that element and
   /// receive the particles sent here
   /// @returns The number of particles sent from this rank
@@ -70,6 +75,8 @@ protected:
   void count();
   /// Check the device element assignment against libMesh's PointLocator on host; errors on mismatch
   void verify();
+  /// Check the neighbor list against a brute-force pair search on host; errors on mismatch
+  void verifyNeighborList();
   /// Magnitude of _angular_momentum_vector
   Real angularMomentumMagnitude() const;
 
@@ -79,8 +86,10 @@ protected:
   const RealVectorValue & _initial_velocity;
   /// Initial body-frame angular velocity of every particle
   const RealVectorValue & _initial_angular_velocity;
-  /// Particle radius
+  /// Particle radius, used unless initial_radii is given
   const Real _radius;
+  /// Optional per-particle radii
+  const std::vector<Real> _initial_radii;
   /// Particle density
   const Real _density;
   /// Gravitational acceleration
@@ -89,11 +98,17 @@ protected:
   const unsigned int _substeps;
   /// Upper bound on face hops per particle per walk
   const unsigned int _max_hops;
+  /// Verlet skin distance of the neighbor list
+  const Real _skin;
   /// Whether to run verify() every step
   const bool _verify;
+  /// Whether to run verifyNeighborList() after every build
+  const bool _verify_neighbor_list;
 
   /// Device particle state
   DEM::ParticleCloud _cloud;
+  /// Neighbor list of the local particles
+  DEM::NeighborList _neighbor_list;
   /// Second cloud of the same capacity that migrate() compacts into before swapping
   DEM::ParticleCloud _scratch;
   ///@{
@@ -118,6 +133,8 @@ protected:
   std::size_t _num_lost = 0;
   std::size_t _num_migrated = 0;
   unsigned int _max_hops_taken = 0;
+  std::size_t _num_neighbor_pairs = 0;
+  std::size_t _num_neighbor_list_builds = 0;
   Real _kinetic_energy = 0;
   Real _rotational_kinetic_energy = 0;
   /// Total spin angular momentum vector and its magnitude

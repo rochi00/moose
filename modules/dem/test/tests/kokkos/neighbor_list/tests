@@ -1,0 +1,23 @@
+[Tests]
+  design = 'KokkosParticleCloud.md'
+  issues = '#1'
+
+  [polydisperse]
+    type = CSVDiff
+    input = polydisperse.i
+    csvdiff = polydisperse_out.csv
+    requirement = 'The system shall build a uniform-grid neighbor list on device whose set of pairs equals a brute-force search for random particles with radii spanning a 50:1 ratio, and rebuild it only once some particle has moved half the skin distance.'
+    # Pairs spanning a partition boundary are not listed until ghost particles are exchanged, so the
+    # pair count is only rank-independent in serial; polydisperse_parallel covers the per-rank check
+    max_parallel = 1
+    capabilities = 'kokkos'
+  []
+  [polydisperse_parallel]
+    type = RunApp
+    input = polydisperse.i
+    cli_args = 'Outputs/csv=false'
+    requirement = 'The system shall, on a partitioned mesh, build a neighbor list on every rank whose set of pairs among that rank''s particles equals a brute-force search.'
+    min_parallel = 2
+    capabilities = 'kokkos'
+  []
+[]

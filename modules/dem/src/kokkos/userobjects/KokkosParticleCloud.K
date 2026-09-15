@@ -3,6 +3,7 @@
 #include "MooseMesh.h"
 
 #include "libmesh/elem.h"
+#include "libmesh/bounding_box.h"
 #include "timpi/parallel_sync.h"
 
 registerMooseObject("DemApp", KokkosParticleCloud);
@@ -23,6 +24,8 @@ KokkosParticleCloud::validParams()
                                    RealVectorValue(0, 0, 0),
                                    "Initial body-frame angular velocity of every particle");
   params.addRequiredRangeCheckedParam<Real>("radius", "radius > 0", "Particle radius");
+  params.addParam<std::vector<Real>>(
+      "initial_radii", "Per-particle radii overriding radius, one per initial position");
   params.addRequiredRangeCheckedParam<Real>("density", "density > 0", "Particle density");
   params.addParam<RealVectorValue>(
       "gravity", RealVectorValue(0, 0, 0), "Gravitational acceleration");
@@ -32,10 +35,19 @@ KokkosParticleCloud::validParams()
   // face-plane test cannot handle, so bound it rather than loop for the mesh size
   params.addParam<unsigned int>(
       "max_hops", 32, "Maximum number of face-neighbor hops per particle per substep");
+  params.addRangeCheckedParam<Real>("skin",
+                                    "skin >= 0",
+                                    "Verlet skin distance of the neighbor list; the list is rebuilt "
+                                    "once some particle has moved skin / 2. Defaults to a tenth of "
+                                    "radius");
   params.addParam<bool>("verify",
                         false,
                         "Check the device element assignment against libMesh's PointLocator "
                         "every step and error on any mismatch");
+  params.addParam<bool>("verify_neighbor_list",
+                        false,
+                        "Check the neighbor list against a brute-force pair search after every "
+                        "build and error on any mismatch");
   return params;
 }
 
@@ -45,12 +57,21 @@ KokkosParticleCloud::KokkosParticleCloud(const InputParameters & parameters)
     _initial_velocity(getParam<RealVectorValue>("initial_velocity")),
     _initial_angular_velocity(getParam<RealVectorValue>("initial_angular_velocity")),
     _radius(getParam<Real>("radius")),
+    _initial_radii(isParamValid("initial_radii") ? getParam<std::vector<Real>>("initial_radii")
+                                                 : std::vector<Real>()),
     _density(getParam<Real>("density")),
     _gravity(getParam<RealVectorValue>("gravity")),
     _substeps(getParam<unsigned int>("substeps")),
     _max_hops(getParam<unsigned int>("max_hops")),
-    _verify(getParam<bool>("verify"))
+    _skin(isParamValid("skin") ? getParam<Real>("skin") : 0.1 * _radius),
+    _verify(getParam<bool>("verify")),
+    _verify_neighbor_list(getParam<bool>("verify_neighbor_list"))
 {
+  if (_initial_radii.size() && _initial_radii.size() != _initial_positions.size())
+    paramError("initial_radii", "Must have one entry per initial position");
+  for (const auto r : _initial_radii)
+    if (r <= 0)
+      paramError("initial_radii", "Radii must be positive");
   // Side centroids and normals are only cached on request
   _fe_problem.mesh().getKokkosMesh()->setNeedsElementSideGeometry();
 }
@@ -96,13 +117,14 @@ KokkosParticleCloud::initialSetup()
   }
 
   const auto n = local.size();
-  const Real mass = _density * 4.0 / 3.0 * libMesh::pi * Utility::pow<3>(_radius);
-  // Solid sphere
-  const Real inertia = 0.4 * mass * _radius * _radius;
   DEM::ParticleCloud::HostMirror host(n);
   for (const auto j : make_range(n))
   {
     const auto [gid, cid] = local[j];
+    const Real radius = _initial_radii.size() ? _initial_radii[gid] : _radius;
+    const Real mass = _density * 4.0 / 3.0 * libMesh::pi * Utility::pow<3>(radius);
+    // Solid sphere
+    const Real inertia = 0.4 * mass * radius * radius;
     host.gid(j) = gid;
     for (const auto c : make_range(3))
     {
@@ -115,7 +137,7 @@ KokkosParticleCloud::initialSetup()
     // Identity orientation
     host.q(j, 0) = 1;
     host.q(j, 1) = host.q(j, 2) = host.q(j, 3) = 0;
-    host.r(j) = _radius;
+    host.r(j) = radius;
     host.m(j) = mass;
     host.inertia(j) = inertia;
     host.elem(j) = cid;
@@ -127,6 +149,7 @@ KokkosParticleCloud::initialSetup()
   _cloud.n = n;
   allocateScratch(n);
 
+  updateNeighborList();
   computeForces();
   // Reduce so the initial values are global before the first execution
   count();
@@ -145,6 +168,7 @@ KokkosParticleCloud::compute()
   {
     kickDrift();
     walk();
+    updateNeighborList();
     computeForces();
     kick();
   }
@@ -166,6 +190,7 @@ KokkosParticleCloud::compute()
       mooseError("Particles were still crossing partitions after ", n_processors(), " rounds");
   }
   // Received particles arrive without forces, and the next step's first half-kick needs them
+  updateNeighborList();
   computeForces();
 
   count();
@@ -312,6 +337,51 @@ KokkosParticleCloud::walk()
         cloud.elem(i) = elem;
         cloud.hops(i) += hops;
       });
+}
+
+void
+KokkosParticleCloud::updateNeighborList()
+{
+  if (!_neighbor_list.stale(_cloud))
+    return;
+
+  // Particles that walked out of the mesh are clamped into the edge bins
+  const auto box = _fe_problem.mesh().getInflatedProcessorBoundingBox();
+  _neighbor_list.build(_cloud, box.min(), box.max(), _skin);
+  ++_num_neighbor_list_builds;
+  if (_verify_neighbor_list)
+    verifyNeighborList();
+}
+
+void
+KokkosParticleCloud::verifyNeighborList()
+{
+  const auto n = _cloud.size();
+  auto x = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, _cloud.x);
+  auto r = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, _cloud.r);
+  auto gid = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, _cloud.gid);
+  auto offsets =
+      ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, _neighbor_list.offsets());
+  auto pairs = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, _neighbor_list.pairs());
+
+  std::set<std::pair<std::size_t, std::size_t>> listed, expected;
+  for (const auto i : make_range(n))
+    for (auto k = offsets(i); k < offsets(i + 1); ++k)
+      listed.emplace(std::min(i, pairs(k)), std::max(i, pairs(k)));
+  for (const auto i : make_range(n))
+    for (const auto j : make_range(i + 1, n))
+    {
+      const Point d(x(i, 0) - x(j, 0), x(i, 1) - x(j, 1), x(i, 2) - x(j, 2));
+      if (d.norm() < r(i) + r(j) + _skin)
+        expected.emplace(i, j);
+    }
+
+  for (const auto & [i, j] : expected)
+    if (!listed.count({i, j}))
+      mooseError("Neighbor list is missing the pair of particles ", gid(i), " and ", gid(j));
+  for (const auto & [i, j] : listed)
+    if (!expected.count({i, j}))
+      mooseError("Neighbor list has the spurious pair of particles ", gid(i), " and ", gid(j));
 }
 
 std::size_t
@@ -486,6 +556,7 @@ KokkosParticleCloud::count()
   _num_particles = cloud.size();
   _num_lost = lost;
   _max_hops_taken = max_hops_taken;
+  _num_neighbor_pairs = _neighbor_list.numPairs();
   _kinetic_energy = ke;
   _rotational_kinetic_energy = ke_rot;
   _angular_momentum = angularMomentumMagnitude();
@@ -539,6 +610,8 @@ KokkosParticleCloud::finalize()
   _communicator.sum(_num_lost);
   _communicator.sum(_num_migrated);
   _communicator.max(_max_hops_taken);
+  _communicator.sum(_num_neighbor_pairs);
+  _communicator.max(_num_neighbor_list_builds);
   _communicator.sum(_kinetic_energy);
   _communicator.sum(_rotational_kinetic_energy);
   for (auto & L : _angular_momentum_vector)

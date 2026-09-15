@@ -1,0 +1,5 @@
+time,num_neighbor_list_builds,num_neighbor_pairs
+0,1,655
+0.05,2,655
+0.1,3,655
+0.15,4,655

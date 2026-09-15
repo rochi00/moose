@@ -13,6 +13,16 @@ device (plan decision D4).
 
 Forces are currently the body force `m * gravity` only; contact forces are added by later layers.
 
+## Neighbor list
+
+A uniform-grid broad phase (`DEM::NeighborList`) bins the local particles on a grid of cell size
+`2 r_max + skin`, counting-sorts them by bin with a unique key so the order is deterministic, and
+lists every pair closer than `r_i + r_j + skin` from both sides, so force kernels can sum a
+particle's contacts without atomics. The list is rebuilt whenever some particle has moved more than
+`skin / 2` since the last build or the number of local particles changed. Pairs spanning a
+partition boundary are not listed until ghost particles are exchanged. With
+`verify_neighbor_list = true`, every build is checked against a brute-force pair search on host.
+
 ## Element tracking
 
 Element tracking is incremental: each particle remembers its element, and after moving it is tested
