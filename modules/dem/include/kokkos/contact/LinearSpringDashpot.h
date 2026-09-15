@@ -11,9 +11,11 @@ namespace DEM
  * oscillator, so the coefficient of restitution is exp(-zeta pi / sqrt(1 - zeta^2)) with
  * zeta = damping / (2 sqrt(stiffness m_eff)) and the contact lasts pi / (omega_0 sqrt(1 - zeta^2)).
  *
- * Every normal contact model provides enabled(), normalForce(), and energy() with the signatures
- * below; the effective radius and mass of the pair are r_i r_j / (r_i + r_j) and
- * m_i m_j / (m_i + m_j), or r_i and m_i against a wall.
+ * Every contact model provides enabled(), normalForce(), energy(), tangentialStiffness(), and
+ * tangentialDamping() with the signatures below; the effective radius and mass of the pair are
+ * r_i r_j / (r_i + r_j) and m_i m_j / (m_i + m_j), or r_i and m_i against a wall. The tangential
+ * spring acts on the accumulated tangential displacement of the contact (PairState) under the
+ * Coulomb limit applied by Friction.
  */
 struct LinearSpringDashpot
 {
@@ -21,6 +23,10 @@ struct LinearSpringDashpot
   Real stiffness = 0;
   /// Normal dashpot coefficient
   Real damping = 0;
+  /// Tangential spring stiffness; zero for a frictionless contact
+  Real tangential_stiffness = 0;
+  /// Tangential dashpot coefficient
+  Real tangential_damping = 0;
 
   /// Whether the model applies any force
   bool enabled() const { return stiffness > 0; }
@@ -47,6 +53,21 @@ struct LinearSpringDashpot
   {
     return 0.5 * stiffness * overlap * overlap;
   }
+
+  ///@{
+  /// Tangential spring stiffness and dashpot coefficient of a contact
+  KOKKOS_INLINE_FUNCTION Real tangentialStiffness(const Real /*overlap*/,
+                                                  const Real /*r_eff*/) const
+  {
+    return tangential_stiffness;
+  }
+  KOKKOS_INLINE_FUNCTION Real tangentialDamping(const Real /*overlap*/,
+                                                const Real /*r_eff*/,
+                                                const Real /*m_eff*/) const
+  {
+    return tangential_damping;
+  }
+  ///@}
 };
 
 } // namespace DEM

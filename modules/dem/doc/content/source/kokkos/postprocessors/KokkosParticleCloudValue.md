@@ -7,8 +7,8 @@ number that exited the mesh (cumulative), the number left unresolved by the face
 step, the number migrated between ranks in the last step, the maximum number of face hops any
 particle took in the last step, the number of neighbor pairs (at the last build), neighbor-list
 builds, ghost particles, and ghost forwards, the number of overlapping pairs and the coordination
-number (twice that over the number of particles), the load imbalance (the largest local particle
-count over the mean), the translational, rotational, spring (pairs and walls), and total energies,
+number (twice that over the number of particles), the number of contact histories held (summed
+over ranks), the load imbalance (the largest local particle count over the mean), the translational, rotational, spring (pairs and walls), and total energies,
 the magnitudes of the total linear and spin angular momenta, or the virial pressure
 
 !equation

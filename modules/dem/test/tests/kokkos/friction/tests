@@ -1,0 +1,35 @@
+[Tests]
+  design = 'KokkosParticleCloud.md Friction.md'
+  issues = '#1'
+
+  [sliding_sphere]
+    type = CSVDiff
+    input = sliding_sphere.i
+    csvdiff = sliding_sphere_out_state_0010.csv
+    # The rolling velocity and spin match to 1e-14; the position is offset by the tangential
+    # spring's stretch at the stick transition, mu m g / k_t = 3e-7, so 3e-7 relative
+    rel_err = 1e-6
+    requirement = 'The system shall decelerate a sphere sliding on a wall with Coulomb friction at mu g while the friction torque spins it up, until it rolls without slipping at 5/7 of its launch speed, carrying the contact history with the sphere across partitions, on any number of ranks.'
+    capabilities = 'kokkos'
+  []
+  [oblique_impact]
+    type = CSVDiff
+    input = oblique_impact.i
+    csvdiff = oblique_impact_out_state_0006.csv
+    # Serial gold; identical to roundoff on any number of ranks
+    rel_err = 1e-8
+    requirement = 'The system shall compute the oblique collision of two spheres with the Hertz-Mindlin model and Coulomb friction, giving both the same spin, identically on any number of ranks with the pair across a partition advancing its contact history on both.'
+    capabilities = 'kokkos'
+  []
+  [oblique_impact_rebuild]
+    type = CSVDiff
+    input = oblique_impact.i
+    cli_args = 'UserObjects/cloud/skin=0.002 Outputs/file_base=oblique_impact_rebuild_out'
+    csvdiff = oblique_impact_rebuild_out_state_0006.csv
+    # V9: the neighbor list is rebuilt 26 times instead of 5; the histories carried across
+    # rebuilds give the identical result
+    rel_err = 1e-8
+    requirement = 'The system shall give the same result for an oblique collision with friction when a smaller neighbor-list skin makes the list, and the contact histories with it, rebuild five times as often.'
+    capabilities = 'kokkos'
+  []
+[]

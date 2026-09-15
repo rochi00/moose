@@ -12,7 +12,8 @@ KokkosParticleCloudValue::validParams()
   params.addRequiredParam<MooseEnum>("value",
                                      MooseEnum("num_particles num_exited num_unresolved num_migrated "
                                                "max_hops num_neighbor_pairs num_neighbor_list_builds "
-                                               "num_ghosts num_ghost_forwards num_contacts "
+                                               "num_ghosts num_ghost_forwards num_pair_states "
+                                               "num_contacts "
                                                "coordination_number load_imbalance kinetic_energy "
                                                "rotational_kinetic_energy potential_energy "
                                                "total_energy linear_momentum angular_momentum "
@@ -49,6 +50,8 @@ KokkosParticleCloudValue::getValue() const
     return _cloud.numGhosts();
   if (_value == "num_ghost_forwards")
     return _cloud.numGhostForwards();
+  if (_value == "num_pair_states")
+    return _cloud.numPairStates();
   if (_value == "num_contacts")
     return _cloud.numContacts();
   if (_value == "coordination_number")

@@ -6,6 +6,7 @@
 #include "LinearSpringDashpot.h"
 #include "Hertz.h"
 #include "AnalyticWalls.h"
+#include "ContactEvaluator.h"
 
 #include "libmesh/point_locator_base.h"
 #include "libmesh/bounding_box.h"
@@ -36,10 +37,18 @@
  * computes the forces on its own particles from the ghost copies, so no force communication is
  * needed.
  *
- * The normal contact model, linear spring-dashpot or Hertz, is a compile-time policy selected
- * once at setup (plan decision D5): the force kernel is instantiated per model. Walls are fixed
+ * The contact model, linear spring-dashpot or Hertz(-Mindlin), is a compile-time policy selected
+ * once at setup (plan decision D5): the force kernels are instantiated per model. Walls are fixed
  * planes given by a point and an inward normal each; a particle overlapping a wall gets the same
- * normal contact force as against a sphere at rest of infinite mass.
+ * contact forces as against a sphere at rest of infinite mass and radius.
+ *
+ * Contacts carry a history, the tangential spring displacement, in a device hash map keyed by
+ * the global IDs of the pair (plan layer L3, decision D6). Every substep, one side of each pair
+ * advances the history, then both sides compute their forces from it, so no force communication
+ * is needed for pairs across partitions either: each rank holds an identical copy of the
+ * history, advanced from the same ghost positions, velocities, and spins. The map is rebuilt
+ * with the neighbor list, keeping the histories of the pairs still listed, and a migrating
+ * particle carries the histories of its contacts to its new rank.
  *
  * The domain can be periodic in any direction over the extent of the mesh bounding box. A
  * particle that walks out of the mesh is then unresolved rather than exited: it keeps its
@@ -78,6 +87,7 @@ public:
   std::size_t numNeighborListBuilds() const { return _num_neighbor_list_builds; }
   std::size_t numGhosts() const { return _num_ghosts; }
   std::size_t numGhostForwards() const { return _num_ghost_forwards; }
+  std::size_t numPairStates() const { return _num_pair_states; }
   std::size_t numContacts() const { return _num_contacts; }
   Real coordinationNumber() const
   {
@@ -111,6 +121,24 @@ protected:
                      std::size_t & num_contacts,
                      Real & pe,
                      Real & virial) const;
+  /// Advance the contact histories by one substep, each pair from one side: the pairs of local
+  /// particles and the wall contacts, or the pairs with a ghost (which need the ghost update)
+  void updatePairStates(const bool ghost_pairs);
+  template <typename Model>
+  void updatePairStates(const Model & contact, const bool ghost_pairs);
+  /// Rebuild the pair-state map for the current neighbor list, keeping the histories of the
+  /// pairs still listed and dropping the rest
+  void rebuildPairStates();
+  /// Pack the stretched histories of the departing particles' contacts by destination rank
+  void packPairStates(std::map<processor_id_type, std::vector<Real>> & to_send);
+  /// Insert received histories into the map
+  void unpackPairStates(const std::vector<Real> & received);
+  /// Check on host that every history with a nonzero spring belongs to an overlapping listed
+  /// pair and every overlapping listed pair has a history; errors otherwise
+  void verifyPairStates();
+  /// The contact evaluator of a model over the current cloud, walls, and histories
+  template <typename Model>
+  DEM::ContactEvaluator<Model> evaluator(const Model & contact) const;
   /// Build the Hertz model from the input parameters; default-constructed when not selected
   DEM::Hertz makeHertz() const;
   /// Whether the selected contact model applies any force
@@ -182,6 +210,10 @@ protected:
   const ContactModel _contact_model;
   const DEM::LinearSpringDashpot _linear;
   const DEM::Hertz _hertz;
+  /// Coulomb friction on the tangential springs
+  const DEM::Friction _friction;
+  /// Contact histories of the listed pairs and wall contacts
+  DEM::PairStateMap _pair_states;
   /// Fixed planar walls
   const DEM::AnalyticWalls _walls;
   /// Directions in which the domain is periodic
@@ -206,6 +238,8 @@ protected:
   const bool _verify;
   /// Whether to run verifyNeighborList() after every build
   const bool _verify_neighbor_list;
+  /// Whether to run verifyPairStates() every step
+  const bool _verify_pair_states;
 
   /// Device particle state
   DEM::ParticleCloud _cloud;
@@ -226,6 +260,9 @@ protected:
   ::Kokkos::View<dof_id_type *> _far_elem;
   /// Number of ghost particles, stored after the _cloud.n local ones
   std::size_t _num_ghosts = 0;
+  /// Whether each ghost is a periodic image of one of this rank's own particles, in which case
+  /// the pair with it is listed from both sides and its history is advanced from the lower ID
+  ::Kokkos::View<bool *> _ghost_self;
   /// Largest radius over all ranks
   Real _r_max = 0;
   /// Inflated bounding box of every rank's local elements
@@ -292,6 +329,8 @@ protected:
   std::size_t _num_neighbor_pairs = 0;
   std::size_t _num_neighbor_list_builds = 0;
   std::size_t _num_ghost_forwards = 0;
+  /// Contact histories held, summed over ranks (a pair across a partition counts on each)
+  std::size_t _num_pair_states = 0;
   /// Overlapping pairs, each counted once across ranks
   std::size_t _num_contacts = 0;
   /// Largest local particle count over the mean, 1 when balanced

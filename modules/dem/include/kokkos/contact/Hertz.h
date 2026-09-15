@@ -6,8 +6,9 @@ namespace DEM
 {
 
 /**
- * Hertz normal contact model with the damping of Tsuji et al. (1992) (plan layer L4), a
- * compile-time policy like LinearSpringDashpot. The elastic force is
+ * Hertz normal contact model with the damping of Tsuji et al. (1992) and the Mindlin no-slip
+ * tangential stiffness (plan layer L4), a compile-time policy like LinearSpringDashpot. The
+ * elastic force is
  *   F = (4/3) E* sqrt(r_eff) overlap^(3/2)
  * with E* the effective modulus E / (2 (1 - nu^2)) of two bodies of the same material (walls
  * included), and the damping force is
@@ -21,6 +22,9 @@ struct Hertz
   Real effective_modulus = 0;
   /// Damping ratio -ln e / sqrt(ln^2 e + pi^2), zero for an elastic contact
   Real beta = 0;
+  /// Effective shear modulus G / (2 (2 - nu)) of two bodies of the same material, with
+  /// G = E / (2 (1 + nu)); zero for a frictionless contact
+  Real effective_shear_modulus = 0;
 
   /// Whether the model applies any force
   bool enabled() const { return effective_modulus > 0; }
@@ -37,6 +41,21 @@ struct Hertz
     return 2.0 / 3.0 * s_n * overlap -
            1.8257418583505538 * beta * ::Kokkos::sqrt(s_n * m_eff) * normal_velocity;
   }
+
+  ///@{
+  /// Mindlin no-slip tangential stiffness S_t = 8 G* sqrt(r_eff overlap) and the Tsuji damping
+  /// -2 sqrt(5/6) beta sqrt(S_t m_eff) built on it
+  KOKKOS_INLINE_FUNCTION Real tangentialStiffness(const Real overlap, const Real r_eff) const
+  {
+    return 8 * effective_shear_modulus * ::Kokkos::sqrt(r_eff * overlap);
+  }
+  KOKKOS_INLINE_FUNCTION Real tangentialDamping(const Real overlap,
+                                                const Real r_eff,
+                                                const Real m_eff) const
+  {
+    return 1.8257418583505538 * beta * ::Kokkos::sqrt(tangentialStiffness(overlap, r_eff) * m_eff);
+  }
+  ///@}
 
   /// Elastic energy at an overlap, the integral of the elastic force: (8/15) E* sqrt(r_eff) d^(5/2)
   KOKKOS_INLINE_FUNCTION Real energy(const Real overlap, const Real r_eff) const

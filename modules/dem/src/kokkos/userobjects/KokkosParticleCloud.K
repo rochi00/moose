@@ -10,6 +10,11 @@
 
 registerMooseObject("DemApp", KokkosParticleCloud);
 
+/// Reals forwarded per ghost every substep: position, velocity, and spin
+static constexpr std::size_t ghost_stride = 9;
+/// Reals a contact history migrates as: the two key IDs and the tangential spring
+static constexpr std::size_t pair_state_record_size = 5;
+
 InputParameters
 KokkosParticleCloud::validParams()
 {
@@ -46,6 +51,22 @@ KokkosParticleCloud::validParams()
                                     0,
                                     "normal_damping >= 0",
                                     "Dashpot coefficient of the linear spring-dashpot normal contact");
+  params.addRangeCheckedParam<Real>("tangential_stiffness",
+                                    0,
+                                    "tangential_stiffness >= 0",
+                                    "Tangential spring stiffness of the linear spring-dashpot "
+                                    "contact; zero for frictionless contact");
+  params.addRangeCheckedParam<Real>("tangential_damping",
+                                    0,
+                                    "tangential_damping >= 0",
+                                    "Tangential dashpot coefficient of the linear spring-dashpot "
+                                    "contact");
+  params.addRangeCheckedParam<Real>(
+      "friction",
+      0,
+      "friction >= 0",
+      "Coefficient of friction limiting the tangential force to this times the normal force; "
+      "zero for frictionless contact");
   params.addRangeCheckedParam<Real>(
       "youngs_modulus", "youngs_modulus > 0", "Young's modulus of the Hertz normal contact");
   params.addRangeCheckedParam<Real>("poissons_ratio",
@@ -96,6 +117,10 @@ KokkosParticleCloud::validParams()
                         false,
                         "Check the neighbor list against a brute-force pair search after every "
                         "build and error on any mismatch");
+  params.addParam<bool>("verify_pair_states",
+                        false,
+                        "Check every step that the contact histories with a stretched tangential "
+                        "spring are exactly those of the overlapping pairs, and error otherwise");
   return params;
 }
 
@@ -113,8 +138,12 @@ KokkosParticleCloud::KokkosParticleCloud(const InputParameters & parameters)
     _density(getParam<Real>("density")),
     _gravity(getParam<RealVectorValue>("gravity")),
     _contact_model(getParam<MooseEnum>("contact_model").getEnum<ContactModel>()),
-    _linear({getParam<Real>("normal_stiffness"), getParam<Real>("normal_damping")}),
+    _linear({getParam<Real>("normal_stiffness"),
+             getParam<Real>("normal_damping"),
+             getParam<Real>("tangential_stiffness"),
+             getParam<Real>("tangential_damping")}),
     _hertz(makeHertz()),
+    _friction({getParam<Real>("friction")}),
     _walls(getParam<std::vector<Point>>("wall_points"),
            getParam<std::vector<RealVectorValue>>("wall_normals")),
     _periodic(getParam<MultiMooseEnum>("periodic")),
@@ -124,6 +153,7 @@ KokkosParticleCloud::KokkosParticleCloud(const InputParameters & parameters)
     _broad_phase(getParam<MooseEnum>("broad_phase").getEnum<DEM::BroadPhase>()),
     _verify(getParam<bool>("verify")),
     _verify_neighbor_list(getParam<bool>("verify_neighbor_list")),
+    _verify_pair_states(getParam<bool>("verify_pair_states")),
     _ghost_tag(_communicator.get_unique_tag()),
     _gpu_aware_mpi(getParam<bool>("gpu_aware_mpi"))
 {
@@ -164,10 +194,12 @@ KokkosParticleCloud::makeHertz() const
     paramError("contact_model", "The Hertz model needs youngs_modulus and poissons_ratio");
   const Real e = getParam<Real>("restitution");
   const Real log_e = std::log(e);
-  // Two bodies of the same material: E* = E / (2 (1 - nu^2))
-  return {getParam<Real>("youngs_modulus") /
-              (2 * (1 - Utility::pow<2>(getParam<Real>("poissons_ratio")))),
-          -log_e / std::sqrt(log_e * log_e + libMesh::pi * libMesh::pi)};
+  const Real E = getParam<Real>("youngs_modulus"), nu = getParam<Real>("poissons_ratio");
+  // Two bodies of the same material: E* = E / (2 (1 - nu^2)) and G* = G / (2 (2 - nu)) with
+  // G = E / (2 (1 + nu))
+  return {E / (2 * (1 - nu * nu)),
+          -log_e / std::sqrt(log_e * log_e + libMesh::pi * libMesh::pi),
+          E / (2 * (1 + nu)) / (2 * (2 - nu))};
 }
 
 bool
@@ -359,6 +391,15 @@ KokkosParticleCloud::compute()
   count();
   if (_verify)
     verify();
+  if (_verify_pair_states)
+    verifyPairStates();
+}
+
+template <typename Model>
+DEM::ContactEvaluator<Model>
+KokkosParticleCloud::evaluator(const Model & contact) const
+{
+  return {_cloud, _walls, contact, _friction, _pair_states, _dt / _substeps};
 }
 
 template <typename Model>
@@ -370,7 +411,8 @@ KokkosParticleCloud::computeForces(const Model & contact,
   const auto cloud = _cloud;
   const Moose::Kokkos::Real3 g(_gravity(0), _gravity(1), _gravity(2));
   const bool enabled = contact.enabled();
-  const auto walls = _walls;
+  const auto eval = evaluator(contact);
+  const auto num_walls = _walls.n;
   const auto offsets = _neighbor_list.offsets();
   const auto pairs = _neighbor_list.pairs();
   constexpr auto exited = DEM::ParticleCloud::exited;
@@ -378,47 +420,40 @@ KokkosParticleCloud::computeForces(const Model & contact,
   ::Kokkos::parallel_for(
       "dem_forces", count, KOKKOS_LAMBDA(const std::size_t s) {
         const auto i = subset(s);
-        Moose::Kokkos::Real3 f = 0;
+        Moose::Kokkos::Real3 f = 0, tau = 0;
         // Exited particles are inert until they are removed
         if (cloud.elem(i) != exited)
         {
           f = cloud.m(i) * g;
 
           // Sphere-sphere narrow phase over the neighbor list; every pair is listed from both
-          // sides so each particle sums its own contacts
+          // sides so each particle sums its own contacts, reading the history advanced by
+          // updatePairStates(). The tangential force acts at the contact point, -r_i n from the
+          // center
           if (enabled)
           {
-            const Moose::Kokkos::Real3 xi(cloud.x(i, 0), cloud.x(i, 1), cloud.x(i, 2));
-            const Moose::Kokkos::Real3 vi(cloud.v(i, 0), cloud.v(i, 1), cloud.v(i, 2));
+            DEM::Contact c;
+            Real f_n;
+            Moose::Kokkos::Real3 f_t;
             for (auto k = offsets(i); k < offsets(i + 1); ++k)
             {
               const auto j = pairs(k);
-              if (cloud.elem(j) == exited)
+              if (cloud.elem(j) == exited || !eval.sphere(i, j, c))
                 continue;
-              const Moose::Kokkos::Real3 xj(cloud.x(j, 0), cloud.x(j, 1), cloud.x(j, 2));
-              const Moose::Kokkos::Real3 d = xi - xj;
-              const Real distance = d.norm();
-              const Real overlap = cloud.r(i) + cloud.r(j) - distance;
-              if (overlap <= 0)
-                continue;
-              const Moose::Kokkos::Real3 normal = (1.0 / distance) * d;
-              const Moose::Kokkos::Real3 vj(cloud.v(j, 0), cloud.v(j, 1), cloud.v(j, 2));
-              const Real normal_velocity = (vi - vj).dot_product(normal);
-              const Real r_eff = cloud.r(i) * cloud.r(j) / (cloud.r(i) + cloud.r(j));
-              const Real m_eff = cloud.m(i) * cloud.m(j) / (cloud.m(i) + cloud.m(j));
-              f += contact.normalForce(overlap, normal_velocity, r_eff, m_eff) * normal;
+              const Real sign = cloud.gid(i) < cloud.gid(j) ? 1 : -1;
+              eval.forces(c, DEM::PairKey::pair(cloud.gid(i), cloud.gid(j)), sign, false, f_n, f_t);
+              f += f_n * c.normal + f_t;
+              tau -= cloud.r(i) * c.normal.cross_product(f_t);
             }
 
-            // Sphere-plane narrow phase against every wall, which is at rest and rigid, so the
-            // effective radius and mass are the sphere's own
-            for (std::size_t w = 0; w < walls.n; ++w)
+            // Sphere-plane narrow phase against every wall
+            for (std::size_t w = 0; w < num_walls; ++w)
             {
-              const Real overlap = walls.overlap(w, xi, cloud.r(i));
-              if (overlap <= 0)
+              if (!eval.wall(i, w, c))
                 continue;
-              const auto normal = walls.normal(w);
-              f += contact.normalForce(overlap, vi.dot_product(normal), cloud.r(i), cloud.m(i)) *
-                   normal;
+              eval.forces(c, DEM::PairKey::wall(cloud.gid(i), w), 1, false, f_n, f_t);
+              f += f_n * c.normal + f_t;
+              tau -= cloud.r(i) * c.normal.cross_product(f_t);
             }
           }
         }
@@ -426,9 +461,72 @@ KokkosParticleCloud::computeForces(const Model & contact,
         for (unsigned int c = 0; c < 3; ++c)
         {
           cloud.f(i, c) = f(c);
-          cloud.tau(i, c) = 0;
+          cloud.tau(i, c) = tau(c);
         }
       });
+}
+
+template <typename Model>
+void
+KokkosParticleCloud::updatePairStates(const Model & contact, const bool ghost_pairs)
+{
+  if (!contact.enabled() || _friction.mu <= 0)
+    return;
+  const auto cloud = _cloud;
+  const auto n_local = _cloud.size();
+  const auto eval = evaluator(contact);
+  const auto num_walls = _walls.n;
+  const auto offsets = _neighbor_list.offsets();
+  const auto pairs = _neighbor_list.pairs();
+  const auto ghost_self = _ghost_self;
+  constexpr auto exited = DEM::ParticleCloud::exited;
+
+  // Each pair is advanced from exactly one side per rank: a pair of local particles from the
+  // lower index, a pair with another rank's ghost from the local particle (the other rank
+  // advances its own copy identically), and a pair with a periodic image of a local particle,
+  // which is listed from both sides, from the lower global ID. A listed pair that does not
+  // overlap has its history reset
+  ::Kokkos::parallel_for(
+      "dem_pair_states", n_local, KOKKOS_LAMBDA(const std::size_t i) {
+        if (cloud.elem(i) == exited)
+          return;
+        DEM::Contact c;
+        Real f_n;
+        Moose::Kokkos::Real3 f_t;
+        for (auto k = offsets(i); k < offsets(i + 1); ++k)
+        {
+          const auto j = pairs(k);
+          const bool ghost = j >= n_local;
+          if (ghost != ghost_pairs || cloud.elem(j) == exited)
+            continue;
+          const bool lower = cloud.gid(i) < cloud.gid(j);
+          if (ghost ? (ghost_self(j - n_local) && !lower) : i > j)
+            continue;
+          const auto key = DEM::PairKey::pair(cloud.gid(i), cloud.gid(j));
+          if (eval.sphere(i, j, c))
+            eval.forces(c, key, lower ? 1 : -1, true, f_n, f_t);
+          else
+            eval.reset(key);
+        }
+        if (!ghost_pairs)
+          for (std::size_t w = 0; w < num_walls; ++w)
+          {
+            const auto key = DEM::PairKey::wall(cloud.gid(i), w);
+            if (eval.wall(i, w, c))
+              eval.forces(c, key, 1, true, f_n, f_t);
+            else
+              eval.reset(key);
+          }
+      });
+}
+
+void
+KokkosParticleCloud::updatePairStates(const bool ghost_pairs)
+{
+  if (_contact_model == ContactModel::HERTZ)
+    updatePairStates(_hertz, ghost_pairs);
+  else
+    updatePairStates(_linear, ghost_pairs);
 }
 
 void
@@ -445,9 +543,12 @@ KokkosParticleCloud::computeForces(const ::Kokkos::View<std::size_t *> & subset,
 void
 KokkosParticleCloud::computeForces()
 {
-  // Interior particles do not need the ghost update, so their forces overlap its communication
+  // Interior particles only have pairs of local particles, so their histories and forces do not
+  // need the ghost update and overlap its communication
+  updatePairStates(false);
   computeForces(_neighbor_list.interior(), _neighbor_list.numInterior());
   finishGhostUpdate();
+  updatePairStates(true);
   computeForces(_neighbor_list.boundary(), _neighbor_list.numBoundary());
 }
 
@@ -672,7 +773,66 @@ KokkosParticleCloud::updateNeighborList()
   ++_num_neighbor_list_builds;
   if (_verify_neighbor_list)
     verifyNeighborList();
+  rebuildPairStates();
   return true;
+}
+
+void
+KokkosParticleCloud::rebuildPairStates()
+{
+  if (!contactEnabled() || _friction.mu <= 0)
+    return;
+  const auto cloud = _cloud;
+  const auto n_local = _cloud.size();
+  const auto walls = _walls;
+  const Real skin = _skin;
+  const auto offsets = _neighbor_list.offsets();
+  const auto pairs = _neighbor_list.pairs();
+  const auto ghost_self = _ghost_self;
+  const auto old = _pair_states;
+
+  // One entry per listed pair from the side that advances it (see updatePairStates()) and per
+  // wall within the skin; the map is rebuilt from scratch so pairs no longer listed drop out.
+  // The count bounds the entries, so the capacity is rarely exhausted; when it is, the map is
+  // regrown and refilled, inserting being idempotent
+  std::size_t needed = 0;
+  ::Kokkos::parallel_reduce(
+      "dem_pair_states_count",
+      n_local,
+      KOKKOS_LAMBDA(const std::size_t i, std::size_t & sum) {
+        for (auto k = offsets(i); k < offsets(i + 1); ++k)
+          sum += pairs(k) >= n_local || i < pairs(k);
+        sum += walls.n;
+      },
+      needed);
+  DEM::PairStateMap map(2 * needed + 128);
+  while (true)
+  {
+    ::Kokkos::parallel_for(
+        "dem_pair_states_rebuild", n_local, KOKKOS_LAMBDA(const std::size_t i) {
+          const auto insert = [&](const DEM::PairKey & key)
+          {
+            const auto entry = old.find(key);
+            map.insert(key, old.valid_at(entry) ? old.value_at(entry) : DEM::PairState());
+          };
+          for (auto k = offsets(i); k < offsets(i + 1); ++k)
+          {
+            const auto j = pairs(k);
+            const bool lower = cloud.gid(i) < cloud.gid(j);
+            if (j >= n_local ? (ghost_self(j - n_local) && !lower) : i > j)
+              continue;
+            insert(DEM::PairKey::pair(cloud.gid(i), cloud.gid(j)));
+          }
+          const Moose::Kokkos::Real3 xi(cloud.x(i, 0), cloud.x(i, 1), cloud.x(i, 2));
+          for (std::size_t w = 0; w < walls.n; ++w)
+            if (walls.overlap(w, xi, cloud.r(i)) > -skin)
+              insert(DEM::PairKey::wall(cloud.gid(i), w));
+        });
+    if (!map.failed_insert())
+      break;
+    map = DEM::PairStateMap(2 * map.capacity());
+  }
+  _pair_states = map;
 }
 
 void
@@ -796,6 +956,9 @@ KokkosParticleCloud::exchangeGhosts()
   const auto end = n + _num_ghosts;
   if (end > _cloud.capacity())
     reserve(std::max(end, 2 * _cloud.capacity()));
+  if (_ghost_self.extent(0) < _num_ghosts)
+    _ghost_self = ::Kokkos::View<bool *>("dem_ghost_self", _num_ghosts);
+  auto ghost_self_host = ::Kokkos::create_mirror_view(_ghost_self);
   std::size_t begin = n;
   for (const auto & [source, data] : received)
   {
@@ -806,13 +969,16 @@ KokkosParticleCloud::exchangeGhosts()
     {
       host.unpack(data.data() + r * record_size, r);
       host.elem(r) = DEM::ParticleCloud::unresolved;
+      ghost_self_host(begin - n + r) = source == processor_id();
     }
     _cloud.copyFrom(host, begin);
     begin += count;
   }
-  if (_ghost_recv_buffer.extent(0) < _num_ghosts * 6)
+  ::Kokkos::deep_copy(_ghost_self, ghost_self_host);
+  if (_ghost_recv_buffer.extent(0) < _num_ghosts * ghost_stride)
   {
-    _ghost_recv_buffer = ::Kokkos::View<Real *>("dem_ghost_recv_buffer", _num_ghosts * 6);
+    _ghost_recv_buffer =
+        ::Kokkos::View<Real *>("dem_ghost_recv_buffer", _num_ghosts * ghost_stride);
     _ghost_recv_buffer_host = ::Kokkos::create_mirror_view(_ghost_recv_buffer);
   }
 }
@@ -824,8 +990,8 @@ KokkosParticleCloud::startGhostUpdate()
     return;
   ++_num_ghost_forwards;
 
-  // Positions and velocities only; the rest of a ghost's state is fixed between rebuilds
-  constexpr std::size_t stride = 6;
+  // Positions, velocities, and spins only; the rest of a ghost's state is fixed between rebuilds
+  constexpr std::size_t stride = ghost_stride;
   const auto cloud = _cloud;
   const auto send_index = _ghost_send_index;
   const auto send_shift = _ghost_send_shift;
@@ -840,6 +1006,7 @@ KokkosParticleCloud::startGhostUpdate()
         {
           buffer(slot * stride + c) = cloud.x(i, c) + send_shift(slot, c);
           buffer(slot * stride + 3 + c) = cloud.v(i, c);
+          buffer(slot * stride + 6 + c) = cloud.omega(i, c);
         }
       });
   ::Kokkos::fence();
@@ -896,7 +1063,7 @@ KokkosParticleCloud::finishGhostUpdate()
   MPI_Waitall(_ghost_requests.size(), _ghost_requests.data(), MPI_STATUSES_IGNORE);
   _ghost_requests.clear();
 
-  constexpr std::size_t stride = 6;
+  constexpr std::size_t stride = ghost_stride;
   const auto n = _cloud.size();
   const auto num_ghosts = _num_ghosts;
   if (!(_device_buffers_to_mpi || _gpu_aware_mpi))
@@ -911,6 +1078,7 @@ KokkosParticleCloud::finishGhostUpdate()
         {
           cloud.x(n + g, c) = recv(g * stride + c);
           cloud.v(n + g, c) = recv(g * stride + 3 + c);
+          cloud.omega(n + g, c) = recv(g * stride + 6 + c);
         }
       });
 }
@@ -1018,6 +1186,11 @@ KokkosParticleCloud::migrate()
         else if (cloud.elem(i) != exited)
           scratch.copyFrom(cloud, i, slot(i));
       });
+  // The histories of the departing particles' contacts travel with them, packed while the old
+  // cloud and its neighbor list are still in place
+  std::map<processor_id_type, std::vector<Real>> states_to_send;
+  packPairStates(states_to_send);
+
   std::swap(_cloud, _scratch);
   _cloud.n = cloud.size() - n_sent - n_exited;
   // Ghosts were not compacted along; the rebuild after migration replaces them
@@ -1041,6 +1214,13 @@ KokkosParticleCloud::migrate()
       to_send,
       [&received](processor_id_type, const std::vector<Real> & data)
       { received.insert(received.end(), data.begin(), data.end()); });
+  std::vector<Real> states_received;
+  Parallel::push_parallel_vector_data(
+      _communicator,
+      states_to_send,
+      [&states_received](processor_id_type, const std::vector<Real> & data)
+      { states_received.insert(states_received.end(), data.begin(), data.end()); });
+  unpackPairStates(states_received);
   const auto n_received = received.size() / record_size;
   if (!n_received)
     return n_sent;
@@ -1065,6 +1245,186 @@ KokkosParticleCloud::migrate()
   _cloud.n = end;
 
   return n_sent;
+}
+
+void
+KokkosParticleCloud::verifyPairStates()
+{
+  const auto n = _cloud.size();
+  const auto n_total = n + _num_ghosts;
+  auto x = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, _cloud.x);
+  auto r = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, _cloud.r);
+  auto gid = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, _cloud.gid);
+  auto elem = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, _cloud.elem);
+  auto offsets =
+      ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, _neighbor_list.offsets());
+  auto pairs = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, _neighbor_list.pairs());
+  auto points = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, _walls.points);
+  auto normals = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, _walls.normals);
+  auto states = ::Kokkos::create_mirror(_pair_states);
+  ::Kokkos::deep_copy(states, _pair_states);
+  libmesh_ignore(n_total);
+
+  // The listed pairs and wall contacts of the local particles, and those of them overlapping
+  const auto key_of = [](const DEM::PairKey & key) { return std::make_pair(key.lower, key.upper); };
+  std::set<std::pair<int64_t, int64_t>> listed, overlapping;
+  for (const auto i : make_range(n))
+  {
+    if (elem(i) == DEM::ParticleCloud::exited)
+      continue;
+    const Point xi(x(i, 0), x(i, 1), x(i, 2));
+    for (auto k = offsets(i); k < offsets(i + 1); ++k)
+    {
+      const auto j = pairs(k);
+      if (elem(j) == DEM::ParticleCloud::exited)
+        continue;
+      const auto key = key_of(DEM::PairKey::pair(gid(i), gid(j)));
+      listed.insert(key);
+      if ((xi - Point(x(j, 0), x(j, 1), x(j, 2))).norm() < r(i) + r(j))
+        overlapping.insert(key);
+    }
+    for (const auto w : make_range(_walls.n))
+    {
+      const Point p(points(w, 0), points(w, 1), points(w, 2)),
+          normal(normals(w, 0), normals(w, 1), normals(w, 2));
+      const Real overlap = r(i) - (xi - p) * normal;
+      const auto key = key_of(DEM::PairKey::wall(gid(i), w));
+      if (overlap > -_skin)
+        listed.insert(key);
+      if (overlap > 0)
+        overlapping.insert(key);
+    }
+  }
+
+  std::set<std::pair<int64_t, int64_t>> held;
+  for (const auto e : make_range(states.capacity()))
+  {
+    if (!states.valid_at(e))
+      continue;
+    const auto key = key_of(states.key_at(e));
+    held.insert(key);
+    const auto & value = states.value_at(e);
+    if ((value.delta_t[0] != 0 || value.delta_t[1] != 0 || value.delta_t[2] != 0) &&
+        !overlapping.count(key))
+      mooseError("The contact history of particle ",
+                 key.first,
+                 " and ",
+                 key.second >= 0 ? "particle " : "wall ",
+                 key.second >= 0 ? key.second : -1 - key.second,
+                 " has a stretched tangential spring but they do not overlap");
+  }
+  for (const auto & key : listed)
+    if (!held.count(key))
+      mooseError("The listed contact of particle ",
+                 key.first,
+                 " and ",
+                 key.second >= 0 ? "particle " : "wall ",
+                 key.second >= 0 ? key.second : -1 - key.second,
+                 " has no history");
+}
+
+void
+KokkosParticleCloud::packPairStates(std::map<processor_id_type, std::vector<Real>> & to_send)
+{
+  constexpr auto invalid_proc = libMesh::DofObject::invalid_processor_id;
+  if (!contactEnabled() || _friction.mu <= 0)
+    return;
+  const auto cloud = _cloud;
+  const auto n_local = _cloud.size();
+  const auto num_walls = _walls.n;
+  const auto offsets = _neighbor_list.offsets();
+  const auto pairs = _neighbor_list.pairs();
+  const auto states = _pair_states;
+
+  // A departing particle's records are its stretched histories: the key and the spring, as
+  // Reals (global IDs are exact below 2^53). Count, scan, fill
+  const auto slot = _slot;
+  const auto packable = KOKKOS_LAMBDA(const std::size_t i, const DEM::PairKey & key)
+  {
+    const auto entry = states.find(key);
+    if (!states.valid_at(entry))
+      return false;
+    const auto & value = states.value_at(entry);
+    return value.delta_t[0] != 0 || value.delta_t[1] != 0 || value.delta_t[2] != 0;
+  };
+  std::size_t total = 0;
+  ::Kokkos::parallel_scan(
+      "dem_pair_states_pack_scan",
+      n_local,
+      KOKKOS_LAMBDA(const std::size_t i, std::size_t & sum, const bool final) {
+        std::size_t count = 0;
+        if (cloud.target_rank(i) != invalid_proc)
+        {
+          for (auto k = offsets(i); k < offsets(i + 1); ++k)
+            count += packable(i, DEM::PairKey::pair(cloud.gid(i), cloud.gid(pairs(k))));
+          for (std::size_t w = 0; w < num_walls; ++w)
+            count += packable(i, DEM::PairKey::wall(cloud.gid(i), w));
+        }
+        if (final)
+          slot(i) = sum;
+        sum += count;
+      },
+      total);
+  if (!total)
+    return;
+  ::Kokkos::View<Real *> buffer("dem_pair_states_pack", total * pair_state_record_size);
+  ::Kokkos::View<processor_id_type *> ranks("dem_pair_states_pack_rank", total);
+  ::Kokkos::parallel_for(
+      "dem_pair_states_pack", n_local, KOKKOS_LAMBDA(const std::size_t i) {
+        if (cloud.target_rank(i) == invalid_proc)
+          return;
+        auto r = slot(i);
+        const auto pack = [&](const DEM::PairKey & key)
+        {
+          if (!packable(i, key))
+            return;
+          const auto & value = states.value_at(states.find(key));
+          Real * record = &buffer(r * pair_state_record_size);
+          record[0] = key.lower;
+          record[1] = key.upper;
+          for (unsigned int c = 0; c < 3; ++c)
+            record[2 + c] = value.delta_t[c];
+          ranks(r++) = cloud.target_rank(i);
+        };
+        for (auto k = offsets(i); k < offsets(i + 1); ++k)
+          pack(DEM::PairKey::pair(cloud.gid(i), cloud.gid(pairs(k))));
+        for (std::size_t w = 0; w < num_walls; ++w)
+          pack(DEM::PairKey::wall(cloud.gid(i), w));
+      });
+  auto buffer_host = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, buffer);
+  auto ranks_host = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, ranks);
+  for (const auto r : make_range(total))
+    to_send[ranks_host(r)].insert(to_send[ranks_host(r)].end(),
+                                  &buffer_host(r * pair_state_record_size),
+                                  &buffer_host(r * pair_state_record_size) +
+                                      pair_state_record_size);
+}
+
+void
+KokkosParticleCloud::unpackPairStates(const std::vector<Real> & received)
+{
+  const auto n = received.size() / pair_state_record_size;
+  if (!n)
+    return;
+  ::Kokkos::View<Real *, ::Kokkos::HostSpace, ::Kokkos::MemoryUnmanaged> host(
+      const_cast<Real *>(received.data()), received.size());
+  const auto buffer = ::Kokkos::create_mirror_view_and_copy(::Kokkos::DefaultExecutionSpace::memory_space{}, host);
+  // Room for the arrivals; a key this rank already holds (its copy of a pair across the
+  // partition) is identical and left alone
+  if (_pair_states.capacity() < 2 * (_pair_states.size() + n))
+    _pair_states.rehash(2 * (_pair_states.size() + n));
+  const auto states = _pair_states;
+  ::Kokkos::parallel_for(
+      "dem_pair_states_unpack", n, KOKKOS_LAMBDA(const std::size_t r) {
+        const Real * record = &buffer(r * pair_state_record_size);
+        DEM::PairState value;
+        for (unsigned int c = 0; c < 3; ++c)
+          value.delta_t[c] = record[2 + c];
+        states.insert(DEM::PairKey{static_cast<int64_t>(record[0]), static_cast<int64_t>(record[1])},
+                      value);
+      });
+  if (_pair_states.failed_insert())
+    mooseError("Could not insert the received contact histories");
 }
 
 void
@@ -1158,6 +1518,7 @@ KokkosParticleCloud::count()
   _max_hops_taken = max_hops_taken;
   _num_neighbor_pairs = _neighbor_list.numPairs();
   _num_contacts = num_contacts;
+  _num_pair_states = _pair_states.size();
   _load_imbalance = cloud.size();
   _kinetic_energy = ke;
   _rotational_kinetic_energy = ke_rot;
@@ -1278,6 +1639,7 @@ KokkosParticleCloud::finalize()
   _communicator.max(_num_neighbor_list_builds);
   _communicator.max(_num_ghost_forwards);
   _communicator.sum(_num_contacts);
+  _communicator.sum(_num_pair_states);
   // Largest local count over the mean
   _communicator.max(_load_imbalance);
   _load_imbalance = _num_particles ? _load_imbalance * n_processors() / _num_particles : 1;

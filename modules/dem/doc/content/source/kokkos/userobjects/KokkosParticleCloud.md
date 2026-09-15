@@ -56,6 +56,28 @@ a ghost is counted on the rank owning the smaller global ID, so `num_neighbor_pa
 any number of ranks; it is the count at the last build, which in parallel can be later in the step
 than in serial because migration forces a rebuild.
 
+## Pair states
+
+Contacts carry a history, the tangential spring displacement of [Friction.md], in a device hash
+map (`Kokkos::UnorderedMap`, plan layer L3, decision D6) keyed by the global IDs of the pair in
+increasing order, or by the particle's ID and the wall's index for a wall contact. The history is
+stored in the lower-ID particle's orientation, so every rank holding either particle forms the
+same key and, advancing it from the same ghost positions, velocities, and spins, keeps an
+identical copy: no history or force communication is needed for a pair across a partition.
+
+Every substep, each pair is advanced from exactly one side per rank (a pair of local particles
+from the lower index, a pair with another rank's ghost from the local particle, a pair with a
+periodic image of a local particle from the lower ID), and a listed pair that no longer overlaps
+has its history reset; then every particle sums its forces from both sides of its contacts. The
+map is rebuilt with the neighbor list, keeping the histories of the pairs still listed and the
+wall contacts within the skin and dropping the rest, and a migrating particle carries the
+stretched histories of its contacts to its new rank. With `verify_pair_states = true`, every step
+checks that the histories with a stretched spring are exactly those of overlapping pairs and that
+every listed pair has a history. `num_pair_states` of [KokkosParticleCloudValue.md] counts the
+histories held, summed over ranks.
+
+The `potential_energy` reported excludes the tangential springs.
+
 ## Periodic directions
 
 With `periodic`, the domain wraps over the extent of the mesh bounding box in the listed
