@@ -17,6 +17,7 @@ endif
 ifeq ($(ALL_MODULES),yes)
         CHEMICAL_REACTIONS          := yes
         CONTACT                     := yes
+        DEM                         := yes
         ELECTROMAGNETICS            := yes
         EXTERNAL_PETSC_SOLVER       := yes
         FLUID_PROPERTIES            := yes
@@ -136,7 +137,7 @@ ifeq ($(SOLID_MECHANICS),yes)
 endif
 
 # The complete list of all moose modules
-MODULE_NAMES := "chemical_reactions contact electromagnetics external_petsc_solver fluid_properties fsi functional_expansion_tools geochemistry heat_transfer level_set misc navier_stokes optimization peridynamics phase_field porous_flow ray_tracing rdg reactor scalar_transport shifted_boundary_method solid_properties stochastic_tools solid_mechanics thermal_hydraulics xfem"
+MODULE_NAMES := "chemical_reactions contact dem electromagnetics external_petsc_solver fluid_properties fsi functional_expansion_tools geochemistry heat_transfer level_set misc navier_stokes optimization peridynamics phase_field porous_flow ray_tracing rdg reactor scalar_transport shifted_boundary_method solid_properties stochastic_tools solid_mechanics thermal_hydraulics xfem"
 
 ################################################################################
 ########################## MODULE REGISTRATION #################################
@@ -288,6 +289,13 @@ ifeq ($(CONTACT),yes)
   APPLICATION_NAME   := contact
   DEPEND_MODULES     := solid_mechanics
   SUFFIX             := con
+  include $(FRAMEWORK_DIR)/app.mk
+endif
+
+ifeq ($(DEM),yes)
+  APPLICATION_DIR    := $(MOOSE_DIR)/modules/dem
+  APPLICATION_NAME   := dem
+  SUFFIX             := dem
   include $(FRAMEWORK_DIR)/app.mk
 endif
 

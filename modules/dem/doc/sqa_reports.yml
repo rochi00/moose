@@ -1,0 +1,10 @@
+Applications:
+    dem:
+        exe_directory: ${MOOSE_DIR}/modules/dem
+        app_types:
+            - DemApp
+        content_directory: ${MOOSE_DIR}/modules/dem/doc/content
+        unregister:
+            - ${MOOSE_DIR}/framework/doc/unregister.yml
+        remove:
+            - ${MOOSE_DIR}/framework/doc/remove.yml

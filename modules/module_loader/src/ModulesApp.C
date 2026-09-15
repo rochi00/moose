@@ -19,6 +19,9 @@
 #ifdef CONTACT_ENABLED
 #include "ContactApp.h"
 #endif
+#ifdef DEM_ENABLED
+#include "DemApp.h"
+#endif
 #ifdef ELECTROMAGNETICS_ENABLED
 #include "ElectromagneticsApp.h"
 #endif
@@ -117,6 +120,10 @@ ModulesApp::registerApps()
 
 #ifdef CONTACT_ENABLED
   ContactApp::registerApps();
+#endif
+
+#ifdef DEM_ENABLED
+  DemApp::registerApps();
 #endif
 
 #ifdef ELECTROMAGNETICS_ENABLED
@@ -225,6 +232,10 @@ ModulesApp::registerAll(Factory & f, ActionFactory & af, Syntax & s)
 
 #ifdef CONTACT_ENABLED
   ContactApp::registerAll(f, af, s);
+#endif
+
+#ifdef DEM_ENABLED
+  DemApp::registerAll(f, af, s);
 #endif
 
 #ifdef ELECTROMAGNETICS_ENABLED

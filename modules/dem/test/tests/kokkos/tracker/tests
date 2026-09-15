@@ -1,0 +1,21 @@
+[Tests]
+  design = 'KokkosParticleTracker.md'
+  issues = '#1'
+
+  [walk_2d]
+    type = CSVDiff
+    input = walk_2d.i
+    csvdiff = walk_2d_out.csv
+    requirement = 'The system shall track the element containing each particle on device by walking across element faces, taking several hops per step when a particle crosses several cells, migrate particles that cross a partition boundary to the rank owning the element they reached so that the result does not depend on the number of ranks, and mark particles that leave the mesh as lost, verified against the libMesh point locator every step.'
+    capabilities = 'kokkos'
+  []
+  [walk_2d_max_hops]
+    type = RunException
+    input = walk_2d.i
+    cli_args = 'UserObjects/tracker/max_hops=1 Outputs/csv=false'
+    expect_err = 'Particle 0 at \(x,y,z\)=\(\s*0.3,\s*0.2,\s*0\) was lost but is in element 12'
+    requirement = 'The system shall report a particle whose element could not be resolved within the hop budget as a verification failure naming the particle and the element that contains it.'
+    max_parallel = 1
+    capabilities = 'kokkos'
+  []
+[]
