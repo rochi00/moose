@@ -7,6 +7,9 @@
 
 #include "libmesh/point_locator_base.h"
 #include "libmesh/bounding_box.h"
+#include "libmesh/parallel.h"
+
+#include <mpi.h>
 
 /**
  * A cloud of spherical particles integrated on device with Velocity Verlet over a number of
@@ -18,17 +21,20 @@
  * into a ghost element keeps integrating with a stale element until the end of the MOOSE step,
  * when it is sent to the rank owning that element, which resumes the walk; this repeats until no
  * particle is left in a ghost element, so a particle may cross several partitions in one step. A
- * particle that walks out of the mesh or exhausts max_hops is marked lost and keeps integrating.
+ * particle that walks out of the mesh has exited: it is inert for the rest of the step and removed
+ * at the end. A particle that exhausts max_hops is unresolved: it keeps integrating and is located
+ * again by a point locator at the end of the step.
  *
  * Contact across partitions uses ghost particles: copies of the neighboring ranks' particles
  * within the neighbor-list cutoff of this rank's bounding box, appended after the local particles.
  * The ghost list is rebuilt with the neighbor list and ghost positions and velocities are forwarded
- * every substep. Every rank computes the forces on its own particles from the ghost copies, so no
- * force communication is needed.
+ * every substep with nonblocking MPI directly from the device buffers when the host can access
+ * device memory or the MPI library is GPU-aware, and through host mirrors otherwise. Forces on
+ * particles without ghost neighbors are computed while the forward is in flight. Every rank
+ * computes the forces on its own particles from the ghost copies, so no force communication is
+ * needed.
  *
- * Migration and ghost exchange pack on device and stage through host buffers for the TIMPI
- * exchange, so only the particles that move or are ghosted cross to the host. GPU-aware MPI
- * (sending the device buffers directly) is deferred until there is a GPU build to measure it on.
+ * Migration packs on device and stages through host buffers for the TIMPI exchange.
  */
 class KokkosParticleCloud : public Moose::Kokkos::GeneralUserObject
 {
@@ -48,19 +54,25 @@ public:
   ///@{
   /// Counters, global across ranks after finalize()
   std::size_t numParticles() const { return _num_particles; }
-  std::size_t numLost() const { return _num_lost; }
+  std::size_t numExited() const { return _num_exited; }
+  std::size_t numUnresolved() const { return _num_unresolved; }
   std::size_t numMigrated() const { return _num_migrated; }
   unsigned int maxHops() const { return _max_hops_taken; }
   std::size_t numNeighborPairs() const { return _num_neighbor_pairs; }
-  std::size_t numGhosts() const { return _num_ghosts; }
   std::size_t numNeighborListBuilds() const { return _num_neighbor_list_builds; }
+  std::size_t numGhosts() const { return _num_ghosts; }
+  std::size_t numGhostForwards() const { return _num_ghost_forwards; }
   Real kineticEnergy() const { return _kinetic_energy; }
   Real rotationalKineticEnergy() const { return _rotational_kinetic_energy; }
   Real angularMomentum() const { return _angular_momentum; }
   ///@}
 
 protected:
-  /// Zero the force and torque accumulators and apply body and contact forces
+  /// Zero the force and torque accumulators and apply body and contact forces to the local
+  /// particles listed in a subset
+  void computeForces(const ::Kokkos::View<std::size_t *> & subset, const std::size_t count);
+  /// Compute all forces: interior particles first, then the boundary ones once the ghost update
+  /// has landed
   void computeForces();
   /// First half of Velocity Verlet: half-kick the velocities and drift the positions and
   /// orientations by one substep
@@ -69,6 +81,8 @@ protected:
   void kick();
   /// Re-resolve the containing element of every particle on device, accumulating hops
   void walk();
+  /// Locate the unresolved particles with the point locator on host
+  void resolveUnresolved();
   /// Rebuild the ghost and neighbor lists if, on any rank, some particle has moved more than
   /// skin / 2 since the last build or the local particle count changed
   /// @returns Whether the lists were rebuilt
@@ -76,10 +90,12 @@ protected:
   /// Replace the ghost particles with the neighboring ranks' particles within the neighbor-list
   /// cutoff of this rank's bounding box, and record what to forward every substep
   void exchangeGhosts();
-  /// Forward the current positions and velocities of the ghosted particles
-  void updateGhosts();
-  /// Send every particle that walked into a ghost element to the rank owning that element and
-  /// receive the particles sent here
+  /// Start forwarding the current positions and velocities of the ghosted particles
+  void startGhostUpdate();
+  /// Wait for the ghost update started by startGhostUpdate() and unpack it; no-op otherwise
+  void finishGhostUpdate();
+  /// Remove the exited particles, send every particle that walked into a ghost element to the
+  /// rank owning that element, and receive the particles sent here
   /// @returns The number of particles sent from this rank
   std::size_t migrate();
   /// Reallocate both clouds and the migration work buffers so they can hold at least the given
@@ -129,6 +145,16 @@ protected:
   DEM::ParticleCloud _cloud;
   /// Neighbor list of the local and ghost particles
   DEM::NeighborList _neighbor_list;
+  /// Second cloud of the same capacity that migrate() compacts into before swapping
+  DEM::ParticleCloud _scratch;
+  ///@{
+  /// Work buffers of migrate(), sized to the cloud capacity so no allocation happens per step:
+  /// each particle's slot in the compacted cloud or the send buffer (also used to flag ghost
+  /// candidates), the packed records of the departing particles, and their destination ranks
+  ::Kokkos::View<std::size_t *> _slot;
+  ::Kokkos::View<Real *> _send_buffer;
+  ::Kokkos::View<processor_id_type *> _send_rank;
+  ///@}
   /// Number of ghost particles, stored after the _cloud.n local ones
   std::size_t _num_ghosts = 0;
   /// Largest radius over all ranks
@@ -139,23 +165,32 @@ protected:
   std::vector<processor_id_type> _neighbor_ranks;
   ///@{
   /// Ghost forwarding state fixed between rebuilds: the local particles ghosted to each neighbor
-  /// rank in _neighbor_ranks order, concatenated, with their counts; the ghost slot where each
-  /// source rank's particles start; and the device buffer they are packed into
+  /// rank in _neighbor_ranks order, concatenated, with their counts; the source rank, first ghost
+  /// slot, and count of each received block; the device send and receive buffers with host
+  /// mirrors for MPI libraries that cannot read device memory; the pending requests; and the
+  /// message tag
   ::Kokkos::View<std::size_t *> _ghost_send_index;
   std::vector<std::size_t> _ghost_send_counts;
-  std::map<processor_id_type, std::size_t> _ghost_recv_begin;
+  struct GhostBlock
+  {
+    processor_id_type source;
+    std::size_t begin;
+    std::size_t count;
+  };
+  std::vector<GhostBlock> _ghost_recv;
   ::Kokkos::View<Real *> _ghost_buffer;
+  ::Kokkos::View<Real *> _ghost_recv_buffer;
+  ::Kokkos::View<Real *>::HostMirror _ghost_buffer_host;
+  ::Kokkos::View<Real *>::HostMirror _ghost_recv_buffer_host;
+  std::vector<MPI_Request> _ghost_requests;
+  const libMesh::Parallel::MessageTag _ghost_tag;
   ///@}
-  /// Second cloud of the same capacity that migrate() compacts into before swapping
-  DEM::ParticleCloud _scratch;
-  ///@{
-  /// Work buffers of migrate(), sized to the cloud capacity so no allocation happens per step:
-  /// each particle's slot in the compacted cloud or the send buffer, the packed records of the
-  /// departing particles, and their destination ranks
-  ::Kokkos::View<std::size_t *> _slot;
-  ::Kokkos::View<Real *> _send_buffer;
-  ::Kokkos::View<processor_id_type *> _send_rank;
-  ///@}
+  /// Whether the ghost forward may pass device buffers to MPI
+  static constexpr bool _device_buffers_to_mpi =
+      ::Kokkos::SpaceAccessibility<::Kokkos::HostSpace,
+                                   ::Kokkos::DefaultExecutionSpace::memory_space>::accessible;
+  /// Whether to pass device buffers to MPI on a GPU build (requires a GPU-aware MPI library)
+  const bool _gpu_aware_mpi;
   /// Owning rank of every local and one-layer ghost element, indexed by contiguous element ID
   ::Kokkos::View<processor_id_type *> _owner;
   /// libMesh element ID of every local and one-layer ghost element, indexed by contiguous element
@@ -167,11 +202,15 @@ protected:
   std::unique_ptr<libMesh::PointLocatorBase> _locator;
 
   std::size_t _num_particles = 0;
-  std::size_t _num_lost = 0;
+  /// Particles removed after walking out of the mesh, cumulative on this rank and globally
+  std::size_t _num_exited_local = 0;
+  std::size_t _num_exited = 0;
+  std::size_t _num_unresolved = 0;
   std::size_t _num_migrated = 0;
   unsigned int _max_hops_taken = 0;
   std::size_t _num_neighbor_pairs = 0;
   std::size_t _num_neighbor_list_builds = 0;
+  std::size_t _num_ghost_forwards = 0;
   Real _kinetic_energy = 0;
   Real _rotational_kinetic_energy = 0;
   /// Total spin angular momentum vector and its magnitude

@@ -1,17 +1,14 @@
-# Particles advected across a 10x10 QUAD4 mesh, crossing 2.5 cells per step in x and 1.5 in y,
-# so the face walk must take several hops per step.
-# Every step the device face-walk assignment is checked against libMesh's PointLocator
-# (verify = true errors on any mismatch).
-# Particles crossing a partition boundary are migrated to the owning rank, so the output does
-# not depend on the number of ranks. Particles reaching the right or top edge exit the mesh and are
-# removed, so the particle count drops as the exited count grows.
+# Three-dimensional version of walk_2d: particles cross 2.5, 1.5, and 2 cells per step in x, y,
+# and z through a 10x10x10 HEX8 mesh, so the face walk, migration across 3D partitions, and
+# removal on exit are exercised in every direction. Verified against the point locator every step.
 
 [Mesh]
   [gen]
     type = GeneratedMeshGenerator
-    dim = 2
+    dim = 3
     nx = 10
     ny = 10
+    nz = 10
   []
 []
 
@@ -22,15 +19,17 @@
 [UserObjects]
   [cloud]
     type = KokkosParticleCloud
-    initial_positions = '0.05 0.05 0
-                         0.13 0.47 0
-                         0.31 0.29 0
-                         0.52 0.71 0
-                         0.05 0.95 0
-                         0.66 0.12 0
-                         0.85 0.55 0
-                         0.97 0.03 0'
-    initial_velocity = '2.5 1.5 0'
+    initial_positions = '0.05 0.05 0.05
+                         0.13 0.47 0.22
+                         0.31 0.29 0.61
+                         0.52 0.71 0.08
+                         0.05 0.95 0.44
+                         0.66 0.12 0.37
+                         0.85 0.55 0.19
+                         0.97 0.03 0.90
+                         0.42 0.42 0.95
+                         0.20 0.80 0.50'
+    initial_velocity = '2.5 1.5 2'
     radius = 0.01
     density = 1000
     verify = true

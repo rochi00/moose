@@ -12,4 +12,12 @@
     requirement = 'The system shall compute the head-on collision of two spheres with the linear spring-dashpot contact model such that the coefficient of restitution and final positions match the damped-oscillator solution to the first-order accuracy of the substep size, on any number of ranks.'
     capabilities = 'kokkos'
   []
+  [restitution_3d]
+    type = CSVDiff
+    input = restitution_3d.i
+    csvdiff = restitution_3d_out_state_0004.csv
+    rel_err = 1e-4
+    requirement = 'The system shall compute the head-on collision of two spheres along a diagonal of a three-dimensional mesh with the same accuracy as along an axis, on any number of ranks.'
+    capabilities = 'kokkos'
+  []
 []

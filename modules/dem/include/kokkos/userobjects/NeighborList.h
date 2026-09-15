@@ -43,6 +43,15 @@ public:
   /// Concatenated neighbor indices
   const ::Kokkos::View<std::size_t *> & pairs() const { return _pairs; }
 
+  ///@{
+  /// Local particles without and with ghost neighbors, so the forces on the former can be
+  /// computed while the ghost update of the latter is in flight
+  const ::Kokkos::View<std::size_t *> & interior() const { return _interior; }
+  std::size_t numInterior() const { return _num_interior; }
+  const ::Kokkos::View<std::size_t *> & boundary() const { return _boundary; }
+  std::size_t numBoundary() const { return _num_boundary; }
+  ///@}
+
 private:
   /// Number of local particles the list was built for
   std::size_t _n_local = 0;
@@ -51,6 +60,10 @@ private:
   std::size_t _num_pairs = 0;
   ::Kokkos::View<std::size_t *> _offsets;
   ::Kokkos::View<std::size_t *> _pairs;
+  std::size_t _num_interior = 0;
+  std::size_t _num_boundary = 0;
+  ::Kokkos::View<std::size_t *> _interior;
+  ::Kokkos::View<std::size_t *> _boundary;
   /// Local positions at the time of the build, for the staleness check
   ParticleCloud::VectorView _x_at_build;
 

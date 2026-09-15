@@ -26,6 +26,7 @@ NeighborList::build(const ParticleCloud & cloud,
       _offsets = ::Kokkos::View<std::size_t *>("dem_nl_offsets", 1);
     ::Kokkos::deep_copy(_offsets, 0);
     _num_pairs = 0;
+    _num_interior = _num_boundary = 0;
     return;
   }
   // Copies for capture by value in the kernels
@@ -177,6 +178,36 @@ NeighborList::build(const ParticleCloud & cloud,
       },
       num_pairs);
   _num_pairs = num_pairs;
+
+  // Split the local particles by whether they have a ghost neighbor, compacting each side with a
+  // scan; the boundary list is the interior list's complement
+  if (_interior.extent(0) < n_local)
+  {
+    _interior = ::Kokkos::View<std::size_t *>("dem_nl_interior", n_local);
+    _boundary = ::Kokkos::View<std::size_t *>("dem_nl_boundary", n_local);
+  }
+  const auto interior = _interior;
+  const auto boundary = _boundary;
+  std::size_t num_interior = 0;
+  ::Kokkos::parallel_scan(
+      "dem_nl_split",
+      n_local,
+      KOKKOS_LAMBDA(const std::size_t i, std::size_t & n_interior_before, const bool final) {
+        bool is_interior = true;
+        for (auto k = offsets(i); k < offsets(i + 1) && is_interior; ++k)
+          is_interior = pairs(k) < n_local;
+        if (final)
+        {
+          if (is_interior)
+            interior(n_interior_before) = i;
+          else
+            boundary(i - n_interior_before) = i;
+        }
+        n_interior_before += is_interior;
+      },
+      num_interior);
+  _num_interior = num_interior;
+  _num_boundary = n_local - num_interior;
 }
 
 bool

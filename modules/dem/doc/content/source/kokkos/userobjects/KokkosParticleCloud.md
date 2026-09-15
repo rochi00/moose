@@ -31,7 +31,11 @@ particles lying within the neighbor-list cutoff `2 r_max + skin` of a neighborin
 bounding box, and appends the copies it receives after its own particles. The neighbor list covers
 local and ghost particles, and every rank computes the forces on its own particles from the ghost
 copies, so no force communication is needed (a pair spanning two ranks is evaluated once on each).
-Between rebuilds only the ghost positions and velocities are forwarded, every substep. A pair with
+Between rebuilds only the ghost positions and velocities are forwarded, every substep, with
+nonblocking MPI: the forces on the local particles without ghost neighbors are computed while the
+forward is in flight, and those with ghost neighbors once it has landed. The device buffers are
+passed to MPI directly when the host can access device memory or `gpu_aware_mpi = true`, and
+through host mirrors otherwise. A pair with
 a ghost is counted on the rank owning the smaller global ID, so `num_neighbor_pairs` is the same on
 any number of ranks; it is the count at the last build, which in parallel can be later in the step
 than in serial because migration forces a rebuild.
@@ -44,7 +48,7 @@ against the outward face planes cached by the Kokkos mesh (`Moose::Kokkos::Mesh:
 front of and the test repeats on the face neighbor, up to `max_hops` times per substep. This is
 exact only for elements with planar faces.
 
-The walk ends in one of three states:
+The walk ends in one of four states:
 
 - inside a local element;
 - inside a one-layer ghost element, which has no cached face geometry. The particle keeps
@@ -54,7 +58,10 @@ The walk ends in one of three states:
   step. Departing particles are found, compacted out of the cloud, and packed on device, so only
   the departing and arriving particles cross to the host for the TIMPI exchange; GPU-aware MPI is
   deferred;
-- lost, because it walked out of the mesh or exhausted `max_hops`. Lost particles keep integrating.
+- exited, because it walked out of the mesh. An exited particle is inert for the rest of the step
+  and removed at the end of it;
+- unresolved, because it exhausted `max_hops`. An unresolved particle keeps integrating and is
+  located again with libMesh's `PointLocator` at the end of the step.
 
 With `verify = true`, each step the device assignment is checked on host against libMesh's
 `PointLocator` and any mismatch is an error.

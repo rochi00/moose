@@ -45,8 +45,14 @@ struct ParticleCloud
   VectorView f;
   /// Torque accumulator in the body frame, zeroed every substep
   VectorView tau;
-  /// Contiguous local element containing the particle; libMesh::DofObject::invalid_id if unresolved
+  /// Contiguous local element containing the particle, or one of the sentinels below
   ::Kokkos::View<ContiguousElementID *> elem;
+  /// elem value of a particle whose element could not be resolved by the face walk; retried by a
+  /// point locator at the end of the step
+  static constexpr ContiguousElementID unresolved = libMesh::DofObject::invalid_id;
+  /// elem value of a particle that walked out of the mesh; inert until removed at the end of the
+  /// step
+  static constexpr ContiguousElementID exited = libMesh::DofObject::invalid_id - 1;
   /// Rank that should receive the particle when it has walked into a ghost element;
   /// libMesh::DofObject::invalid_processor_id when the particle is local or lost
   ::Kokkos::View<processor_id_type *> target_rank;
