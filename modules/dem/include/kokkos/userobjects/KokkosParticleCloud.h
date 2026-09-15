@@ -38,6 +38,15 @@
  * Walls are fixed planes given by a point and an inward normal each; a particle overlapping a
  * wall gets the same normal contact force as against a sphere at rest of infinite mass.
  *
+ * The domain can be periodic in any direction over the extent of the mesh bounding box. A
+ * particle that walks out of the mesh is then unresolved rather than exited: it keeps its
+ * unwrapped position, just outside its rank's box, until the end of the step, when it is wrapped
+ * by the period, placed by the point locator, and migrated to the rank owning the far side, which
+ * need not be adjacent. Contact across a periodic face uses the same ghost machinery: every rank
+ * sends, to every rank including itself, the particles whose image under each combination of
+ * period shifts lies within the cutoff of that rank's box, with the shifted positions, so the
+ * neighbor list needs no minimum image convention.
+ *
  * Migration packs on device and stages through host buffers for the TIMPI exchange.
  */
 class KokkosParticleCloud : public Moose::Kokkos::GeneralUserObject
@@ -66,9 +75,22 @@ public:
   std::size_t numNeighborListBuilds() const { return _num_neighbor_list_builds; }
   std::size_t numGhosts() const { return _num_ghosts; }
   std::size_t numGhostForwards() const { return _num_ghost_forwards; }
+  std::size_t numContacts() const { return _num_contacts; }
+  Real coordinationNumber() const
+  {
+    return _num_particles ? 2.0 * _num_contacts / _num_particles : 0;
+  }
+  Real loadImbalance() const { return _load_imbalance; }
   Real kineticEnergy() const { return _kinetic_energy; }
   Real rotationalKineticEnergy() const { return _rotational_kinetic_energy; }
+  Real potentialEnergy() const { return _potential_energy; }
+  Real totalEnergy() const
+  {
+    return _kinetic_energy + _rotational_kinetic_energy + _potential_energy;
+  }
+  Real linearMomentum() const { return _linear_momentum; }
   Real angularMomentum() const { return _angular_momentum; }
+  Real virialPressure() const { return _virial_pressure; }
   ///@}
 
 protected:
@@ -85,7 +107,8 @@ protected:
   void kick();
   /// Re-resolve the containing element of every particle on device, accumulating hops
   void walk();
-  /// Locate the unresolved particles with the point locator on host
+  /// Locate the unresolved particles with the point locator on host; one found in an element of
+  /// another rank, adjacent or not, is flagged for migration there
   void resolveUnresolved();
   /// Rebuild the ghost and neighbor lists if, on any rank, some particle has moved more than
   /// skin / 2 since the last build or the local particle count changed
@@ -113,8 +136,8 @@ protected:
   void verify();
   /// Check the neighbor list against a brute-force pair search on host; errors on mismatch
   void verifyNeighborList();
-  /// Magnitude of _angular_momentum_vector
-  Real angularMomentumMagnitude() const;
+  /// Magnitude of a momentum vector
+  static Real magnitude(const Real (&vector)[3]);
 
   /// Initial particle positions; a rank keeps only the particles in its local elements
   const std::vector<Point> & _initial_positions;
@@ -136,6 +159,16 @@ protected:
   const DEM::LinearSpringDashpot _contact;
   /// Fixed planar walls
   const DEM::AnalyticWalls _walls;
+  /// Directions in which the domain is periodic
+  const MultiMooseEnum & _periodic;
+  ///@{
+  /// Lower corner of the mesh bounding box and its extent in each periodic direction, zero in
+  /// the others
+  Moose::Kokkos::Real3 _domain_min;
+  Moose::Kokkos::Real3 _period;
+  ///@}
+  /// Volume of the mesh bounding box over the mesh dimension, for the virial pressure
+  Real _domain_volume = 0;
   /// Number of substeps per MOOSE time step
   const unsigned int _substeps;
   /// Upper bound on face hops per particle per walk
@@ -161,14 +194,27 @@ protected:
   ::Kokkos::View<Real *> _send_buffer;
   ::Kokkos::View<processor_id_type *> _send_rank;
   ///@}
+  /// libMesh ID of the element of an unresolved particle that the point locator found on another
+  /// rank, carried from resolveUnresolved() to migrate() alongside its target rank
+  ::Kokkos::View<dof_id_type *> _far_elem;
   /// Number of ghost particles, stored after the _cloud.n local ones
   std::size_t _num_ghosts = 0;
   /// Largest radius over all ranks
   Real _r_max = 0;
   /// Inflated bounding box of every rank's local elements
   std::vector<libMesh::BoundingBox> _rank_boxes;
-  /// Ranks whose bounding box comes within the neighbor-list cutoff of ours
+  /// Ranks whose bounding box comes within the neighbor-list cutoff of ours, possibly through a
+  /// period shift, in which case this rank may be its own neighbor
   std::vector<processor_id_type> _neighbor_ranks;
+  /// A destination for ghosts: a neighbor rank (an index into _neighbor_ranks) and the period
+  /// shift under which our particles come within the cutoff of its box. Sorted by rank, so the
+  /// ghosts sent to one rank are contiguous in the send index
+  struct GhostTarget
+  {
+    std::size_t neighbor;
+    Moose::Kokkos::Real3 shift;
+  };
+  std::vector<GhostTarget> _ghost_targets;
   ///@{
   /// Ghost forwarding state fixed between rebuilds: the local particles ghosted to each neighbor
   /// rank in _neighbor_ranks order, concatenated, with their counts; the source rank, first ghost
@@ -176,6 +222,8 @@ protected:
   /// mirrors for MPI libraries that cannot read device memory; the pending requests; and the
   /// message tag
   ::Kokkos::View<std::size_t *> _ghost_send_index;
+  /// Period shift applied to the positions of each ghosted particle in _ghost_send_index
+  ::Kokkos::View<Real * [3], ::Kokkos::LayoutRight> _ghost_send_shift;
   std::vector<std::size_t> _ghost_send_counts;
   struct GhostBlock
   {
@@ -217,9 +265,22 @@ protected:
   std::size_t _num_neighbor_pairs = 0;
   std::size_t _num_neighbor_list_builds = 0;
   std::size_t _num_ghost_forwards = 0;
+  /// Overlapping pairs, each counted once across ranks
+  std::size_t _num_contacts = 0;
+  /// Largest local particle count over the mean, 1 when balanced
+  Real _load_imbalance = 0;
   Real _kinetic_energy = 0;
   Real _rotational_kinetic_energy = 0;
-  /// Total spin angular momentum vector and its magnitude
+  /// Elastic energy of the overlapping pairs and wall contacts
+  Real _potential_energy = 0;
+  /// Pair virial sum over the overlapping pairs, r_ij . f_ij, each counted once
+  Real _virial = 0;
+  Real _virial_pressure = 0;
+  ///@{
+  /// Total linear and spin angular momentum vectors and their magnitudes
+  Real _linear_momentum_vector[3] = {0, 0, 0};
+  Real _linear_momentum = 0;
   Real _angular_momentum_vector[3] = {0, 0, 0};
   Real _angular_momentum = 0;
+  ///@}
 };

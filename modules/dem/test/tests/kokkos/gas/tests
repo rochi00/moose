@@ -1,0 +1,16 @@
+[Tests]
+  design = 'KokkosParticleCloud.md KokkosParticleCloudValue.md'
+  issues = '#1'
+
+  [periodic_gas]
+    type = CSVDiff
+    input = periodic_gas.i
+    csvdiff = periodic_gas_out.csv
+    # A collision starting between substeps changes the energy by O((omega_0 dt)^2) of its
+    # kinetic energy: 6e-6 of the total here over the run, so 1e-5
+    rel_err = 1e-5
+    ignore_columns = 'num_contacts coordination_number virial_pressure load_imbalance'
+    requirement = 'The system shall conserve the total energy, linear momentum, and angular momentum of an elastic granular gas in a fully periodic box, with particles wrapping through the periodic faces and colliding across them, on any number of ranks.'
+    capabilities = 'kokkos'
+  []
+[]

@@ -12,8 +12,11 @@ KokkosParticleCloudValue::validParams()
   params.addRequiredParam<MooseEnum>("value",
                                      MooseEnum("num_particles num_exited num_unresolved num_migrated "
                                                "max_hops num_neighbor_pairs num_neighbor_list_builds "
-                                               "num_ghosts num_ghost_forwards kinetic_energy "
-                                               "rotational_kinetic_energy angular_momentum"),
+                                               "num_ghosts num_ghost_forwards num_contacts "
+                                               "coordination_number load_imbalance kinetic_energy "
+                                               "rotational_kinetic_energy potential_energy "
+                                               "total_energy linear_momentum angular_momentum "
+                                               "virial_pressure"),
                                      "Which value to report");
   return params;
 }
@@ -46,9 +49,23 @@ KokkosParticleCloudValue::getValue() const
     return _cloud.numGhosts();
   if (_value == "num_ghost_forwards")
     return _cloud.numGhostForwards();
+  if (_value == "num_contacts")
+    return _cloud.numContacts();
+  if (_value == "coordination_number")
+    return _cloud.coordinationNumber();
+  if (_value == "load_imbalance")
+    return _cloud.loadImbalance();
   if (_value == "kinetic_energy")
     return _cloud.kineticEnergy();
   if (_value == "rotational_kinetic_energy")
     return _cloud.rotationalKineticEnergy();
-  return _cloud.angularMomentum();
+  if (_value == "potential_energy")
+    return _cloud.potentialEnergy();
+  if (_value == "total_energy")
+    return _cloud.totalEnergy();
+  if (_value == "linear_momentum")
+    return _cloud.linearMomentum();
+  if (_value == "angular_momentum")
+    return _cloud.angularMomentum();
+  return _cloud.virialPressure();
 }

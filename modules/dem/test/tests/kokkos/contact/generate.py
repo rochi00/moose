@@ -39,13 +39,19 @@ e, t_touch, t_contact = oscillator(m / 2)
 # holds along any direction; restitution.i collides along x in a 2D mesh and restitution_3d.i
 # along the (1, 1, 1) diagonal of a 3D mesh, exercising every component.
 xA = -r - e * v0 * (T - t_touch - t_contact)
-for name, direction, center in (("restitution", (1, 0, 0), (0, 0.5, 0)),
-                                ("restitution_3d", tuple(1 / math.sqrt(3) for _ in range(3)), (0, 0, 0))):
+# restitution_periodic.i collides the spheres the other way, through the periodic face at
+# x = -0.2 and 0.2: sphere 0 ends at -0.2 - xA moving at +e v0 and sphere 1 mirrored.
+# Each sphere ends at its contact point plus xA along its approach direction
+diagonal = tuple(1 / math.sqrt(3) for _ in range(3))
+for name, direction, contact_points in (
+        ("restitution", (1, 0, 0), ((0, 0.5, 0), (0, 0.5, 0))),
+        ("restitution_3d", diagonal, ((0, 0, 0), (0, 0, 0))),
+        ("restitution_periodic", (-1, 0, 0), ((-0.2, 0.5, 0), (0.2, 0.5, 0)))):
     with open(os.path.join(here, "gold", f"{name}_out_state_{num_steps:04d}.csv"), "w") as f:
         f.write("gid,vx,vy,vz,wx,wy,wz,x,y,z\n")
         for gid, sign in ((0, 1), (1, -1)):
             v = [f"{-sign * e * v0 * d:.17g}" for d in direction]
-            x = [f"{center[c] + sign * xA * direction[c]:.17g}" for c in range(3)]
+            x = [f"{contact_points[gid][c] + sign * xA * direction[c]:.17g}" for c in range(3)]
             f.write(f"{gid},{','.join(v)},0,0,0,{','.join(x)}\n")
 
 # Against a fixed wall at x = 0 the sphere's own mass is the effective mass. wall_restitution.i

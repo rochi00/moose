@@ -42,6 +42,20 @@ a ghost is counted on the rank owning the smaller global ID, so `num_neighbor_pa
 any number of ranks; it is the count at the last build, which in parallel can be later in the step
 than in serial because migration forces a rebuild.
 
+## Periodic directions
+
+With `periodic`, the domain wraps over the extent of the mesh bounding box in the listed
+directions. A particle that walks out of the mesh is then unresolved rather than exited: it keeps
+its unwrapped position, just outside its rank's box, for the rest of the step, so its neighbors and
+their ghost images see it where it is, and at the end of the step it is wrapped by the period,
+placed by the point locator, and migrated to the rank owning the far side, which need not be
+adjacent (this requires a replicated mesh, since the locator of a distributed mesh only sees the
+local and ghost elements). Contact across a periodic face uses the ghost machinery: every rank
+sends, to every rank including itself, the particles whose image under each combination of period
+shifts lies within the cutoff of that rank's box, with the shifted positions, so the neighbor list
+needs no minimum image convention. A rank's box must be wider than the cutoff so a particle does
+not interact with its own image.
+
 ## Element tracking
 
 Element tracking is incremental: each particle remembers its element, and after moving it is tested

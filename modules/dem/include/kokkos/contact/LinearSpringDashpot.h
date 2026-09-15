@@ -29,6 +29,12 @@ struct LinearSpringDashpot
   {
     return stiffness * overlap - damping * normal_velocity;
   }
+
+  /// Elastic energy stored in the spring at an overlap
+  KOKKOS_INLINE_FUNCTION Real energy(const Real overlap) const
+  {
+    return 0.5 * stiffness * overlap * overlap;
+  }
 };
 
 } // namespace DEM

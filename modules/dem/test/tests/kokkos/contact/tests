@@ -20,6 +20,14 @@
     requirement = 'The system shall compute the head-on collision of two spheres along a diagonal of a three-dimensional mesh with the same accuracy as along an axis, on any number of ranks.'
     capabilities = 'kokkos'
   []
+  [restitution_periodic]
+    type = CSVDiff
+    input = restitution_periodic.i
+    csvdiff = restitution_periodic_out_state_0004.csv
+    rel_err = 1e-4
+    requirement = 'The system shall compute the head-on collision of two spheres through a periodic face, using periodic ghost images, with the same result as the direct collision, on any number of ranks.'
+    capabilities = 'kokkos'
+  []
   [wall_restitution]
     type = CSVDiff
     input = wall_restitution.i

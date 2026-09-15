@@ -16,6 +16,16 @@
     requirement = 'The system shall track, migrate, and remove particles moving in all three directions through a three-dimensional hexahedral mesh, with results independent of the number of ranks.'
     capabilities = 'kokkos'
   []
+  [walk_2d_periodic]
+    type = CSVDiff
+    input = walk_2d.i
+    cli_args = "UserObjects/cloud/periodic='x y' Outputs/file_base=walk_2d_periodic_out"
+    csvdiff = walk_2d_periodic_out.csv
+    # The hop count depends on where the wrapped particles land
+    ignore_columns = 'max_hops'
+    requirement = 'The system shall wrap particles that cross a periodic face to the far side of the domain and place them there, on the rank owning the far element, so that no particle exits and every particle is located, on any number of ranks.'
+    capabilities = 'kokkos'
+  []
   [walk_2d_fallback]
     type = CSVDiff
     input = walk_2d.i
