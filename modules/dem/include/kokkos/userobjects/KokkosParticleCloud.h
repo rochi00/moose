@@ -3,6 +3,7 @@
 #include "KokkosGeneralUserObject.h"
 #include "ParticleCloud.h"
 #include "NeighborList.h"
+#include "LinearSpringDashpot.h"
 
 #include "libmesh/point_locator_base.h"
 
@@ -51,7 +52,7 @@ public:
   ///@}
 
 protected:
-  /// Zero the force and torque accumulators and apply body forces
+  /// Zero the force and torque accumulators and apply body and contact forces
   void computeForces();
   /// First half of Velocity Verlet: half-kick the velocities and drift the positions and
   /// orientations by one substep
@@ -82,8 +83,10 @@ protected:
 
   /// Initial particle positions; a rank keeps only the particles in its local elements
   const std::vector<Point> & _initial_positions;
-  /// Initial velocity of every particle
+  /// Initial velocity of every particle, used unless initial_velocities is given
   const RealVectorValue & _initial_velocity;
+  /// Optional per-particle initial velocities
+  const std::vector<Point> _initial_velocities;
   /// Initial body-frame angular velocity of every particle
   const RealVectorValue & _initial_angular_velocity;
   /// Particle radius, used unless initial_radii is given
@@ -94,6 +97,8 @@ protected:
   const Real _density;
   /// Gravitational acceleration
   const RealVectorValue & _gravity;
+  /// Normal contact model
+  const DEM::LinearSpringDashpot _contact;
   /// Number of substeps per MOOSE time step
   const unsigned int _substeps;
   /// Upper bound on face hops per particle per walk

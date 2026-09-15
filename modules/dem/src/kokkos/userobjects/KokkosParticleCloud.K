@@ -20,6 +20,9 @@ KokkosParticleCloud::validParams()
                                               "Initial positions of all particles");
   params.addParam<RealVectorValue>(
       "initial_velocity", RealVectorValue(0, 0, 0), "Initial velocity of every particle");
+  params.addParam<std::vector<Point>>(
+      "initial_velocities",
+      "Per-particle initial velocities overriding initial_velocity, one per initial position");
   params.addParam<RealVectorValue>("initial_angular_velocity",
                                    RealVectorValue(0, 0, 0),
                                    "Initial body-frame angular velocity of every particle");
@@ -29,6 +32,15 @@ KokkosParticleCloud::validParams()
   params.addRequiredRangeCheckedParam<Real>("density", "density > 0", "Particle density");
   params.addParam<RealVectorValue>(
       "gravity", RealVectorValue(0, 0, 0), "Gravitational acceleration");
+  params.addRangeCheckedParam<Real>("normal_stiffness",
+                                    0,
+                                    "normal_stiffness >= 0",
+                                    "Spring stiffness of the linear spring-dashpot normal contact; "
+                                    "zero disables contact");
+  params.addRangeCheckedParam<Real>("normal_damping",
+                                    0,
+                                    "normal_damping >= 0",
+                                    "Dashpot coefficient of the linear spring-dashpot normal contact");
   params.addRangeCheckedParam<unsigned int>(
       "substeps", 1, "substeps > 0", "Number of integration substeps per time step");
   // A particle should cross only a few cells per substep; a much larger walk indicates a mesh the
@@ -55,12 +67,16 @@ KokkosParticleCloud::KokkosParticleCloud(const InputParameters & parameters)
   : Moose::Kokkos::GeneralUserObject(parameters),
     _initial_positions(getParam<std::vector<Point>>("initial_positions")),
     _initial_velocity(getParam<RealVectorValue>("initial_velocity")),
+    _initial_velocities(isParamValid("initial_velocities")
+                            ? getParam<std::vector<Point>>("initial_velocities")
+                            : std::vector<Point>()),
     _initial_angular_velocity(getParam<RealVectorValue>("initial_angular_velocity")),
     _radius(getParam<Real>("radius")),
     _initial_radii(isParamValid("initial_radii") ? getParam<std::vector<Real>>("initial_radii")
                                                  : std::vector<Real>()),
     _density(getParam<Real>("density")),
     _gravity(getParam<RealVectorValue>("gravity")),
+    _contact({getParam<Real>("normal_stiffness"), getParam<Real>("normal_damping")}),
     _substeps(getParam<unsigned int>("substeps")),
     _max_hops(getParam<unsigned int>("max_hops")),
     _skin(isParamValid("skin") ? getParam<Real>("skin") : 0.1 * _radius),
@@ -69,6 +85,8 @@ KokkosParticleCloud::KokkosParticleCloud(const InputParameters & parameters)
 {
   if (_initial_radii.size() && _initial_radii.size() != _initial_positions.size())
     paramError("initial_radii", "Must have one entry per initial position");
+  if (_initial_velocities.size() && _initial_velocities.size() != _initial_positions.size())
+    paramError("initial_velocities", "Must have one entry per initial position");
   for (const auto r : _initial_radii)
     if (r <= 0)
       paramError("initial_radii", "Radii must be positive");
@@ -129,7 +147,7 @@ KokkosParticleCloud::initialSetup()
     for (const auto c : make_range(3))
     {
       host.x(j, c) = _initial_positions[gid](c);
-      host.v(j, c) = _initial_velocity(c);
+      host.v(j, c) = _initial_velocities.size() ? _initial_velocities[gid](c) : _initial_velocity(c);
       host.omega(j, c) = _initial_angular_velocity(c);
       host.f(j, c) = 0;
       host.tau(j, c) = 0;
@@ -203,13 +221,39 @@ KokkosParticleCloud::computeForces()
 {
   const auto cloud = _cloud;
   const Moose::Kokkos::Real3 g(_gravity(0), _gravity(1), _gravity(2));
+  const auto contact = _contact;
+  const auto offsets = _neighbor_list.offsets();
+  const auto pairs = _neighbor_list.pairs();
 
   ::Kokkos::parallel_for(
       "dem_forces", cloud.size(), KOKKOS_LAMBDA(const std::size_t i) {
-        const auto m = cloud.m(i);
+        Moose::Kokkos::Real3 f = cloud.m(i) * g;
+
+        // Sphere-sphere narrow phase over the neighbor list; every pair is listed from both sides
+        // so each particle sums its own contacts
+        if (contact.stiffness > 0)
+        {
+          const Moose::Kokkos::Real3 xi(cloud.x(i, 0), cloud.x(i, 1), cloud.x(i, 2));
+          const Moose::Kokkos::Real3 vi(cloud.v(i, 0), cloud.v(i, 1), cloud.v(i, 2));
+          for (auto k = offsets(i); k < offsets(i + 1); ++k)
+          {
+            const auto j = pairs(k);
+            const Moose::Kokkos::Real3 xj(cloud.x(j, 0), cloud.x(j, 1), cloud.x(j, 2));
+            const Moose::Kokkos::Real3 d = xi - xj;
+            const Real distance = d.norm();
+            const Real overlap = cloud.r(i) + cloud.r(j) - distance;
+            if (overlap <= 0)
+              continue;
+            const Moose::Kokkos::Real3 normal = (1.0 / distance) * d;
+            const Moose::Kokkos::Real3 vj(cloud.v(j, 0), cloud.v(j, 1), cloud.v(j, 2));
+            const Real normal_velocity = (vi - vj).dot_product(normal);
+            f += contact.normalForce(overlap, normal_velocity) * normal;
+          }
+        }
+
         for (unsigned int c = 0; c < 3; ++c)
         {
-          cloud.f(i, c) = m * g(c);
+          cloud.f(i, c) = f(c);
           cloud.tau(i, c) = 0;
         }
       });

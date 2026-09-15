@@ -11,7 +11,9 @@ local element containing each particle. Particle state is stored in Kokkos views
 Kokkos storage policy (`libmesh/kokkos_storage_policy.h`). The substep loop runs entirely on
 device (plan decision D4).
 
-Forces are currently the body force `m * gravity` only; contact forces are added by later layers.
+Forces are the body force `m * gravity` and, when `normal_stiffness` is positive, the
+[LinearSpringDashpot.md] normal contact force between overlapping spheres found through the
+neighbor list. Tangential contact, rolling resistance, and walls are added by later layers.
 
 ## Neighbor list
 
