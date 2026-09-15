@@ -47,4 +47,16 @@
     requirement = 'The system shall treat the reentrant corner of a mesh, where two sideset wall faces meet in a vertex convex toward the sphere, as a single contact along the line from the vertex, so that a sphere hitting it head-on rebounds with the sphere-wall coefficient of restitution.'
     capabilities = 'kokkos'
   []
+  [moving_floor]
+    type = CSVDiff
+    input = moving_floor.i
+    csvdiff = moving_floor_out_state_0005.csv
+    # V14: the sphere rides the floor to 7e-9 in velocity and 1e-12 in position. The initial
+    # forces are evaluated before the floor's first velocity is known, giving a kick of one
+    # substep's dashpot force that has decayed to 1e-8 by the end; the spin stays under abs_zero
+    rel_err = 2e-8
+    abs_zero = 1e-7
+    requirement = 'The system shall carry a sphere resting on a sideset wall driven by prescribed nodal displacement variables along with the wall, the wall moving at the velocity that reaches the displacement of each step, on any number of ranks.'
+    capabilities = 'kokkos'
+  []
 []

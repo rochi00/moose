@@ -36,3 +36,16 @@ across the faces of one sideset as the contact point slides over them; faces a p
 at the same time with different normals (the floor and a side of a box) should therefore be in
 different sidesets. A boundary's history is advanced once per substep, from its first overlapping
 face, and reset only when none of its listed faces overlaps.
+
+## Moving walls
+
+With `wall_displacements`, nodal displacement variables (one per mesh dimension, for example
+driven by a `FunctionAux` or a solid mechanics solve), the walls move: at every MOOSE step the
+faces are carried from where they are to the displaced positions of their nodes at the constant
+velocity that gets them there over the step, advancing every substep along with the particles,
+and the velocity of a contact point, interpolated from the face's vertices, enters the relative
+velocity of the contact (its dashpots and friction) like a partner's. The face normals are
+recomputed for the new positions. The candidate lists of the elements are not rebuilt, so the
+motion must stay within `wall_reach` of the undisplaced faces, and the particles are still tracked
+on the undisplaced mesh. The `moving_floor` test (plan case V14) rests a sphere on a floor driven
+sideways and upward and checks that it rides along to 1e-8.

@@ -98,6 +98,18 @@ KokkosParticleCloud::validParams()
       "wall_boundaries",
       {},
       "Sidesets whose faces are walls, triangulated, with the mesh interior as the inside");
+  params.addParam<std::vector<VariableName>>(
+      "wall_displacements",
+      {},
+      "Nodal displacement variables (one per mesh dimension) moving the sideset walls: every "
+      "MOOSE step the faces are carried to the displaced positions at the velocity that gets "
+      "them there over the step");
+  params.addRangeCheckedParam<Real>(
+      "wall_reach",
+      0,
+      "wall_reach >= 0",
+      "Extra distance within which a sideset face is a candidate of an element, at least the "
+      "largest wall displacement expected");
   params.addParam<std::vector<Point>>(
       "wall_points", {}, "A point on each fixed planar wall, one per entry of wall_normals");
   params.addParam<std::vector<RealVectorValue>>(
@@ -172,6 +184,7 @@ KokkosParticleCloud::KokkosParticleCloud(const InputParameters & parameters)
     _walls(getParam<std::vector<Point>>("wall_points"),
            getParam<std::vector<RealVectorValue>>("wall_normals")),
     _wall_boundaries(getParam<std::vector<BoundaryName>>("wall_boundaries")),
+    _wall_reach(getParam<Real>("wall_reach")),
     _periodic(getParam<MultiMooseEnum>("periodic")),
     _substeps(getParam<unsigned int>("substeps")),
     _max_hops(getParam<unsigned int>("max_hops")),
@@ -198,6 +211,13 @@ KokkosParticleCloud::KokkosParticleCloud(const InputParameters & parameters)
       paramError("wall_normals", "Normals must be nonzero");
   if ((_walls.n || _wall_boundaries.size()) && !contactEnabled())
     paramError("wall_points", "Walls need a contact model with a positive stiffness or modulus");
+  for (const auto & name : getParam<std::vector<VariableName>>("wall_displacements"))
+    _wall_displacements.push_back(&_fe_problem.getStandardVariable(0, name));
+  if (_wall_displacements.size() &&
+      _wall_displacements.size() != _fe_problem.mesh().dimension())
+    paramError("wall_displacements", "One variable per mesh dimension");
+  if (_wall_displacements.size() && _wall_boundaries.empty())
+    paramError("wall_displacements", "Only sideset walls (wall_boundaries) can move");
 #ifndef DEM_HAVE_ARBORX
   if (_broad_phase == DEM::BroadPhase::ARBORX_BVH)
     paramError("broad_phase", "The ArborX broad phase needs the ArborX submodule (modules/dem/contrib/arborx)");
@@ -354,7 +374,10 @@ KokkosParticleCloud::initialSetup()
                          mesh,
                          _cid_to_elem,
                          _fe_problem.mesh().getBoundaryIDs(_wall_boundaries, true),
-                         _r_max + _skin);
+                         _r_max + _skin + _wall_reach);
+    // Start from the initially displaced positions, at rest
+    if (_wall_displacements.size())
+      _sideset_walls.move(displacedWallVertices(), 0);
   }
   for (const auto rank : make_range(n_processors()))
     for (int sz = -1; sz <= 1; ++sz)
@@ -382,6 +405,35 @@ KokkosParticleCloud::initialSetup()
   finalize();
 }
 
+std::vector<Point>
+KokkosParticleCloud::displacedWallVertices() const
+{
+  const auto & mesh = _fe_problem.mesh().getMesh();
+  const auto num = 3 * _sideset_walls.n;
+  std::vector<Point> positions;
+  positions.reserve(num);
+  for (const auto & nodes : _sideset_walls.nodes)
+    for (const auto id : nodes)
+      positions.push_back(mesh.node_ref(id));
+
+  // The nodes of ghost elements need not have their displacement dofs ghosted, so the values
+  // are gathered collectively by index (every rank calls this once per step)
+  for (const auto c : index_range(_wall_displacements))
+  {
+    const auto & var = *_wall_displacements[c];
+    std::vector<libMesh::dof_id_type> dofs;
+    dofs.reserve(num);
+    for (const auto & nodes : _sideset_walls.nodes)
+      for (const auto id : nodes)
+        dofs.push_back(mesh.node_ref(id).dof_number(var.sys().number(), var.number(), 0));
+    std::vector<Number> values;
+    var.sys().currentSolution()->localize(values, dofs);
+    for (const auto k : make_range(num))
+      positions[k](c) += values[k];
+  }
+  return positions;
+}
+
 void
 KokkosParticleCloud::compute()
 {
@@ -389,10 +441,15 @@ KokkosParticleCloud::compute()
   ::Kokkos::parallel_for(
       "dem_reset_hops", cloud.size(), KOKKOS_LAMBDA(const std::size_t i) { cloud.hops(i) = 0; });
 
+  // Moving walls travel to this step's displaced positions over the step
+  if (_wall_displacements.size())
+    _sideset_walls.move(displacedWallVertices(), _dt);
+
   // Velocity Verlet; the forces at the start of the step were computed at the end of the last one
   for (unsigned int substep = 0; substep < _substeps; ++substep)
   {
     kickDrift();
+    _sideset_walls.advance(_dt / _substeps);
     walk();
     if (!updateNeighborList())
       startGhostUpdate();
@@ -1394,6 +1451,47 @@ KokkosParticleCloud::verifyPairStates()
       if (overlap > 0)
         overlapping.insert(key);
     }
+  }
+
+  // Sideset wall contacts are found on device: per particle, the boundaries within the skin
+  // and those overlapping, as (particle, boundary, overlapping) records
+  if (_sideset_walls.n)
+  {
+    const auto cloud = _cloud;
+    const auto sidesets = _sideset_walls;
+    const Real skin = _skin;
+    const auto num_walls = _walls.n;
+    constexpr auto max_contacts = DEM::SidesetWalls::max_contacts;
+    ::Kokkos::View<int64_t * [3]> records("dem_verify_wall_records", n * max_contacts);
+    ::Kokkos::View<unsigned int *> counts("dem_verify_wall_counts", n);
+    ::Kokkos::parallel_for(
+        "dem_verify_walls", n, KOKKOS_LAMBDA(const std::size_t i) {
+          DEM::WallContact wc[max_contacts];
+          const auto count = sidesets.contacts(
+              cloud.elem(i),
+              Moose::Kokkos::Real3(cloud.x(i, 0), cloud.x(i, 1), cloud.x(i, 2)),
+              cloud.r(i),
+              cloud.r(i) + skin,
+              wc);
+          counts(i) = count;
+          for (unsigned int k = 0; k < count; ++k)
+          {
+            records(i * max_contacts + k, 0) = cloud.gid(i);
+            records(i * max_contacts + k, 1) = -1 - static_cast<int64_t>(num_walls + wc[k].boundary);
+            records(i * max_contacts + k, 2) = wc[k].overlap > 0;
+          }
+        });
+    auto records_h = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, records);
+    auto counts_h = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, counts);
+    for (const auto i : make_range(n))
+      for (const auto k : make_range(counts_h(i)))
+      {
+        const auto key = std::make_pair(records_h(i * max_contacts + k, 0),
+                                        records_h(i * max_contacts + k, 1));
+        listed.insert(key);
+        if (records_h(i * max_contacts + k, 2))
+          overlapping.insert(key);
+      }
   }
 
   std::set<std::pair<int64_t, int64_t>> held;

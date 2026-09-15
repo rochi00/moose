@@ -6,7 +6,7 @@
 #include "libmesh/bounding_box.h"
 
 #include <vector>
-#include <set>
+#include <array>
 
 class MooseMesh;
 
@@ -23,6 +23,8 @@ struct WallContact
   Real overlap;
   std::size_t face;
   std::size_t boundary;
+  /// Velocity of the wall at the point (zero unless the walls move)
+  Moose::Kokkos::Real3 velocity;
 };
 
 /**
@@ -44,6 +46,11 @@ struct WallContact
  * faces of one sideset as the contact point slides over them, a triangulated plane keeping its
  * tangential spring like a plane. Faces a particle can touch at the same time with different
  * normals (the floor and a side of a box) should therefore be in different sidesets.
+ *
+ * The walls can move: given new vertex positions once per MOOSE step, each vertex is assigned
+ * the velocity that carries it there over the step, and the faces advance with it every substep,
+ * the velocity of a contact point being interpolated from the vertices. The candidate lists are
+ * not rebuilt, so the motion must stay within the reach the lists were built with.
  */
 struct SidesetWalls
 {
@@ -55,6 +62,12 @@ struct SidesetWalls
   ::Kokkos::View<unsigned int *> num_vertices;
   /// Unit normal of each face pointing into the domain
   ::Kokkos::View<Real * [3], ::Kokkos::LayoutRight> normals;
+  /// Velocity of each vertex of each face, zero unless the walls move
+  ::Kokkos::View<Real * [3][3], ::Kokkos::LayoutRight> velocities;
+  /// Mesh node of each vertex of each face, on host, to sample the displacement at
+  std::vector<std::array<libMesh::dof_id_type, 3>> nodes;
+  /// Whether any vertex velocity is nonzero
+  bool moving = false;
   /// Index of each face's boundary in the list the walls were built from
   ::Kokkos::View<std::size_t *> boundary;
   /// Number of boundaries the walls were built from
@@ -78,10 +91,22 @@ struct SidesetWalls
              const std::vector<BoundaryID> & boundaries,
              const Real reach);
 
+  /**
+   * Set the vertex velocities so that the vertices reach the given positions (three per face,
+   * in face order) over a time dt, and recompute the normals for the positions reached; with a
+   * zero dt the vertices are placed there at once, at rest
+   */
+  void move(const std::vector<Point> & positions, const Real dt);
+  /// Advance the vertices by their velocities over a substep
+  void advance(const Real dt);
+
   /// Closest point of face f to x, and whether it is in the face's interior (not on an edge or
   /// vertex)
   KOKKOS_INLINE_FUNCTION Moose::Kokkos::Real3
   closestPoint(const std::size_t f, const Moose::Kokkos::Real3 & x, bool & interior) const;
+  /// Velocity of face f at a point on it, interpolated from its vertices
+  KOKKOS_INLINE_FUNCTION Moose::Kokkos::Real3 velocityAt(const std::size_t f,
+                                                         const Moose::Kokkos::Real3 & p) const;
 
   /**
    * The contacts of a sphere in element elem with the walls, reduced as described above
@@ -148,6 +173,32 @@ SidesetWalls::closestPoint(const std::size_t f, const Moose::Kokkos::Real3 & x, 
   return a + (vb * denom) * ab + (vc * denom) * ac;
 }
 
+KOKKOS_INLINE_FUNCTION Moose::Kokkos::Real3
+SidesetWalls::velocityAt(const std::size_t f, const Moose::Kokkos::Real3 & p) const
+{
+  if (!moving)
+    return Moose::Kokkos::Real3(0);
+  const Moose::Kokkos::Real3 a(vertices(f, 0, 0), vertices(f, 0, 1), vertices(f, 0, 2));
+  const Moose::Kokkos::Real3 b(vertices(f, 1, 0), vertices(f, 1, 1), vertices(f, 1, 2));
+  const Moose::Kokkos::Real3 va(velocities(f, 0, 0), velocities(f, 0, 1), velocities(f, 0, 2));
+  const Moose::Kokkos::Real3 vb(velocities(f, 1, 0), velocities(f, 1, 1), velocities(f, 1, 2));
+  if (num_vertices(f) == 2)
+  {
+    const Moose::Kokkos::Real3 ab = b - a;
+    const Real t = (p - a).dot_product(ab) / ab.dot_product(ab);
+    return (1 - t) * va + t * vb;
+  }
+  // Barycentric weights of p (Ericson 3.4)
+  const Moose::Kokkos::Real3 c(vertices(f, 2, 0), vertices(f, 2, 1), vertices(f, 2, 2));
+  const Moose::Kokkos::Real3 vc(velocities(f, 2, 0), velocities(f, 2, 1), velocities(f, 2, 2));
+  const Moose::Kokkos::Real3 v0 = b - a, v1 = c - a, v2 = p - a;
+  const Real d00 = v0.dot_product(v0), d01 = v0.dot_product(v1), d11 = v1.dot_product(v1),
+             d20 = v2.dot_product(v0), d21 = v2.dot_product(v1);
+  const Real denom = d00 * d11 - d01 * d01;
+  const Real wb = (d11 * d20 - d01 * d21) / denom, wc = (d00 * d21 - d01 * d20) / denom;
+  return (1 - wb - wc) * va + wb * vb + wc * vc;
+}
+
 KOKKOS_INLINE_FUNCTION unsigned int
 SidesetWalls::contacts(const ContiguousElementID elem,
                        const Moose::Kokkos::Real3 & x,
@@ -186,7 +237,7 @@ SidesetWalls::contacts(const ContiguousElementID elem,
       overlap = r - distance;
       normal = (1.0 / distance) * d;
     }
-    out[count] = {p, normal, overlap, f, boundary(f)};
+    out[count] = {p, normal, overlap, f, boundary(f), velocityAt(f, p)};
     interior_flags[count] = interior;
     faces[count] = f;
     ++count;

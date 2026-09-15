@@ -141,6 +141,8 @@ protected:
   DEM::ContactEvaluator<Model> evaluator(const Model & contact) const;
   /// Build the Hertz model from the input parameters; default-constructed when not selected
   DEM::Hertz makeHertz() const;
+  /// The sideset walls' vertices displaced by the wall_displacements variables' current values
+  std::vector<Point> displacedWallVertices() const;
   /// Whether the selected contact model applies any force
   bool contactEnabled() const;
   /// Whether contacts need a history: friction or rolling resistance is on
@@ -219,8 +221,11 @@ protected:
   DEM::PairStateMap _pair_states;
   /// Fixed planar walls
   const DEM::AnalyticWalls _walls;
-  /// Sidesets whose faces are walls, and the walls built from them
+  /// Sidesets whose faces are walls, the extra candidate reach for their motion, the
+  /// displacement variables moving them, and the walls built from them
   const std::vector<BoundaryName> _wall_boundaries;
+  const Real _wall_reach;
+  std::vector<const MooseVariable *> _wall_displacements;
   DEM::SidesetWalls _sideset_walls;
   /// Directions in which the domain is periodic
   const MultiMooseEnum & _periodic;
