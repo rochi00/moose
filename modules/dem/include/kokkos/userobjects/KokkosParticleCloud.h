@@ -143,6 +143,8 @@ protected:
   DEM::Hertz makeHertz() const;
   /// Whether the selected contact model applies any force
   bool contactEnabled() const;
+  /// Whether contacts need a history: friction or rolling resistance is on
+  bool historyNeeded() const;
   /// Compute all forces: interior particles first, then the boundary ones once the ghost update
   /// has landed
   void computeForces();
@@ -210,7 +212,7 @@ protected:
   const ContactModel _contact_model;
   const DEM::LinearSpringDashpot _linear;
   const DEM::Hertz _hertz;
-  /// Coulomb friction on the tangential springs
+  /// Coulomb friction on the tangential springs and rolling resistance
   const DEM::Friction _friction;
   /// Contact histories of the listed pairs and wall contacts
   DEM::PairStateMap _pair_states;

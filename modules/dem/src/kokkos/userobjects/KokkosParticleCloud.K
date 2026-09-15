@@ -12,8 +12,8 @@ registerMooseObject("DemApp", KokkosParticleCloud);
 
 /// Reals forwarded per ghost every substep: position, velocity, and spin
 static constexpr std::size_t ghost_stride = 9;
-/// Reals a contact history migrates as: the two key IDs and the tangential spring
-static constexpr std::size_t pair_state_record_size = 5;
+/// Reals a contact history migrates as: the two key IDs and the tangential and rolling springs
+static constexpr std::size_t pair_state_record_size = 8;
 
 InputParameters
 KokkosParticleCloud::validParams()
@@ -67,6 +67,18 @@ KokkosParticleCloud::validParams()
       "friction >= 0",
       "Coefficient of friction limiting the tangential force to this times the normal force; "
       "zero for frictionless contact");
+  params.addRangeCheckedParam<Real>("rolling_friction",
+                                    0,
+                                    "rolling_friction >= 0",
+                                    "Coefficient of rolling friction limiting the rolling "
+                                    "resistance torque to this times the normal force times the "
+                                    "effective radius; zero for no rolling resistance");
+  params.addRangeCheckedParam<Real>("rolling_stiffness",
+                                    0,
+                                    "rolling_stiffness >= 0",
+                                    "Rolling spring stiffness, on the rolling displacement");
+  params.addRangeCheckedParam<Real>(
+      "rolling_damping", 0, "rolling_damping >= 0", "Rolling dashpot coefficient");
   params.addRangeCheckedParam<Real>(
       "youngs_modulus", "youngs_modulus > 0", "Young's modulus of the Hertz normal contact");
   params.addRangeCheckedParam<Real>("poissons_ratio",
@@ -143,7 +155,10 @@ KokkosParticleCloud::KokkosParticleCloud(const InputParameters & parameters)
              getParam<Real>("tangential_stiffness"),
              getParam<Real>("tangential_damping")}),
     _hertz(makeHertz()),
-    _friction({getParam<Real>("friction")}),
+    _friction({getParam<Real>("friction"),
+               getParam<Real>("rolling_friction"),
+               getParam<Real>("rolling_stiffness"),
+               getParam<Real>("rolling_damping")}),
     _walls(getParam<std::vector<Point>>("wall_points"),
            getParam<std::vector<RealVectorValue>>("wall_normals")),
     _periodic(getParam<MultiMooseEnum>("periodic")),
@@ -434,16 +449,17 @@ KokkosParticleCloud::computeForces(const Model & contact,
           {
             DEM::Contact c;
             Real f_n;
-            Moose::Kokkos::Real3 f_t;
+            Moose::Kokkos::Real3 f_t, tau_r;
             for (auto k = offsets(i); k < offsets(i + 1); ++k)
             {
               const auto j = pairs(k);
               if (cloud.elem(j) == exited || !eval.sphere(i, j, c))
                 continue;
               const Real sign = cloud.gid(i) < cloud.gid(j) ? 1 : -1;
-              eval.forces(c, DEM::PairKey::pair(cloud.gid(i), cloud.gid(j)), sign, false, f_n, f_t);
+              eval.forces(
+                  c, DEM::PairKey::pair(cloud.gid(i), cloud.gid(j)), sign, false, f_n, f_t, tau_r);
               f += f_n * c.normal + f_t;
-              tau -= cloud.r(i) * c.normal.cross_product(f_t);
+              tau += tau_r - cloud.r(i) * c.normal.cross_product(f_t);
             }
 
             // Sphere-plane narrow phase against every wall
@@ -451,9 +467,9 @@ KokkosParticleCloud::computeForces(const Model & contact,
             {
               if (!eval.wall(i, w, c))
                 continue;
-              eval.forces(c, DEM::PairKey::wall(cloud.gid(i), w), 1, false, f_n, f_t);
+              eval.forces(c, DEM::PairKey::wall(cloud.gid(i), w), 1, false, f_n, f_t, tau_r);
               f += f_n * c.normal + f_t;
-              tau -= cloud.r(i) * c.normal.cross_product(f_t);
+              tau += tau_r - cloud.r(i) * c.normal.cross_product(f_t);
             }
           }
         }
@@ -470,7 +486,7 @@ template <typename Model>
 void
 KokkosParticleCloud::updatePairStates(const Model & contact, const bool ghost_pairs)
 {
-  if (!contact.enabled() || _friction.mu <= 0)
+  if (!contact.enabled() || !historyNeeded())
     return;
   const auto cloud = _cloud;
   const auto n_local = _cloud.size();
@@ -492,7 +508,7 @@ KokkosParticleCloud::updatePairStates(const Model & contact, const bool ghost_pa
           return;
         DEM::Contact c;
         Real f_n;
-        Moose::Kokkos::Real3 f_t;
+        Moose::Kokkos::Real3 f_t, tau_r;
         for (auto k = offsets(i); k < offsets(i + 1); ++k)
         {
           const auto j = pairs(k);
@@ -504,7 +520,7 @@ KokkosParticleCloud::updatePairStates(const Model & contact, const bool ghost_pa
             continue;
           const auto key = DEM::PairKey::pair(cloud.gid(i), cloud.gid(j));
           if (eval.sphere(i, j, c))
-            eval.forces(c, key, lower ? 1 : -1, true, f_n, f_t);
+            eval.forces(c, key, lower ? 1 : -1, true, f_n, f_t, tau_r);
           else
             eval.reset(key);
         }
@@ -513,7 +529,7 @@ KokkosParticleCloud::updatePairStates(const Model & contact, const bool ghost_pa
           {
             const auto key = DEM::PairKey::wall(cloud.gid(i), w);
             if (eval.wall(i, w, c))
-              eval.forces(c, key, 1, true, f_n, f_t);
+              eval.forces(c, key, 1, true, f_n, f_t, tau_r);
             else
               eval.reset(key);
           }
@@ -777,10 +793,16 @@ KokkosParticleCloud::updateNeighborList()
   return true;
 }
 
+bool
+KokkosParticleCloud::historyNeeded() const
+{
+  return _friction.mu > 0 || _friction.mu_r > 0;
+}
+
 void
 KokkosParticleCloud::rebuildPairStates()
 {
-  if (!contactEnabled() || _friction.mu <= 0)
+  if (!contactEnabled() || !historyNeeded())
     return;
   const auto cloud = _cloud;
   const auto n_local = _cloud.size();
@@ -1303,9 +1325,7 @@ KokkosParticleCloud::verifyPairStates()
       continue;
     const auto key = key_of(states.key_at(e));
     held.insert(key);
-    const auto & value = states.value_at(e);
-    if ((value.delta_t[0] != 0 || value.delta_t[1] != 0 || value.delta_t[2] != 0) &&
-        !overlapping.count(key))
+    if (states.value_at(e).stretched() && !overlapping.count(key))
       mooseError("The contact history of particle ",
                  key.first,
                  " and ",
@@ -1327,7 +1347,7 @@ void
 KokkosParticleCloud::packPairStates(std::map<processor_id_type, std::vector<Real>> & to_send)
 {
   constexpr auto invalid_proc = libMesh::DofObject::invalid_processor_id;
-  if (!contactEnabled() || _friction.mu <= 0)
+  if (!contactEnabled() || !historyNeeded())
     return;
   const auto cloud = _cloud;
   const auto n_local = _cloud.size();
@@ -1342,10 +1362,7 @@ KokkosParticleCloud::packPairStates(std::map<processor_id_type, std::vector<Real
   const auto packable = KOKKOS_LAMBDA(const std::size_t i, const DEM::PairKey & key)
   {
     const auto entry = states.find(key);
-    if (!states.valid_at(entry))
-      return false;
-    const auto & value = states.value_at(entry);
-    return value.delta_t[0] != 0 || value.delta_t[1] != 0 || value.delta_t[2] != 0;
+    return states.valid_at(entry) && states.value_at(entry).stretched();
   };
   std::size_t total = 0;
   ::Kokkos::parallel_scan(
@@ -1383,7 +1400,10 @@ KokkosParticleCloud::packPairStates(std::map<processor_id_type, std::vector<Real
           record[0] = key.lower;
           record[1] = key.upper;
           for (unsigned int c = 0; c < 3; ++c)
+          {
             record[2 + c] = value.delta_t[c];
+            record[5 + c] = value.delta_r[c];
+          }
           ranks(r++) = cloud.target_rank(i);
         };
         for (auto k = offsets(i); k < offsets(i + 1); ++k)
@@ -1419,7 +1439,10 @@ KokkosParticleCloud::unpackPairStates(const std::vector<Real> & received)
         const Real * record = &buffer(r * pair_state_record_size);
         DEM::PairState value;
         for (unsigned int c = 0; c < 3; ++c)
+        {
           value.delta_t[c] = record[2 + c];
+          value.delta_r[c] = record[5 + c];
+        }
         states.insert(DEM::PairKey{static_cast<int64_t>(record[0]), static_cast<int64_t>(record[1])},
                       value);
       });

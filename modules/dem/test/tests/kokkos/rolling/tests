@@ -1,0 +1,51 @@
+[Tests]
+  design = 'KokkosParticleCloud.md Friction.md'
+  issues = '#1'
+
+  [incline_rest]
+    type = CSVDiff
+    input = incline.i
+    csvdiff = incline_rest_out_state_0010.csv
+    # At rest to 1e-9 m/s and 2e-7 rad/s, under abs_zero; the settled position is within 4e-7 m
+    # (7e-6 relative) of the quasi-static spring stretches of the gold
+    rel_err = 1e-5
+    abs_zero = 1e-6
+    requirement = 'The system shall hold a sphere at rest on an inclined plane when the friction exceeds the tangent of the slope and the rolling friction is large enough for the rolling resistance torque to balance the torque of the friction force.'
+    capabilities = 'kokkos'
+  []
+  [incline_roll]
+    type = CSVDiff
+    input = incline.i
+    cli_args = 'UserObjects/cloud/rolling_friction=0.1 Outputs/file_base=incline_roll_out'
+    csvdiff = incline_roll_out_state_0010.csv
+    # The steady acceleration matches g (sin - mu_r cos) / 1.4 to 1e-11 (from the velocity
+    # difference between outputs); the start-up, at g sin until the springs stretch, leaves a
+    # velocity offset of 3e-4 m/s, 1.1e-3 of the final velocity
+    rel_err = 2e-3
+    requirement = 'The system shall roll a sphere without slipping down an inclined plane, when the rolling friction is below the tangent of the slope, at the acceleration reduced by the plastic rolling resistance torque.'
+    capabilities = 'kokkos'
+  []
+  [incline_slide]
+    type = CSVDiff
+    input = incline.i
+    cli_args = 'UserObjects/cloud/friction=0.15 Outputs/file_base=incline_slide_out'
+    csvdiff = incline_slide_out_state_0010.csv
+    # As above; the start-up at g sin until the friction saturates leaves 5e-4 m/s, 4e-3 of the
+    # final velocity. The spin stays zero to 1e-12
+    rel_err = 5e-3
+    requirement = 'The system shall slide a sphere without rolling down an inclined plane steeper than the critical angle atan(mu) when the rolling resistance locks its rotation, at the acceleration g (sin - mu cos).'
+    capabilities = 'kokkos'
+  []
+  [rolling_stop]
+    type = CSVDiff
+    input = rolling_stop.i
+    csvdiff = rolling_stop_out_state_0020.csv
+    # The deceleration matches mu_r g / 1.4 to 1e-13 and the stopping distance to the rolling
+    # spring's stretch at rest, 1e-7 m; the residual velocity and spin, 1e-9 and 7e-8, are under
+    # abs_zero
+    rel_err = 1e-6
+    abs_zero = 1e-6
+    requirement = 'The system shall decelerate a sphere rolling on a plane with the plastic rolling resistance torque until it stops at the analytic distance and hold it there, on any number of ranks.'
+    capabilities = 'kokkos'
+  []
+[]

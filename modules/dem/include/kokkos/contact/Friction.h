@@ -18,6 +18,8 @@ struct Contact
   Moose::Kokkos::Real3 v_rel;
   Real v_n = 0;
   Moose::Kokkos::Real3 v_t;
+  /// Relative spin omega_i - omega_j, for rolling resistance
+  Moose::Kokkos::Real3 omega_rel;
   Real r_eff = 0;
   Real m_eff = 0;
 
@@ -44,6 +46,7 @@ struct Contact
     v_rel = v_i - v_j - (r_i * omega_i + r_j * omega_j).cross_product(normal);
     v_n = v_rel.dot_product(normal);
     v_t = v_rel - v_n * normal;
+    omega_rel = omega_i - omega_j;
     if (r_j > 0)
     {
       r_eff = r_i * r_j / (r_i + r_j);
@@ -58,15 +61,25 @@ struct Contact
 };
 
 /**
- * Coulomb friction on the tangential spring-dashpot of a contact model (plan layer L4). The
- * tangential force is -k_t delta_t - gamma_t v_t, limited to mu times the (repulsive part of
- * the) normal force; when it is, the spring is reset so that the spring and dashpot together
- * give exactly the limit, as in LAMMPS's granular pair styles.
+ * Coulomb friction on the tangential spring-dashpot of a contact model, and elastic-plastic
+ * spring-dashpot rolling resistance (plan layer L4). The tangential force is
+ * -k_t delta_t - gamma_t v_t, limited to mu times the (repulsive part of the) normal force; when
+ * it is, the spring is reset so that the spring and dashpot together give exactly the limit, as
+ * in LAMMPS's granular pair styles. Rolling resistance works the same way on the rolling
+ * displacement, the integral of the rolling velocity r_eff (omega_i - omega_j) x n, with its own
+ * stiffness, damping, and coefficient, and acts as the torque r_eff n x F_r on i and its
+ * opposite on j (Luding 2008; LAMMPS's rolling sds).
  */
 struct Friction
 {
   /// Coefficient of friction; zero for a frictionless contact
   Real mu = 0;
+  /// Coefficient of rolling friction, limiting the rolling torque to this times the normal force
+  /// times the effective radius; zero for no rolling resistance
+  Real mu_r = 0;
+  /// Rolling spring stiffness and dashpot coefficient, on the rolling displacement
+  Real k_r = 0;
+  Real gamma_r = 0;
 
   /**
    * Tangential force on particle i of a contact
@@ -106,6 +119,38 @@ struct Friction
         delta_t = (-1.0 / k_t) * (f_t + gamma_t * contact.v_t);
     }
     return f_t;
+  }
+
+  /**
+   * Rolling resistance torque on particle i of a contact
+   * @param delta_r The rolling spring displacement, the same from either side; when updating, it
+   *        is first projected on the tangent plane and stretched by the rolling velocity times
+   *        dt, and left holding the value the torque was computed from
+   */
+  KOKKOS_INLINE_FUNCTION Moose::Kokkos::Real3 rollingTorque(const Contact & contact,
+                                                            const Real f_n,
+                                                            const Real dt,
+                                                            Moose::Kokkos::Real3 & delta_r,
+                                                            const bool update) const
+  {
+    if (k_r <= 0 || mu_r <= 0)
+      return Moose::Kokkos::Real3(0);
+    const Moose::Kokkos::Real3 u = contact.r_eff * contact.omega_rel.cross_product(contact.normal);
+    if (update)
+    {
+      delta_r -= delta_r.dot_product(contact.normal) * contact.normal;
+      delta_r += dt * u;
+    }
+    Moose::Kokkos::Real3 f_r = -k_r * delta_r - gamma_r * u;
+    const Real f_r_max = mu_r * (f_n > 0 ? f_n : 0);
+    const Real f_r_norm = f_r.norm();
+    if (f_r_norm > f_r_max)
+    {
+      f_r *= f_r_norm > 0 ? f_r_max / f_r_norm : 0;
+      if (update)
+        delta_r = (-1.0 / k_r) * (f_r + gamma_r * u);
+    }
+    return contact.r_eff * contact.normal.cross_product(f_r);
   }
 };
 

@@ -68,11 +68,12 @@ struct ContactEvaluator
   }
 
   /**
-   * Normal and tangential forces on the particle a contact is seen from
+   * Normal and tangential forces and rolling resistance torque on the particle a contact is
+   * seen from
    * @param c The contact
    * @param key Its history key
    * @param sign +1 when the particle is the key's lower one (or the contact is with a wall), -1
-   *        otherwise: the history is stored in the lower particle's orientation
+   *        otherwise: the tangential history is stored in the lower particle's orientation
    * @param update Whether to advance the history by the substep or only read it
    */
   KOKKOS_INLINE_FUNCTION void forces(const Contact & c,
@@ -80,21 +81,29 @@ struct ContactEvaluator
                                      const Real sign,
                                      const bool update,
                                      Real & f_n,
-                                     Moose::Kokkos::Real3 & f_t) const
+                                     Moose::Kokkos::Real3 & f_t,
+                                     Moose::Kokkos::Real3 & tau_r) const
   {
     f_n = model.normalForce(c.overlap, c.v_n, c.r_eff, c.m_eff);
     // A contact without a history entry (which the rebuild gives every listed pair) is treated
     // as fresh
     const auto entry = states.find(key);
     const bool found = states.valid_at(entry);
-    Moose::Kokkos::Real3 delta_t(0);
+    Moose::Kokkos::Real3 delta_t(0), delta_r(0);
     if (found)
       for (unsigned int k = 0; k < 3; ++k)
+      {
         delta_t(k) = sign * states.value_at(entry).delta_t[k];
+        delta_r(k) = states.value_at(entry).delta_r[k];
+      }
     f_t = friction.tangentialForce(model, c, f_n, dt, delta_t, update);
+    tau_r = friction.rollingTorque(c, f_n, dt, delta_r, update);
     if (update && found)
       for (unsigned int k = 0; k < 3; ++k)
+      {
         states.value_at(entry).delta_t[k] = sign * delta_t(k);
+        states.value_at(entry).delta_r[k] = delta_r(k);
+      }
   }
 
   /// Reset the history of a separated contact
@@ -102,8 +111,7 @@ struct ContactEvaluator
   {
     const auto entry = states.find(key);
     if (states.valid_at(entry))
-      for (unsigned int k = 0; k < 3; ++k)
-        states.value_at(entry).delta_t[k] = 0;
+      states.value_at(entry) = PairState();
   }
 };
 

@@ -58,7 +58,8 @@ than in serial because migration forces a rebuild.
 
 ## Pair states
 
-Contacts carry a history, the tangential spring displacement of [Friction.md], in a device hash
+Contacts carry a history, the tangential and rolling spring displacements of [Friction.md], in a
+device hash
 map (`Kokkos::UnorderedMap`, plan layer L3, decision D6) keyed by the global IDs of the pair in
 increasing order, or by the particle's ID and the wall's index for a wall contact. The history is
 stored in the lower-ID particle's orientation, so every rank holding either particle forms the
@@ -76,7 +77,7 @@ checks that the histories with a stretched spring are exactly those of overlappi
 every listed pair has a history. `num_pair_states` of [KokkosParticleCloudValue.md] counts the
 histories held, summed over ranks.
 
-The `potential_energy` reported excludes the tangential springs.
+The `potential_energy` reported excludes the tangential and rolling springs.
 
 ## Periodic directions
 
