@@ -59,4 +59,27 @@
     requirement = 'The system shall carry a sphere resting on a sideset wall driven by prescribed nodal displacement variables along with the wall, the wall moving at the velocity that reaches the displacement of each step, on any number of ranks.'
     capabilities = 'kokkos'
   []
+  [hopper_analytic]
+    type = CSVDiff
+    input = hopper_analytic.i
+    csvdiff = hopper_analytic_out_state_0030.csv
+    # The reference: the gold is the serial run; the bounces amplify the roundoff of the ghost
+    # summation order in parallel to 4e-10 in the smallest coordinate
+    rel_err = 1e-8
+    abs_zero = 1e-5
+    requirement = 'The system shall settle a bed of frictional spheres into a V of two analytic planes, as the reference for the mesh-defined hopper.'
+    capabilities = 'kokkos'
+  []
+  [hopper]
+    type = CSVDiff
+    input = hopper.i
+    csvdiff = hopper_out_state_0030.csv
+    # Phase 3 exit check: the bed at rest (velocities and spins 1e-14) in the same arrangement,
+    # the resting positions within 8e-6 m of the analytic-wall pile (1.2e-4 relative; the two
+    # spheres on the axis of the V have x within abs_zero). Rank-independent to the same digits
+    rel_err = 2e-4
+    abs_zero = 1e-5
+    requirement = 'The system shall settle a bed of frictional spheres in a hopper whose walls are the sidesets of a rotated mesh into the pile obtained with the equivalent analytic planes, on any number of ranks.'
+    capabilities = 'kokkos'
+  []
 []

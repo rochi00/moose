@@ -39,6 +39,16 @@
     requirement = 'The system shall run with a rank that owns no elements, giving the same particle and exit counts as on any other partitioning.'
     capabilities = 'kokkos'
   []
+  [walk_2d_state]
+    type = CSVDiff
+    input = walk_2d.i
+    cli_args = "VectorPostprocessors/state/type=KokkosParticleState VectorPostprocessors/state/cloud=cloud VectorPostprocessors/state/execute_on=TIMESTEP_END Outputs/file_base=walk_2d_state_out"
+    csvdiff = 'walk_2d_state_out_state_0002.csv walk_2d_state_out_state_0004.csv'
+    # The particle state output shrinks as particles exit: three rows at step 2, none at step 4
+    # (the CSV output drops the rows of the previous step)
+    requirement = 'The system shall output the state of the remaining particles only, the output shrinking as particles leave the mesh, on any number of ranks.'
+    capabilities = 'kokkos'
+  []
   [walk_2d_fallback]
     type = CSVDiff
     input = walk_2d.i

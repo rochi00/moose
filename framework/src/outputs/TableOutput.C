@@ -193,6 +193,9 @@ TableOutput::outputVectorPostprocessors()
   // List of VPP objects with output
   const std::set<std::string> & out = getVectorPostprocessorOutput();
 
+  // VPP tables whose previous rows have been dropped for this output
+  std::set<std::string> cleared;
+
   for (const auto & r_name : _reporter_data.getReporterNames())
   {
     const std::string & vpp_name = r_name.getObjectName();
@@ -205,6 +208,12 @@ TableOutput::outputVectorPostprocessors()
 
       FormattedTable & table = insert_pair.first->second;
       table.outputTimeColumn(false);
+
+      // The vectors may be shorter than at the previous output; unless the table keeps the
+      // complete history, drop the previous rows so that none is left over past the new length
+      if (cleared.insert(vpp_name).second && hasVectorPostprocessorByName(vpp_name) &&
+          !_problem_ptr->getVectorPostprocessorObjectByName(vpp_name).containsCompleteHistory())
+        table.clear();
 
       const auto & vector = _reporter_data.getReporterValue<VectorPostprocessorValue>(r_name);
       table.addData(vec_name, vector);

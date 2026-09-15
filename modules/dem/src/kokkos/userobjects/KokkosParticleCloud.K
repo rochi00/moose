@@ -466,9 +466,11 @@ KokkosParticleCloud::compute()
   // who continues the walk (with the same fallback, since the hop budget may not reach from the
   // element the sender saw), until every particle has settled. Each round moves a particle at
   // least one partition, or through a periodic face, which it can do once per periodic direction
-  // in a step, so the number of rounds is bounded
+  // in a step, so the number of rounds is bounded; the bound is generous because the walk, which
+  // exits through the face the point is furthest in front of, can wander across a partition and
+  // back on an irregular mesh
   _num_migrated = 0;
-  const unsigned int max_rounds = n_processors() * (1 + _periodic.size());
+  const unsigned int max_rounds = 4 * n_processors() * (1 + _periodic.size());
   for (unsigned int round = 0;; ++round)
   {
     auto n_sent = migrate();
