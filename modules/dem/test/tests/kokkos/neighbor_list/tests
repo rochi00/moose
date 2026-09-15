@@ -9,4 +9,12 @@
     requirement = 'The system shall build a uniform-grid neighbor list on device whose set of pairs, including pairs spanning partition boundaries found through ghost particles, equals a brute-force search for random particles with radii spanning a 50:1 ratio, on any number of ranks.'
     capabilities = 'kokkos'
   []
+  [polydisperse_arborx]
+    type = CSVDiff
+    input = polydisperse.i
+    cli_args = 'UserObjects/cloud/broad_phase=arborx_bvh Outputs/file_base=polydisperse_arborx_out'
+    csvdiff = polydisperse_arborx_out.csv
+    requirement = 'The system shall build the same neighbor list with the ArborX bounding volume hierarchy broad phase as with the uniform grid, equal to a brute-force search for radii spanning a 50:1 ratio, on any number of ranks.'
+    capabilities = 'kokkos & arborx'
+  []
 []

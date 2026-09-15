@@ -62,3 +62,7 @@
     url = ../../pytorch/pytorch.git
     update = none
     ignore = untracked
+[submodule "modules/dem/contrib/arborx"]
+    path = modules/dem/contrib/arborx
+    url = ../../arborx/ArborX.git
+    update = none

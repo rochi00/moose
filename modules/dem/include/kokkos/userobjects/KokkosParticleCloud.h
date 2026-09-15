@@ -200,6 +200,8 @@ protected:
   const unsigned int _max_hops;
   /// Verlet skin distance of the neighbor list
   const Real _skin;
+  /// Broad phase of the neighbor list
+  const DEM::BroadPhase _broad_phase;
   /// Whether to run verify() every step
   const bool _verify;
   /// Whether to run verifyNeighborList() after every build

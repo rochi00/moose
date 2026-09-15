@@ -5,15 +5,26 @@
 namespace DEM
 {
 
+/// Broad phase of the neighbor list (plan decision D7)
+enum class BroadPhase
+{
+  /// Uniform grid of cell size 2 r_max + skin; fastest for narrow size distributions
+  UNIFORM_GRID,
+  /// ArborX bounding volume hierarchy over the spheres; cost independent of polydispersity.
+  /// Needs the ArborX submodule
+  ARBORX_BVH
+};
+
 /**
- * Uniform-grid broad phase producing a full CSR neighbor list (layer L2 of the DEM module plan):
- * particle i's neighbors are pairs[offsets(i) .. offsets(i + 1)), every pair appearing from both
- * sides so force kernels can sum a particle's contacts without atomics.
+ * Full CSR neighbor list (layer L2 of the DEM module plan): particle i's neighbors are
+ * pairs[offsets(i) .. offsets(i + 1)), every pair appearing from both sides so force kernels can
+ * sum a particle's contacts without atomics. Two particles are neighbors when their center
+ * distance is below r_i + r_j + skin. The list stays valid until some particle has moved more
+ * than skin / 2 since the build.
  *
- * Particles are binned on a grid of cell size 2 r_max + skin and counting-sorted by
- * bin * n + index, a unique key, so the neighbor order is deterministic for a given particle
- * order. Two particles are neighbors when their center distance is below r_i + r_j + skin. The
- * list stays valid until some particle has moved more than skin / 2 since the build.
+ * The candidate pairs come from a selectable broad phase, a uniform grid or an ArborX bounding
+ * volume hierarchy; each particle's neighbors are then sorted by index, so the list, and with it
+ * the force summation order, is the same whichever broad phase built it.
  */
 class NeighborList
 {
@@ -29,7 +40,8 @@ public:
              const std::size_t n_total,
              const Moose::Kokkos::Real3 & lower,
              const Moose::Kokkos::Real3 & upper,
-             const Real skin);
+             const Real skin,
+             const BroadPhase broad_phase);
 
   /// Whether some local particle has moved more than skin / 2 since the build, or the local
   /// particle count changed
@@ -53,6 +65,19 @@ public:
   ///@}
 
 private:
+  ///@{
+  /// Fill _offsets and _pairs with the neighbors of the first n particles from one broad phase,
+  /// in whatever order it finds them
+  void buildUniformGrid(const ParticleCloud & cloud,
+                        const std::size_t n,
+                        const Moose::Kokkos::Real3 & lower,
+                        const Moose::Kokkos::Real3 & upper,
+                        const Real skin);
+  void buildArborX(const ParticleCloud & cloud, const std::size_t n, const Real skin);
+  ///@}
+  /// Sort each particle's neighbors by index
+  void sortNeighbors(const std::size_t n);
+
   /// Number of local particles the list was built for
   std::size_t _n_local = 0;
   /// Skin distance the list was built with
@@ -68,11 +93,16 @@ private:
   ParticleCloud::VectorView _x_at_build;
 
   ///@{
-  /// Work buffers, sized to the particle count at the last build
+  /// Work buffers of the uniform grid, sized to the particle count at the last build
   ::Kokkos::View<uint64_t *> _keys;
   ::Kokkos::View<std::size_t *> _order;
   ::Kokkos::View<std::size_t *> _bin_offsets;
   ::Kokkos::View<std::size_t *> _counts;
+  ///@}
+  ///@{
+  /// ArborX's CRS output, in its integer type, copied into _offsets and _pairs
+  ::Kokkos::View<int *> _arborx_offsets;
+  ::Kokkos::View<int *> _arborx_pairs;
   ///@}
 };
 

@@ -21,12 +21,24 @@ are added by later layers.
 
 ## Neighbor list
 
-A uniform-grid broad phase (`DEM::NeighborList`) bins the local particles on a grid of cell size
-`2 r_max + skin`, counting-sorts them by bin with a unique key so the order is deterministic, and
-lists every pair closer than `r_i + r_j + skin` from both sides, so force kernels can sum a
-particle's contacts without atomics. The list is rebuilt whenever, on any rank, some particle has
-moved more than `skin / 2` since the last build or the number of local particles changed. With
-`verify_neighbor_list = true`, every build is checked against a brute-force pair search on host.
+`DEM::NeighborList` lists every pair closer than `r_i + r_j + skin` from both sides, so force
+kernels can sum a particle's contacts without atomics. The candidate pairs come from the
+`broad_phase` (plan decision D7):
+
+- `uniform_grid` bins the particles on a grid of cell size `2 r_max + skin` and searches the 27
+  surrounding cells. It is the fastest for a narrow size distribution, but the cell size is set
+  by the largest particle, so it degrades as the size ratio grows.
+- `arborx_bvh` builds an [ArborX](https://github.com/arborx/ArborX) bounding volume hierarchy
+  over the spheres' bounding boxes and queries it with each box inflated by the skin; the cost
+  does not depend on the size distribution. It needs the ArborX submodule
+  (`modules/dem/contrib/arborx`, header-only; it requires C++20, so the module's Kokkos sources
+  are compiled as C++20 when it is present) and is reported by the `arborx` capability.
+
+Each particle's neighbors are then sorted by index, so the list, and with it the summation order
+of the forces, is the same whichever broad phase built it. The list is rebuilt whenever, on any
+rank, some particle has moved more than `skin / 2` since the last build or the number of local
+particles changed. With `verify_neighbor_list = true`, every build is checked against a
+brute-force pair search on host.
 
 ## Ghost particles
 

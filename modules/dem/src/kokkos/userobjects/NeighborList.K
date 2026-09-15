@@ -1,8 +1,60 @@
 // Kokkos-MOOSE's KokkosHeader.h defines macros (MemSpace, KOKKOS_IF_ON_HOST) that break the Kokkos
 // sort headers, so they must come first and are only included in this translation unit
 #include <Kokkos_Sort.hpp>
+#ifdef DEM_HAVE_ARBORX
+#include <ArborX_LinearBVH.hpp>
+#endif
 
 #include "NeighborList.h"
+#include "MooseError.h"
+
+#ifdef DEM_HAVE_ARBORX
+namespace DEM
+{
+/// The first n spheres of a cloud as ArborX primitives (their bounding boxes) or, inflated by the
+/// skin, as intersection predicates carrying the particle index
+struct SphereBoxes
+{
+  ParticleCloud cloud;
+  std::size_t n;
+  Real inflation;
+};
+
+/// Keeps a candidate pair when the exact criterion holds, distance below r_i + r_j + skin
+struct SphereFilter
+{
+  ParticleCloud cloud;
+  Real skin;
+
+  template <typename Predicate, typename Value, typename Output>
+  KOKKOS_FUNCTION void
+  operator()(const Predicate & predicate, const Value & value, const Output & out) const
+  {
+    const std::size_t i = ArborX::getData(predicate);
+    const std::size_t j = value.index;
+    if (j == i)
+      return;
+    const Moose::Kokkos::Real3 d(
+        cloud.x(i, 0) - cloud.x(j, 0), cloud.x(i, 1) - cloud.x(j, 1), cloud.x(i, 2) - cloud.x(j, 2));
+    if (d.norm() < cloud.r(i) + cloud.r(j) + skin)
+      out(static_cast<int>(j));
+  }
+};
+} // namespace DEM
+
+template <>
+struct ArborX::AccessTraits<DEM::SphereBoxes>
+{
+  using memory_space = ::Kokkos::DefaultExecutionSpace::memory_space;
+  static KOKKOS_FUNCTION std::size_t size(const DEM::SphereBoxes & s) { return s.n; }
+  static KOKKOS_FUNCTION auto get(const DEM::SphereBoxes & s, const std::size_t i)
+  {
+    const Real h = s.cloud.r(i) + s.inflation;
+    return ArborX::Box<3, Real>{{s.cloud.x(i, 0) - h, s.cloud.x(i, 1) - h, s.cloud.x(i, 2) - h},
+                                {s.cloud.x(i, 0) + h, s.cloud.x(i, 1) + h, s.cloud.x(i, 2) + h}};
+  }
+};
+#endif
 
 namespace DEM
 {
@@ -13,7 +65,8 @@ NeighborList::build(const ParticleCloud & cloud,
                     const std::size_t n_total,
                     const Moose::Kokkos::Real3 & lower,
                     const Moose::Kokkos::Real3 & upper,
-                    const Real skin)
+                    const Real skin,
+                    const BroadPhase broad_phase)
 {
   const auto n = n_total;
   _n_local = n_local;
@@ -29,6 +82,81 @@ NeighborList::build(const ParticleCloud & cloud,
     _num_interior = _num_boundary = 0;
     return;
   }
+
+  if (_offsets.extent(0) < n + 1)
+    _offsets = ::Kokkos::View<std::size_t *>("dem_nl_offsets", n + 1);
+  if (_x_at_build.extent(0) < n_local)
+    _x_at_build = libMesh::Kokkos::make_vector_storage<ParticleCloud::StoragePolicy>(
+        "dem_nl_x_at_build", n_local);
+  const auto x_at_build = _x_at_build;
+  ::Kokkos::parallel_for(
+      "dem_nl_x_at_build", n_local, KOKKOS_LAMBDA(const std::size_t i) {
+        for (unsigned int c = 0; c < 3; ++c)
+          x_at_build(i, c) = cloud.x(i, c);
+      });
+
+  if (broad_phase == BroadPhase::ARBORX_BVH)
+    buildArborX(cloud, n, skin);
+  else
+    buildUniformGrid(cloud, n, lower, upper, skin);
+  sortNeighbors(n);
+  const auto offsets = _offsets;
+  const auto pairs = _pairs;
+
+  // Every pair is listed from both sides: count a local pair from its lower index and a pair with
+  // a ghost from the rank owning the lower global ID
+  std::size_t num_pairs = 0;
+  ::Kokkos::parallel_reduce(
+      "dem_nl_num_pairs",
+      n_local,
+      KOKKOS_LAMBDA(const std::size_t i, std::size_t & sum) {
+        for (auto k = offsets(i); k < offsets(i + 1); ++k)
+        {
+          const auto j = pairs(k);
+          sum += j < n_local ? i < j : cloud.gid(i) < cloud.gid(j);
+        }
+      },
+      num_pairs);
+  _num_pairs = num_pairs;
+
+  // Split the local particles by whether they have a ghost neighbor, compacting each side with a
+  // scan; the boundary list is the interior list's complement
+  if (_interior.extent(0) < n_local)
+  {
+    _interior = ::Kokkos::View<std::size_t *>("dem_nl_interior", n_local);
+    _boundary = ::Kokkos::View<std::size_t *>("dem_nl_boundary", n_local);
+  }
+  const auto interior = _interior;
+  const auto boundary = _boundary;
+  std::size_t num_interior = 0;
+  ::Kokkos::parallel_scan(
+      "dem_nl_split",
+      n_local,
+      KOKKOS_LAMBDA(const std::size_t i, std::size_t & n_interior_before, const bool final) {
+        bool is_interior = true;
+        for (auto k = offsets(i); k < offsets(i + 1) && is_interior; ++k)
+          is_interior = pairs(k) < n_local;
+        if (final)
+        {
+          if (is_interior)
+            interior(n_interior_before) = i;
+          else
+            boundary(i - n_interior_before) = i;
+        }
+        n_interior_before += is_interior;
+      },
+      num_interior);
+  _num_interior = num_interior;
+  _num_boundary = n_local - num_interior;
+}
+
+void
+NeighborList::buildUniformGrid(const ParticleCloud & cloud,
+                               const std::size_t n,
+                               const Moose::Kokkos::Real3 & lower,
+                               const Moose::Kokkos::Real3 & upper,
+                               const Real skin)
+{
   // Copies for capture by value in the kernels
   const Moose::Kokkos::Real3 lo = lower;
 
@@ -51,11 +179,7 @@ NeighborList::build(const ParticleCloud & cloud,
   {
     _keys = ::Kokkos::View<uint64_t *>("dem_nl_keys", n);
     _order = ::Kokkos::View<std::size_t *>("dem_nl_order", n);
-    _offsets = ::Kokkos::View<std::size_t *>("dem_nl_offsets", n + 1);
   }
-  if (_x_at_build.extent(0) < n_local)
-    _x_at_build = libMesh::Kokkos::make_vector_storage<ParticleCloud::StoragePolicy>(
-        "dem_nl_x_at_build", n_local);
   if (_counts.extent(0) < num_bins)
     _counts = ::Kokkos::View<std::size_t *>("dem_nl_counts", num_bins);
   if (_bin_offsets.extent(0) < num_bins + 1)
@@ -65,7 +189,6 @@ NeighborList::build(const ParticleCloud & cloud,
   const auto offsets = _offsets;
   const auto counts = _counts;
   const auto bin_offsets = _bin_offsets;
-  const auto x_at_build = _x_at_build;
 
   // Bin index of each particle, clamped so particles outside the box land in edge bins
   auto bin_of = KOKKOS_LAMBDA(const std::size_t i)
@@ -87,9 +210,6 @@ NeighborList::build(const ParticleCloud & cloud,
         keys(i) = static_cast<uint64_t>(bin) * n + i;
         order(i) = i;
         ::Kokkos::atomic_inc(&counts(bin));
-        if (i < n_local)
-          for (unsigned int c = 0; c < 3; ++c)
-            x_at_build(i, c) = cloud.x(i, c);
       });
   ::Kokkos::Experimental::sort_by_key(::Kokkos::DefaultExecutionSpace(),
                                       ::Kokkos::subview(keys, std::make_pair(std::size_t(0), n)),
@@ -162,52 +282,63 @@ NeighborList::build(const ParticleCloud & cloud,
         auto k = offsets(i);
         for_each_neighbor(i, [&](const std::size_t j) { pairs(k++) = j; });
       });
+}
 
-  // Every pair is listed from both sides: count a local pair from its lower index and a pair with
-  // a ghost from the rank owning the lower global ID
-  std::size_t num_pairs = 0;
-  ::Kokkos::parallel_reduce(
-      "dem_nl_num_pairs",
-      n_local,
-      KOKKOS_LAMBDA(const std::size_t i, std::size_t & sum) {
-        for (auto k = offsets(i); k < offsets(i + 1); ++k)
+void
+NeighborList::buildArborX(const ParticleCloud & cloud, const std::size_t n, const Real skin)
+{
+#ifdef DEM_HAVE_ARBORX
+  // A hierarchy over the spheres' bounding boxes, queried with each sphere's box inflated by the
+  // skin; box-box overlap is a superset of the sphere criterion, which the callback then applies
+  // exactly. ArborX returns the CRS list in its own integer type, copied into ours
+  const ::Kokkos::DefaultExecutionSpace space;
+  ArborX::BoundingVolumeHierarchy bvh(
+      space, ArborX::Experimental::attach_indices<int>(SphereBoxes{cloud, n, 0}));
+  bvh.query(space,
+            ArborX::Experimental::attach_indices<int>(
+                ArborX::Experimental::make_intersects(SphereBoxes{cloud, n, skin})),
+            SphereFilter{cloud, skin},
+            _arborx_pairs,
+            _arborx_offsets);
+
+  const auto arborx_offsets = _arborx_offsets;
+  const auto arborx_pairs = _arborx_pairs;
+  const std::size_t total = arborx_pairs.extent(0);
+  if (_pairs.extent(0) < total)
+    _pairs = ::Kokkos::View<std::size_t *>("dem_nl_pairs", total);
+  const auto offsets = _offsets;
+  const auto pairs = _pairs;
+  ::Kokkos::parallel_for(
+      "dem_nl_arborx_offsets", n + 1, KOKKOS_LAMBDA(const std::size_t i) {
+        offsets(i) = arborx_offsets(i);
+      });
+  ::Kokkos::parallel_for(
+      "dem_nl_arborx_pairs", total, KOKKOS_LAMBDA(const std::size_t k) {
+        pairs(k) = arborx_pairs(k);
+      });
+#else
+  libmesh_ignore(cloud, n, skin);
+  mooseError("The ArborX broad phase needs the ArborX submodule (modules/dem/contrib/arborx)");
+#endif
+}
+
+void
+NeighborList::sortNeighbors(const std::size_t n)
+{
+  // Insertion sort of each particle's few neighbors, in place
+  const auto offsets = _offsets;
+  const auto pairs = _pairs;
+  ::Kokkos::parallel_for(
+      "dem_nl_sort", n, KOKKOS_LAMBDA(const std::size_t i) {
+        for (auto k = offsets(i) + 1; k < offsets(i + 1); ++k)
         {
           const auto j = pairs(k);
-          sum += j < n_local ? i < j : cloud.gid(i) < cloud.gid(j);
+          auto m = k;
+          for (; m > offsets(i) && pairs(m - 1) > j; --m)
+            pairs(m) = pairs(m - 1);
+          pairs(m) = j;
         }
-      },
-      num_pairs);
-  _num_pairs = num_pairs;
-
-  // Split the local particles by whether they have a ghost neighbor, compacting each side with a
-  // scan; the boundary list is the interior list's complement
-  if (_interior.extent(0) < n_local)
-  {
-    _interior = ::Kokkos::View<std::size_t *>("dem_nl_interior", n_local);
-    _boundary = ::Kokkos::View<std::size_t *>("dem_nl_boundary", n_local);
-  }
-  const auto interior = _interior;
-  const auto boundary = _boundary;
-  std::size_t num_interior = 0;
-  ::Kokkos::parallel_scan(
-      "dem_nl_split",
-      n_local,
-      KOKKOS_LAMBDA(const std::size_t i, std::size_t & n_interior_before, const bool final) {
-        bool is_interior = true;
-        for (auto k = offsets(i); k < offsets(i + 1) && is_interior; ++k)
-          is_interior = pairs(k) < n_local;
-        if (final)
-        {
-          if (is_interior)
-            interior(n_interior_before) = i;
-          else
-            boundary(i - n_interior_before) = i;
-        }
-        n_interior_before += is_interior;
-      },
-      num_interior);
-  _num_interior = num_interior;
-  _num_boundary = n_local - num_interior;
+      });
 }
 
 bool

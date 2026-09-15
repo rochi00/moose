@@ -42,7 +42,7 @@ DemTestApp::registerAll(Factory & f, ActionFactory & af, Syntax & s, bool use_te
 void
 DemTestApp::registerApps()
 {
-  registerApp(DemApp);
+  DemApp::registerApps();
   registerApp(DemTestApp);
 }
 

@@ -28,6 +28,16 @@
     requirement = 'The system shall compute the head-on collision of two spheres through a periodic face, using periodic ghost images, with the same result as the direct collision, on any number of ranks.'
     capabilities = 'kokkos'
   []
+  [restitution_periodic_arborx]
+    type = CSVDiff
+    input = restitution_periodic.i
+    cli_args = 'UserObjects/cloud/broad_phase=arborx_bvh Outputs/file_base=restitution_periodic_arborx_out'
+    csvdiff = restitution_periodic_arborx_out_state_0004.csv
+    # Bit-identical to the uniform grid: the neighbor order does not depend on the broad phase
+    rel_err = 1e-4
+    requirement = 'The system shall compute the collision through a periodic face with the ArborX broad phase identically to the uniform grid, on any number of ranks.'
+    capabilities = 'kokkos & arborx'
+  []
   [wall_restitution]
     type = CSVDiff
     input = wall_restitution.i

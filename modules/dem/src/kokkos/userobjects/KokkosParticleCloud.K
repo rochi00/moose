@@ -73,6 +73,12 @@ KokkosParticleCloud::validParams()
   // face-plane test cannot handle, so bound it rather than loop for the mesh size
   params.addParam<unsigned int>(
       "max_hops", 32, "Maximum number of face-neighbor hops per particle per substep");
+  params.addParam<MooseEnum>("broad_phase",
+                             MooseEnum("uniform_grid arborx_bvh", "uniform_grid"),
+                             "Broad phase of the neighbor list: a uniform grid of cell size "
+                             "2 r_max + skin, or an ArborX bounding volume hierarchy whose cost "
+                             "does not depend on the size distribution (needs the ArborX "
+                             "submodule)");
   params.addRangeCheckedParam<Real>("skin",
                                     "skin >= 0",
                                     "Verlet skin distance of the neighbor list; the list is rebuilt "
@@ -115,6 +121,7 @@ KokkosParticleCloud::KokkosParticleCloud(const InputParameters & parameters)
     _substeps(getParam<unsigned int>("substeps")),
     _max_hops(getParam<unsigned int>("max_hops")),
     _skin(isParamValid("skin") ? getParam<Real>("skin") : 0.1 * _radius),
+    _broad_phase(getParam<MooseEnum>("broad_phase").getEnum<DEM::BroadPhase>()),
     _verify(getParam<bool>("verify")),
     _verify_neighbor_list(getParam<bool>("verify_neighbor_list")),
     _ghost_tag(_communicator.get_unique_tag()),
@@ -135,6 +142,10 @@ KokkosParticleCloud::KokkosParticleCloud(const InputParameters & parameters)
       paramError("wall_normals", "Normals must be nonzero");
   if (_walls.n && !contactEnabled())
     paramError("wall_points", "Walls need a contact model with a positive stiffness or modulus");
+#ifndef DEM_HAVE_ARBORX
+  if (_broad_phase == DEM::BroadPhase::ARBORX_BVH)
+    paramError("broad_phase", "The ArborX broad phase needs the ArborX submodule (modules/dem/contrib/arborx)");
+#endif
   // The far side of a periodic face is found by the point locator, which only sees the local and
   // ghost elements of a distributed mesh
   if (_periodic.size() && _fe_problem.mesh().isDistributedMesh())
@@ -656,7 +667,8 @@ KokkosParticleCloud::updateNeighborList()
   auto box = _rank_boxes[processor_id()];
   box.first -= Point(cutoff, cutoff, cutoff);
   box.second += Point(cutoff, cutoff, cutoff);
-  _neighbor_list.build(_cloud, _cloud.size(), _cloud.size() + _num_ghosts, box.min(), box.max(), _skin);
+  _neighbor_list.build(
+      _cloud, _cloud.size(), _cloud.size() + _num_ghosts, box.min(), box.max(), _skin, _broad_phase);
   ++_num_neighbor_list_builds;
   if (_verify_neighbor_list)
     verifyNeighborList();

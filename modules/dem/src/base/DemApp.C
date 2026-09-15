@@ -30,6 +30,13 @@ DemApp::registerAll(Factory & f, ActionFactory & af, Syntax & /*s*/)
 void
 DemApp::registerApps()
 {
+  const std::string doc = "ArborX bounding volume hierarchy broad phase for the DEM neighbor list ";
+#ifdef DEM_HAVE_ARBORX
+  addBoolCapability("arborx", true, doc + "is available.");
+#else
+  addBoolCapability("arborx", false, doc + "is not available.");
+#endif
+
   registerApp(DemApp);
 }
 
