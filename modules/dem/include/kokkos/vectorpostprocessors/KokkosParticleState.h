@@ -1,0 +1,29 @@
+#pragma once
+
+#include "KokkosGeneralVectorPostprocessor.h"
+
+class KokkosParticleCloud;
+
+/**
+ * Outputs the position, velocity, and angular velocity of every particle of a
+ * KokkosParticleCloud, gathered to the root rank and sorted by global particle ID
+ */
+class KokkosParticleState : public Moose::Kokkos::GeneralVectorPostprocessor
+{
+public:
+  static InputParameters validParams();
+
+  KokkosParticleState(const InputParameters & parameters);
+
+  virtual void initialize() override {}
+  virtual void compute() override;
+  virtual void finalize() override;
+
+protected:
+  const KokkosParticleCloud & _cloud;
+
+  VectorPostprocessorValue & _gid;
+  std::vector<VectorPostprocessorValue *> _x;
+  std::vector<VectorPostprocessorValue *> _v;
+  std::vector<VectorPostprocessorValue *> _omega;
+};

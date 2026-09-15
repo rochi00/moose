@@ -1,5 +1,5 @@
 [Tests]
-  design = 'KokkosParticleTracker.md'
+  design = 'KokkosParticleCloud.md'
   issues = '#1'
 
   [walk_2d]
@@ -12,7 +12,7 @@
   [walk_2d_max_hops]
     type = RunException
     input = walk_2d.i
-    cli_args = 'UserObjects/tracker/max_hops=1 Outputs/csv=false'
+    cli_args = 'UserObjects/cloud/max_hops=1 Outputs/csv=false'
     expect_err = 'Particle 0 at \(x,y,z\)=\(\s*0.3,\s*0.2,\s*0\) was lost but is in element 12'
     requirement = 'The system shall report a particle whose element could not be resolved within the hop budget as a verification failure naming the particle and the element that contains it.'
     max_parallel = 1

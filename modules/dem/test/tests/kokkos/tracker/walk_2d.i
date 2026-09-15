@@ -19,8 +19,8 @@
 []
 
 [UserObjects]
-  [tracker]
-    type = KokkosParticleTracker
+  [cloud]
+    type = KokkosParticleCloud
     initial_positions = '0.05 0.05 0
                          0.13 0.47 0
                          0.31 0.29 0
@@ -29,7 +29,9 @@
                          0.66 0.12 0
                          0.85 0.55 0
                          0.97 0.03 0'
-    velocity = '2.5 1.5 0'
+    initial_velocity = '2.5 1.5 0'
+    radius = 0.01
+    density = 1000
     verify = true
     execute_on = TIMESTEP_END
   []
@@ -37,20 +39,20 @@
 
 [Postprocessors]
   [num_particles]
-    type = KokkosParticleTrackerValue
-    tracker = tracker
+    type = KokkosParticleCloudValue
+    cloud = cloud
     value = num_particles
     execute_on = TIMESTEP_END
   []
   [num_lost]
-    type = KokkosParticleTrackerValue
-    tracker = tracker
+    type = KokkosParticleCloudValue
+    cloud = cloud
     value = num_lost
     execute_on = TIMESTEP_END
   []
   [max_hops]
-    type = KokkosParticleTrackerValue
-    tracker = tracker
+    type = KokkosParticleCloudValue
+    cloud = cloud
     value = max_hops
     execute_on = TIMESTEP_END
   []

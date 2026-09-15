@@ -1,27 +1,37 @@
-#include "KokkosParticleTracker.h"
+#include "KokkosParticleCloud.h"
 
 #include "MooseMesh.h"
 
 #include "libmesh/elem.h"
 #include "timpi/parallel_sync.h"
 
-registerMooseObject("DemApp", KokkosParticleTracker);
+registerMooseObject("DemApp", KokkosParticleCloud);
 
 InputParameters
-KokkosParticleTracker::validParams()
+KokkosParticleCloud::validParams()
 {
   InputParameters params = Moose::Kokkos::GeneralUserObject::validParams();
-  params.addClassDescription("Advects particles with a uniform velocity and tracks the element "
-                             "containing each particle by walking across element faces on device, "
-                             "migrating particles between ranks as they cross partitions.");
+  params.addClassDescription(
+      "Integrates a cloud of spherical particles on device with Velocity Verlet over a number of "
+      "substeps per time step, tracking the element containing each particle by walking across "
+      "element faces and migrating particles between ranks as they cross partitions.");
   params.addRequiredParam<std::vector<Point>>("initial_positions",
                                               "Initial positions of all particles");
   params.addParam<RealVectorValue>(
-      "velocity", RealVectorValue(0, 0, 0), "Uniform velocity applied to every particle");
-  // A particle should cross only a few cells per step; a much larger walk indicates a mesh the
+      "initial_velocity", RealVectorValue(0, 0, 0), "Initial velocity of every particle");
+  params.addParam<RealVectorValue>("initial_angular_velocity",
+                                   RealVectorValue(0, 0, 0),
+                                   "Initial body-frame angular velocity of every particle");
+  params.addRequiredRangeCheckedParam<Real>("radius", "radius > 0", "Particle radius");
+  params.addRequiredRangeCheckedParam<Real>("density", "density > 0", "Particle density");
+  params.addParam<RealVectorValue>(
+      "gravity", RealVectorValue(0, 0, 0), "Gravitational acceleration");
+  params.addRangeCheckedParam<unsigned int>(
+      "substeps", 1, "substeps > 0", "Number of integration substeps per time step");
+  // A particle should cross only a few cells per substep; a much larger walk indicates a mesh the
   // face-plane test cannot handle, so bound it rather than loop for the mesh size
   params.addParam<unsigned int>(
-      "max_hops", 32, "Maximum number of face-neighbor hops per particle per step");
+      "max_hops", 32, "Maximum number of face-neighbor hops per particle per substep");
   params.addParam<bool>("verify",
                         false,
                         "Check the device element assignment against libMesh's PointLocator "
@@ -29,10 +39,15 @@ KokkosParticleTracker::validParams()
   return params;
 }
 
-KokkosParticleTracker::KokkosParticleTracker(const InputParameters & parameters)
+KokkosParticleCloud::KokkosParticleCloud(const InputParameters & parameters)
   : Moose::Kokkos::GeneralUserObject(parameters),
     _initial_positions(getParam<std::vector<Point>>("initial_positions")),
-    _velocity(getParam<RealVectorValue>("velocity")),
+    _initial_velocity(getParam<RealVectorValue>("initial_velocity")),
+    _initial_angular_velocity(getParam<RealVectorValue>("initial_angular_velocity")),
+    _radius(getParam<Real>("radius")),
+    _density(getParam<Real>("density")),
+    _gravity(getParam<RealVectorValue>("gravity")),
+    _substeps(getParam<unsigned int>("substeps")),
     _max_hops(getParam<unsigned int>("max_hops")),
     _verify(getParam<bool>("verify"))
 {
@@ -41,12 +56,12 @@ KokkosParticleTracker::KokkosParticleTracker(const InputParameters & parameters)
 }
 
 void
-KokkosParticleTracker::initialSetup()
+KokkosParticleCloud::initialSetup()
 {
   const auto & mesh = kokkosMesh();
   const auto num_total = mesh.getNumLocalAndPossiblyOneNeighborLayerGhostElements();
 
-  // Reverse element ID map and owner ranks for local and one-layer ghost elements
+  // Reverse element ID map, owner ranks, and libMesh IDs for local and one-layer ghost elements
   _cid_to_elem.assign(num_total, nullptr);
   auto owner_host = ::Kokkos::View<processor_id_type *, ::Kokkos::HostSpace>("dem_owner", num_total);
   auto id_host = ::Kokkos::View<dof_id_type *, ::Kokkos::HostSpace>("dem_libmesh_id", num_total);
@@ -72,63 +87,86 @@ KokkosParticleTracker::initialSetup()
   _locator = _fe_problem.mesh().getPointLocator();
   _locator->enable_out_of_mesh_mode();
 
-  std::vector<int64_t> gids;
-  std::vector<Point> positions;
-  std::vector<ContiguousElementID> elems;
+  std::vector<std::pair<int64_t, ContiguousElementID>> local;
   for (const auto i : index_range(_initial_positions))
   {
     const auto * elem = (*_locator)(_initial_positions[i]);
-    if (!elem || elem->processor_id() != processor_id())
-      continue;
-    gids.push_back(i);
-    positions.push_back(_initial_positions[i]);
-    elems.push_back(mesh.getContiguousElementID(elem));
+    if (elem && elem->processor_id() == processor_id())
+      local.emplace_back(i, mesh.getContiguousElementID(elem));
   }
 
-  const auto n = gids.size();
-  _cloud.allocate(n);
-  _cloud.x = libMesh::Kokkos::upload_vector_storage<DEM::ParticleCloud::StoragePolicy>(positions,
-                                                                                       "dem_x");
-  _cloud.v = libMesh::Kokkos::upload_vector_storage<DEM::ParticleCloud::StoragePolicy>(
-      std::vector<RealVectorValue>(n, _velocity), "dem_v");
-
-  auto gid_host = ::Kokkos::create_mirror_view(_cloud.gid);
-  auto elem_host = ::Kokkos::create_mirror_view(_cloud.elem);
-  for (const auto i : make_range(n))
+  const auto n = local.size();
+  const Real mass = _density * 4.0 / 3.0 * libMesh::pi * Utility::pow<3>(_radius);
+  // Solid sphere
+  const Real inertia = 0.4 * mass * _radius * _radius;
+  DEM::ParticleCloud::HostMirror host(n);
+  for (const auto j : make_range(n))
   {
-    gid_host(i) = gids[i];
-    elem_host(i) = elems[i];
+    const auto [gid, cid] = local[j];
+    host.gid(j) = gid;
+    for (const auto c : make_range(3))
+    {
+      host.x(j, c) = _initial_positions[gid](c);
+      host.v(j, c) = _initial_velocity(c);
+      host.omega(j, c) = _initial_angular_velocity(c);
+      host.f(j, c) = 0;
+      host.tau(j, c) = 0;
+    }
+    // Identity orientation
+    host.q(j, 0) = 1;
+    host.q(j, 1) = host.q(j, 2) = host.q(j, 3) = 0;
+    host.r(j) = _radius;
+    host.m(j) = mass;
+    host.inertia(j) = inertia;
+    host.elem(j) = cid;
+    host.target_rank(j) = libMesh::DofObject::invalid_processor_id;
+    host.hops(j) = 0;
   }
-  ::Kokkos::deep_copy(_cloud.gid, gid_host);
-  ::Kokkos::deep_copy(_cloud.elem, elem_host);
-  ::Kokkos::deep_copy(_cloud.target_rank, libMesh::DofObject::invalid_processor_id);
-  ::Kokkos::deep_copy(_cloud.hops, 0u);
+  _cloud.allocate(n);
+  _cloud.copyFrom(host, 0);
   _cloud.n = n;
   allocateScratch(n);
+
+  computeForces();
+  // Reduce so the initial values are global before the first execution
+  count();
+  finalize();
 }
 
 void
-KokkosParticleTracker::compute()
+KokkosParticleCloud::compute()
 {
-  advance();
+  const auto cloud = _cloud;
+  ::Kokkos::parallel_for(
+      "dem_reset_hops", cloud.size(), KOKKOS_LAMBDA(const std::size_t i) { cloud.hops(i) = 0; });
 
-  // Walk, hand particles that reached a ghost element to their owner, and let the owner continue
-  // the walk until every particle has settled. Each round moves a particle at least one partition,
+  // Velocity Verlet; the forces at the start of the step were computed at the end of the last one
+  for (unsigned int substep = 0; substep < _substeps; ++substep)
+  {
+    kickDrift();
+    walk();
+    computeForces();
+    kick();
+  }
+
+  // Hand particles that reached a ghost element to their owner, and let the owner continue the
+  // walk until every particle has settled. Each round moves a particle at least one partition,
   // so the number of rounds is bounded by the number of ranks
   _num_migrated = 0;
   for (const auto round : make_range(n_processors()))
   {
-    walk();
-
     auto n_sent = migrate();
     _num_migrated += n_sent;
     _communicator.sum(n_sent);
     if (!n_sent)
       break;
+    walk();
 
     if (round + 1 == n_processors())
       mooseError("Particles were still crossing partitions after ", n_processors(), " rounds");
   }
+  // Received particles arrive without forces, and the next step's first half-kick needs them
+  computeForces();
 
   count();
   if (_verify)
@@ -136,21 +174,83 @@ KokkosParticleTracker::compute()
 }
 
 void
-KokkosParticleTracker::advance()
+KokkosParticleCloud::computeForces()
 {
   const auto cloud = _cloud;
-  const Real dt = _dt;
+  const Moose::Kokkos::Real3 g(_gravity(0), _gravity(1), _gravity(2));
 
   ::Kokkos::parallel_for(
-      "dem_advance", cloud.size(), KOKKOS_LAMBDA(const std::size_t i) {
-        auto x = libMesh::Kokkos::make_vector_ref(cloud.x, i);
-        x.add_scaled(libMesh::Kokkos::make_vector_ref(cloud.v, i), dt);
-        cloud.hops(i) = 0;
+      "dem_forces", cloud.size(), KOKKOS_LAMBDA(const std::size_t i) {
+        const auto m = cloud.m(i);
+        for (unsigned int c = 0; c < 3; ++c)
+        {
+          cloud.f(i, c) = m * g(c);
+          cloud.tau(i, c) = 0;
+        }
       });
 }
 
 void
-KokkosParticleTracker::walk()
+KokkosParticleCloud::kickDrift()
+{
+  const auto cloud = _cloud;
+  const Real dt = _dt / _substeps;
+
+  ::Kokkos::parallel_for(
+      "dem_kick_drift", cloud.size(), KOKKOS_LAMBDA(const std::size_t i) {
+        const Real half_dt_over_m = 0.5 * dt / cloud.m(i);
+        const Real half_dt_over_I = 0.5 * dt / cloud.inertia(i);
+        auto x = libMesh::Kokkos::make_vector_ref(cloud.x, i);
+        auto v = libMesh::Kokkos::make_vector_ref(cloud.v, i);
+        auto omega = libMesh::Kokkos::make_vector_ref(cloud.omega, i);
+
+        v.add_scaled(libMesh::Kokkos::make_vector_ref(cloud.f, i), half_dt_over_m);
+        x.add_scaled(v, dt);
+        omega.add_scaled(libMesh::Kokkos::make_vector_ref(cloud.tau, i), half_dt_over_I);
+
+        // Rotate the orientation by the body-frame angular velocity over the substep, exactly for
+        // constant angular velocity: q <- q * (cos(theta/2), sin(theta/2) * omega_hat)
+        const Real omega_norm = omega.norm();
+        if (omega_norm > 0)
+        {
+          const Real half_theta = 0.5 * omega_norm * dt;
+          const Real s = ::Kokkos::sin(half_theta) / omega_norm;
+          const Real dw = ::Kokkos::cos(half_theta);
+          const Real dx = s * omega(0), dy = s * omega(1), dz = s * omega(2);
+          const Real qw = cloud.q(i, 0), qx = cloud.q(i, 1), qy = cloud.q(i, 2),
+                     qz = cloud.q(i, 3);
+          cloud.q(i, 0) = qw * dw - qx * dx - qy * dy - qz * dz;
+          cloud.q(i, 1) = qw * dx + qx * dw + qy * dz - qz * dy;
+          cloud.q(i, 2) = qw * dy - qx * dz + qy * dw + qz * dx;
+          cloud.q(i, 3) = qw * dz + qx * dy - qy * dx + qz * dw;
+          // Renormalize to keep roundoff from accumulating in the unit quaternion
+          const Real inv_norm =
+              1.0 / ::Kokkos::sqrt(cloud.q(i, 0) * cloud.q(i, 0) + cloud.q(i, 1) * cloud.q(i, 1) +
+                                   cloud.q(i, 2) * cloud.q(i, 2) + cloud.q(i, 3) * cloud.q(i, 3));
+          for (unsigned int c = 0; c < 4; ++c)
+            cloud.q(i, c) *= inv_norm;
+        }
+      });
+}
+
+void
+KokkosParticleCloud::kick()
+{
+  const auto cloud = _cloud;
+  const Real dt = _dt / _substeps;
+
+  ::Kokkos::parallel_for(
+      "dem_kick", cloud.size(), KOKKOS_LAMBDA(const std::size_t i) {
+        auto v = libMesh::Kokkos::make_vector_ref(cloud.v, i);
+        auto omega = libMesh::Kokkos::make_vector_ref(cloud.omega, i);
+        v.add_scaled(libMesh::Kokkos::make_vector_ref(cloud.f, i), 0.5 * dt / cloud.m(i));
+        omega.add_scaled(libMesh::Kokkos::make_vector_ref(cloud.tau, i),
+                         0.5 * dt / cloud.inertia(i));
+      });
+}
+
+void
+KokkosParticleCloud::walk()
 {
   // Shallow copies captured by value into the kernel
   const Moose::Kokkos::Mesh mesh = kokkosMesh();
@@ -168,9 +268,8 @@ KokkosParticleTracker::walk()
         if (elem == invalid_elem)
           return;
 
-        const auto x = libMesh::Kokkos::make_vector_ref(cloud.x, i);
-        const Moose::Kokkos::Real3 xp(x(0), x(1), x(2));
-        auto hops = cloud.hops(i);
+        const Moose::Kokkos::Real3 xp(cloud.x(i, 0), cloud.x(i, 1), cloud.x(i, 2));
+        unsigned int hops = 0;
         while (true)
         {
           // Ghost elements have no cached side geometry; the owner continues the walk after
@@ -211,17 +310,17 @@ KokkosParticleTracker::walk()
             break;
         }
         cloud.elem(i) = elem;
-        cloud.hops(i) = hops;
+        cloud.hops(i) += hops;
       });
 }
 
 std::size_t
-KokkosParticleTracker::migrate()
+KokkosParticleCloud::migrate()
 {
   constexpr auto invalid_proc = libMesh::DofObject::invalid_processor_id;
   // Each particle travels as a flat record so no TIMPI type registration is needed; the libMesh
   // element ID it carries is mapped back to a contiguous ID by the receiver
-  constexpr auto record_size = _record_size;
+  constexpr auto record_size = DEM::ParticleCloud::record_size;
 
   // Departing particles are found on device so the common case of none costs one scalar
   const auto cloud = _cloud;
@@ -260,20 +359,12 @@ KokkosParticleTracker::migrate()
       "dem_migrate_pack", cloud.size(), KOKKOS_LAMBDA(const std::size_t i) {
         const auto j = slot(i);
         if (cloud.target_rank(i) == invalid_proc)
-        {
           scratch.copyFrom(cloud, i, j);
-          return;
-        }
-        Real * record = &send_buffer(j * record_size);
-        record[0] = cloud.gid(i);
-        for (unsigned int c = 0; c < 3; ++c)
+        else
         {
-          record[1 + c] = cloud.x(i, c);
-          record[4 + c] = cloud.v(i, c);
+          cloud.pack(i, libmesh_id(cloud.elem(i)), &send_buffer(j * record_size));
+          send_rank(j) = cloud.target_rank(i);
         }
-        record[7] = cloud.hops(i);
-        record[8] = libmesh_id(cloud.elem(i));
-        send_rank(j) = cloud.target_rank(i);
       });
   std::swap(_cloud, _scratch);
   _cloud.n = cloud.size() - n_sent;
@@ -307,78 +398,52 @@ KokkosParticleTracker::migrate()
     reserve(std::max(end, 2 * _cloud.capacity()));
 
   const auto & mesh = kokkosMesh();
-  auto gid_host = ::Kokkos::View<int64_t *, ::Kokkos::HostSpace>("dem_recv_gid", n_received);
-  auto x_host = ::Kokkos::View<Real * [3], ::Kokkos::LayoutRight, ::Kokkos::HostSpace>(
-      "dem_recv_x", n_received);
-  auto v_host = ::Kokkos::View<Real * [3], ::Kokkos::LayoutRight, ::Kokkos::HostSpace>(
-      "dem_recv_v", n_received);
-  auto elem_host =
-      ::Kokkos::View<ContiguousElementID *, ::Kokkos::HostSpace>("dem_recv_elem", n_received);
-  auto hops_host = ::Kokkos::View<unsigned int *, ::Kokkos::HostSpace>("dem_recv_hops", n_received);
+  DEM::ParticleCloud::HostMirror host(n_received);
   for (const auto r : make_range(n_received))
   {
     const Real * record = received.data() + r * record_size;
-    gid_host(r) = record[0];
-    for (const auto c : make_range(3))
-    {
-      x_host(r, c) = record[1 + c];
-      v_host(r, c) = record[4 + c];
-    }
-    hops_host(r) = record[7];
-    const auto * elem = _fe_problem.mesh().getMesh().elem_ptr(record[8]);
+    host.unpack(record, r);
+    const auto * elem = _fe_problem.mesh().getMesh().elem_ptr(record[record_size - 1]);
     mooseAssert(elem->processor_id() == processor_id(), "Received a particle we do not own");
-    elem_host(r) = mesh.getContiguousElementID(elem);
+    host.elem(r) = mesh.getContiguousElementID(elem);
   }
-  const auto range = std::make_pair(begin, end);
-  ::Kokkos::deep_copy(::Kokkos::subview(_cloud.gid, range), gid_host);
-  ::Kokkos::deep_copy(::Kokkos::subview(_cloud.x, range, ::Kokkos::ALL), x_host);
-  ::Kokkos::deep_copy(::Kokkos::subview(_cloud.v, range, ::Kokkos::ALL), v_host);
-  ::Kokkos::deep_copy(::Kokkos::subview(_cloud.elem, range), elem_host);
-  ::Kokkos::deep_copy(::Kokkos::subview(_cloud.hops, range), hops_host);
-  ::Kokkos::deep_copy(::Kokkos::subview(_cloud.target_rank, range), invalid_proc);
+  _cloud.copyFrom(host, begin);
   _cloud.n = end;
 
   return n_sent;
 }
 
 void
-KokkosParticleTracker::reserve(const std::size_t capacity)
+KokkosParticleCloud::reserve(const std::size_t capacity)
 {
   DEM::ParticleCloud cloud;
   cloud.allocate(capacity);
-  const auto range = std::make_pair(std::size_t(0), _cloud.size());
-  ::Kokkos::deep_copy(::Kokkos::subview(cloud.gid, range), ::Kokkos::subview(_cloud.gid, range));
-  ::Kokkos::deep_copy(::Kokkos::subview(cloud.x, range, ::Kokkos::ALL),
-                      ::Kokkos::subview(_cloud.x, range, ::Kokkos::ALL));
-  ::Kokkos::deep_copy(::Kokkos::subview(cloud.v, range, ::Kokkos::ALL),
-                      ::Kokkos::subview(_cloud.v, range, ::Kokkos::ALL));
-  ::Kokkos::deep_copy(::Kokkos::subview(cloud.elem, range), ::Kokkos::subview(_cloud.elem, range));
-  ::Kokkos::deep_copy(::Kokkos::subview(cloud.target_rank, range),
-                      ::Kokkos::subview(_cloud.target_rank, range));
-  ::Kokkos::deep_copy(::Kokkos::subview(cloud.hops, range), ::Kokkos::subview(_cloud.hops, range));
+  cloud.copyFrom(_cloud, _cloud.size());
   cloud.n = _cloud.size();
   _cloud = cloud;
   allocateScratch(capacity);
 }
 
 void
-KokkosParticleTracker::allocateScratch(const std::size_t capacity)
+KokkosParticleCloud::allocateScratch(const std::size_t capacity)
 {
   _scratch.allocate(capacity);
   _slot = ::Kokkos::View<std::size_t *>("dem_migrate_slot", capacity);
   // Worst case is every particle departing
-  _send_buffer = ::Kokkos::View<Real *>("dem_migrate_send", capacity * _record_size);
+  _send_buffer =
+      ::Kokkos::View<Real *>("dem_migrate_send", capacity * DEM::ParticleCloud::record_size);
   _send_rank = ::Kokkos::View<processor_id_type *>("dem_migrate_send_rank", capacity);
 }
 
 void
-KokkosParticleTracker::count()
+KokkosParticleCloud::count()
 {
   const auto cloud = _cloud;
   constexpr auto invalid_elem = libMesh::DofObject::invalid_id;
 
   std::size_t lost = 0;
   unsigned int max_hops_taken = 0;
+  Real ke = 0, ke_rot = 0;
   ::Kokkos::parallel_reduce(
       "dem_count_lost",
       cloud.size(),
@@ -393,15 +458,49 @@ KokkosParticleTracker::count()
         max = cloud.hops(i) > max ? cloud.hops(i) : max;
       },
       ::Kokkos::Max<unsigned int>(max_hops_taken));
+  ::Kokkos::parallel_reduce(
+      "dem_count_ke",
+      cloud.size(),
+      KOKKOS_LAMBDA(const std::size_t i, Real & sum) {
+        sum += 0.5 * cloud.m(i) * libMesh::Kokkos::make_vector_ref(cloud.v, i).norm_sq();
+      },
+      ke);
+  ::Kokkos::parallel_reduce(
+      "dem_count_ke_rot",
+      cloud.size(),
+      KOKKOS_LAMBDA(const std::size_t i, Real & sum) {
+        sum += 0.5 * cloud.inertia(i) * libMesh::Kokkos::make_vector_ref(cloud.omega, i).norm_sq();
+      },
+      ke_rot);
+  // Spin angular momentum; for a sphere the body and space frames coincide
+  for (unsigned int c = 0; c < 3; ++c)
+    ::Kokkos::parallel_reduce(
+        "dem_count_L",
+        cloud.size(),
+        KOKKOS_LAMBDA(const std::size_t i, Real & sum) {
+          sum += cloud.inertia(i) * cloud.omega(i, c);
+        },
+        _angular_momentum_vector[c]);
 
-  // Local counts; finalize() reduces them across ranks every step
+  // Local values; finalize() reduces them across ranks every step
   _num_particles = cloud.size();
   _num_lost = lost;
   _max_hops_taken = max_hops_taken;
+  _kinetic_energy = ke;
+  _rotational_kinetic_energy = ke_rot;
+  _angular_momentum = angularMomentumMagnitude();
+}
+
+Real
+KokkosParticleCloud::angularMomentumMagnitude() const
+{
+  return std::sqrt(Utility::pow<2>(_angular_momentum_vector[0]) +
+                   Utility::pow<2>(_angular_momentum_vector[1]) +
+                   Utility::pow<2>(_angular_momentum_vector[2]));
 }
 
 void
-KokkosParticleTracker::verify()
+KokkosParticleCloud::verify()
 {
   const auto num_local = kokkosMesh().getNumLocalElements();
   auto x_host = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, _cloud.x);
@@ -434,10 +533,15 @@ KokkosParticleTracker::verify()
 }
 
 void
-KokkosParticleTracker::finalize()
+KokkosParticleCloud::finalize()
 {
   _communicator.sum(_num_particles);
   _communicator.sum(_num_lost);
   _communicator.sum(_num_migrated);
   _communicator.max(_max_hops_taken);
+  _communicator.sum(_kinetic_energy);
+  _communicator.sum(_rotational_kinetic_energy);
+  for (auto & L : _angular_momentum_vector)
+    _communicator.sum(L);
+  _angular_momentum = angularMomentumMagnitude();
 }

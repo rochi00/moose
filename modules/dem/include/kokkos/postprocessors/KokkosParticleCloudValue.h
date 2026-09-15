@@ -2,23 +2,23 @@
 
 #include "KokkosGeneralPostprocessor.h"
 
-class KokkosParticleTracker;
+class KokkosParticleCloud;
 
 /**
- * Reports one of the counters of a KokkosParticleTracker
+ * Reports one of the global scalars of a KokkosParticleCloud
  */
-class KokkosParticleTrackerValue : public Moose::Kokkos::GeneralPostprocessor
+class KokkosParticleCloudValue : public Moose::Kokkos::GeneralPostprocessor
 {
 public:
   static InputParameters validParams();
 
-  KokkosParticleTrackerValue(const InputParameters & parameters);
+  KokkosParticleCloudValue(const InputParameters & parameters);
 
   virtual void initialize() override {}
   virtual void compute() override {}
   virtual PostprocessorValue getValue() const override;
 
 protected:
-  const KokkosParticleTracker & _tracker;
+  const KokkosParticleCloud & _cloud;
   const MooseEnum _value;
 };
