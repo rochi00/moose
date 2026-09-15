@@ -1,0 +1,23 @@
+[Tests]
+  design = 'KokkosParticleCloud.md Hertz.md'
+  issues = '#1'
+
+  [stack]
+    type = CSVDiff
+    input = stack.i
+    csvdiff = stack_out_state_0010.csv
+    # The settled positions agree with the equilibrium overlaps to roundoff (1e-16 in position,
+    # 1e-12 in overlap); residual velocities of 1e-13 fall under abs_zero
+    rel_err = 1e-12
+    requirement = 'The system shall settle two spheres stacked on a wall under gravity with the Hertz contact model to the overlaps at which the force (4/3) E* sqrt(r_eff) delta^(3/2) balances the weight above each contact, for the sphere-wall and sphere-sphere effective radii, on any number of ranks.'
+    capabilities = 'kokkos'
+  []
+  [missing_modulus]
+    type = RunException
+    input = ../contact/restitution.i
+    cli_args = 'UserObjects/cloud/contact_model=hertz Outputs/csv=false'
+    expect_err = 'The Hertz model needs youngs_modulus and poissons_ratio'
+    requirement = 'The system shall report an error when the Hertz contact model is selected without its material parameters.'
+    capabilities = 'kokkos'
+  []
+[]

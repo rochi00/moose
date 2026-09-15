@@ -11,11 +11,13 @@ local element containing each particle. Particle state is stored in Kokkos views
 Kokkos storage policy (`libmesh/kokkos_storage_policy.h`). The substep loop runs entirely on
 device (plan decision D4).
 
-Forces are the body force `m * gravity` and, when `normal_stiffness` is positive, the
-[LinearSpringDashpot.md] normal contact force between overlapping spheres found through the
-neighbor list and against the fixed planar walls given by `wall_points` and `wall_normals`
-([AnalyticWalls.md]). Tangential contact, rolling resistance, and mesh-derived walls are added by
-later layers.
+Forces are the body force `m * gravity` and the normal contact force of the selected
+`contact_model`, [LinearSpringDashpot.md] (the default, enabled by a positive `normal_stiffness`)
+or [Hertz.md], between overlapping spheres found through the neighbor list and against the fixed
+planar walls given by `wall_points` and `wall_normals` ([AnalyticWalls.md]). The model is a
+compile-time policy: the force kernel is instantiated once per model and the selection is made
+once at setup (plan decision D5). Tangential contact, rolling resistance, and mesh-derived walls
+are added by later layers.
 
 ## Neighbor list
 

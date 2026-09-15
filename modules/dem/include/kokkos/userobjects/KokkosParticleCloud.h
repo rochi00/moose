@@ -4,6 +4,7 @@
 #include "ParticleCloud.h"
 #include "NeighborList.h"
 #include "LinearSpringDashpot.h"
+#include "Hertz.h"
 #include "AnalyticWalls.h"
 
 #include "libmesh/point_locator_base.h"
@@ -35,8 +36,10 @@
  * computes the forces on its own particles from the ghost copies, so no force communication is
  * needed.
  *
- * Walls are fixed planes given by a point and an inward normal each; a particle overlapping a
- * wall gets the same normal contact force as against a sphere at rest of infinite mass.
+ * The normal contact model, linear spring-dashpot or Hertz, is a compile-time policy selected
+ * once at setup (plan decision D5): the force kernel is instantiated per model. Walls are fixed
+ * planes given by a point and an inward normal each; a particle overlapping a wall gets the same
+ * normal contact force as against a sphere at rest of infinite mass.
  *
  * The domain can be periodic in any direction over the extent of the mesh bounding box. A
  * particle that walks out of the mesh is then unresolved rather than exited: it keeps its
@@ -95,8 +98,23 @@ public:
 
 protected:
   /// Zero the force and torque accumulators and apply body and contact forces to the local
-  /// particles listed in a subset
+  /// particles listed in a subset, with the selected contact model
   void computeForces(const ::Kokkos::View<std::size_t *> & subset, const std::size_t count);
+  /// The above for a given contact model, instantiated per model (plan decision D5)
+  template <typename Model>
+  void computeForces(const Model & contact,
+                     const ::Kokkos::View<std::size_t *> & subset,
+                     const std::size_t count);
+  /// Count the overlapping pairs and sum their elastic energy and virial with a contact model
+  template <typename Model>
+  void countContacts(const Model & contact,
+                     std::size_t & num_contacts,
+                     Real & pe,
+                     Real & virial) const;
+  /// Build the Hertz model from the input parameters; default-constructed when not selected
+  DEM::Hertz makeHertz() const;
+  /// Whether the selected contact model applies any force
+  bool contactEnabled() const;
   /// Compute all forces: interior particles first, then the boundary ones once the ghost update
   /// has landed
   void computeForces();
@@ -155,8 +173,15 @@ protected:
   const Real _density;
   /// Gravitational acceleration
   const RealVectorValue & _gravity;
-  /// Normal contact model, shared by sphere-sphere and sphere-wall contacts
-  const DEM::LinearSpringDashpot _contact;
+  /// Normal contact models; the selected one is shared by sphere-sphere and sphere-wall contacts
+  enum class ContactModel
+  {
+    LINEAR_SPRING_DASHPOT,
+    HERTZ
+  };
+  const ContactModel _contact_model;
+  const DEM::LinearSpringDashpot _linear;
+  const DEM::Hertz _hertz;
   /// Fixed planar walls
   const DEM::AnalyticWalls _walls;
   /// Directions in which the domain is periodic

@@ -14,4 +14,5 @@ $e = \exp(-\zeta \pi / \sqrt{1 - \zeta^2})$ with $\zeta = \gamma_n / (2 \sqrt{k_
 and the contact lasts $\pi / (\omega_0 \sqrt{1 - \zeta^2})$, which the `restitution` test checks.
 
 The parameters are `normal_stiffness` ($k_n$) and `normal_damping` ($\gamma_n$) of
-[KokkosParticleCloud.md]; a zero stiffness disables contact.
+[KokkosParticleCloud.md]; a zero stiffness disables contact. It is the default `contact_model`;
+[Hertz.md] is the alternative.

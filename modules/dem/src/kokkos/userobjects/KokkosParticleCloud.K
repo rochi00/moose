@@ -34,6 +34,9 @@ KokkosParticleCloud::validParams()
   params.addRequiredRangeCheckedParam<Real>("density", "density > 0", "Particle density");
   params.addParam<RealVectorValue>(
       "gravity", RealVectorValue(0, 0, 0), "Gravitational acceleration");
+  params.addParam<MooseEnum>("contact_model",
+                             MooseEnum("linear_spring_dashpot hertz", "linear_spring_dashpot"),
+                             "Normal contact model between spheres and against walls");
   params.addRangeCheckedParam<Real>("normal_stiffness",
                                     0,
                                     "normal_stiffness >= 0",
@@ -43,6 +46,16 @@ KokkosParticleCloud::validParams()
                                     0,
                                     "normal_damping >= 0",
                                     "Dashpot coefficient of the linear spring-dashpot normal contact");
+  params.addRangeCheckedParam<Real>(
+      "youngs_modulus", "youngs_modulus > 0", "Young's modulus of the Hertz normal contact");
+  params.addRangeCheckedParam<Real>("poissons_ratio",
+                                    "poissons_ratio >= 0 & poissons_ratio < 0.5",
+                                    "Poisson's ratio of the Hertz normal contact");
+  params.addRangeCheckedParam<Real>("restitution",
+                                    1,
+                                    "restitution > 0 & restitution <= 1",
+                                    "Coefficient of restitution the damping of the Hertz normal "
+                                    "contact is set to reproduce; one for no damping");
   params.addParam<std::vector<Point>>(
       "wall_points", {}, "A point on each fixed planar wall, one per entry of wall_normals");
   params.addParam<std::vector<RealVectorValue>>(
@@ -93,7 +106,9 @@ KokkosParticleCloud::KokkosParticleCloud(const InputParameters & parameters)
                                                  : std::vector<Real>()),
     _density(getParam<Real>("density")),
     _gravity(getParam<RealVectorValue>("gravity")),
-    _contact({getParam<Real>("normal_stiffness"), getParam<Real>("normal_damping")}),
+    _contact_model(getParam<MooseEnum>("contact_model").getEnum<ContactModel>()),
+    _linear({getParam<Real>("normal_stiffness"), getParam<Real>("normal_damping")}),
+    _hertz(makeHertz()),
     _walls(getParam<std::vector<Point>>("wall_points"),
            getParam<std::vector<RealVectorValue>>("wall_normals")),
     _periodic(getParam<MultiMooseEnum>("periodic")),
@@ -118,8 +133,8 @@ KokkosParticleCloud::KokkosParticleCloud(const InputParameters & parameters)
   for (const auto & normal : getParam<std::vector<RealVectorValue>>("wall_normals"))
     if (normal.norm() == 0)
       paramError("wall_normals", "Normals must be nonzero");
-  if (_walls.n && _contact.stiffness == 0)
-    paramError("wall_points", "Walls need a positive normal_stiffness");
+  if (_walls.n && !contactEnabled())
+    paramError("wall_points", "Walls need a contact model with a positive stiffness or modulus");
   // The far side of a periodic face is found by the point locator, which only sees the local and
   // ghost elements of a distributed mesh
   if (_periodic.size() && _fe_problem.mesh().isDistributedMesh())
@@ -127,6 +142,27 @@ KokkosParticleCloud::KokkosParticleCloud(const InputParameters & parameters)
 
   // Side centroids and normals are only cached on request
   _fe_problem.mesh().getKokkosMesh()->setNeedsElementSideGeometry();
+}
+
+DEM::Hertz
+KokkosParticleCloud::makeHertz() const
+{
+  if (_contact_model != ContactModel::HERTZ)
+    return {};
+  if (!isParamValid("youngs_modulus") || !isParamValid("poissons_ratio"))
+    paramError("contact_model", "The Hertz model needs youngs_modulus and poissons_ratio");
+  const Real e = getParam<Real>("restitution");
+  const Real log_e = std::log(e);
+  // Two bodies of the same material: E* = E / (2 (1 - nu^2))
+  return {getParam<Real>("youngs_modulus") /
+              (2 * (1 - Utility::pow<2>(getParam<Real>("poissons_ratio")))),
+          -log_e / std::sqrt(log_e * log_e + libMesh::pi * libMesh::pi)};
+}
+
+bool
+KokkosParticleCloud::contactEnabled() const
+{
+  return _contact_model == ContactModel::HERTZ ? _hertz.enabled() : _linear.enabled();
 }
 
 void
@@ -314,13 +350,15 @@ KokkosParticleCloud::compute()
     verify();
 }
 
+template <typename Model>
 void
-KokkosParticleCloud::computeForces(const ::Kokkos::View<std::size_t *> & subset,
+KokkosParticleCloud::computeForces(const Model & contact,
+                                   const ::Kokkos::View<std::size_t *> & subset,
                                    const std::size_t count)
 {
   const auto cloud = _cloud;
   const Moose::Kokkos::Real3 g(_gravity(0), _gravity(1), _gravity(2));
-  const auto contact = _contact;
+  const bool enabled = contact.enabled();
   const auto walls = _walls;
   const auto offsets = _neighbor_list.offsets();
   const auto pairs = _neighbor_list.pairs();
@@ -337,7 +375,7 @@ KokkosParticleCloud::computeForces(const ::Kokkos::View<std::size_t *> & subset,
 
           // Sphere-sphere narrow phase over the neighbor list; every pair is listed from both
           // sides so each particle sums its own contacts
-          if (contact.stiffness > 0)
+          if (enabled)
           {
             const Moose::Kokkos::Real3 xi(cloud.x(i, 0), cloud.x(i, 1), cloud.x(i, 2));
             const Moose::Kokkos::Real3 vi(cloud.v(i, 0), cloud.v(i, 1), cloud.v(i, 2));
@@ -355,17 +393,21 @@ KokkosParticleCloud::computeForces(const ::Kokkos::View<std::size_t *> & subset,
               const Moose::Kokkos::Real3 normal = (1.0 / distance) * d;
               const Moose::Kokkos::Real3 vj(cloud.v(j, 0), cloud.v(j, 1), cloud.v(j, 2));
               const Real normal_velocity = (vi - vj).dot_product(normal);
-              f += contact.normalForce(overlap, normal_velocity) * normal;
+              const Real r_eff = cloud.r(i) * cloud.r(j) / (cloud.r(i) + cloud.r(j));
+              const Real m_eff = cloud.m(i) * cloud.m(j) / (cloud.m(i) + cloud.m(j));
+              f += contact.normalForce(overlap, normal_velocity, r_eff, m_eff) * normal;
             }
 
-            // Sphere-plane narrow phase against every wall, which is at rest
+            // Sphere-plane narrow phase against every wall, which is at rest and rigid, so the
+            // effective radius and mass are the sphere's own
             for (std::size_t w = 0; w < walls.n; ++w)
             {
               const Real overlap = walls.overlap(w, xi, cloud.r(i));
               if (overlap <= 0)
                 continue;
               const auto normal = walls.normal(w);
-              f += contact.normalForce(overlap, vi.dot_product(normal)) * normal;
+              f += contact.normalForce(overlap, vi.dot_product(normal), cloud.r(i), cloud.m(i)) *
+                   normal;
             }
           }
         }
@@ -376,6 +418,17 @@ KokkosParticleCloud::computeForces(const ::Kokkos::View<std::size_t *> & subset,
           cloud.tau(i, c) = 0;
         }
       });
+}
+
+void
+KokkosParticleCloud::computeForces(const ::Kokkos::View<std::size_t *> & subset,
+                                   const std::size_t count)
+{
+  // The model is chosen once here so the kernel inlines it (plan decision D5)
+  if (_contact_model == ContactModel::HERTZ)
+    computeForces(_hertz, subset, count);
+  else
+    computeForces(_linear, subset, count);
 }
 
 void
@@ -1079,18 +1132,46 @@ KokkosParticleCloud::count()
         _angular_momentum_vector[c]);
   }
 
-  // Overlapping pairs, their spring energy, and their virial r_ij . f_ij, each pair counted once
-  // across ranks with the neighbor list's rule; wall contacts add spring energy only, being
+  std::size_t num_contacts = 0;
+  Real pe = 0, virial = 0;
+  if (_contact_model == ContactModel::HERTZ)
+    countContacts(_hertz, num_contacts, pe, virial);
+  else
+    countContacts(_linear, num_contacts, pe, virial);
+
+  // Local values; finalize() reduces them across ranks every step
+  _num_particles = cloud.size();
+  _num_exited = _num_exited_local;
+  _num_unresolved = n_unresolved;
+  _max_hops_taken = max_hops_taken;
+  _num_neighbor_pairs = _neighbor_list.numPairs();
+  _num_contacts = num_contacts;
+  _load_imbalance = cloud.size();
+  _kinetic_energy = ke;
+  _rotational_kinetic_energy = ke_rot;
+  _potential_energy = pe;
+  _virial = virial;
+  _linear_momentum = magnitude(_linear_momentum_vector);
+  _angular_momentum = magnitude(_angular_momentum_vector);
+}
+
+template <typename Model>
+void
+KokkosParticleCloud::countContacts(const Model & contact,
+                                   std::size_t & num_contacts,
+                                   Real & pe,
+                                   Real & virial) const
+{
+  // Overlapping pairs, their elastic energy, and their virial r_ij . f_ij, each pair counted once
+  // across ranks with the neighbor list's rule; wall contacts add elastic energy only, being
   // external to the particle system
+  const auto cloud = _cloud;
   const auto n_local = cloud.size();
-  const auto contact = _contact;
   const auto walls = _walls;
   const auto offsets = _neighbor_list.offsets();
   const auto pairs = _neighbor_list.pairs();
   constexpr auto exited = DEM::ParticleCloud::exited;
-  std::size_t num_contacts = 0;
-  Real pe = 0, virial = 0;
-  if (contact.stiffness > 0)
+  if (contact.enabled())
     ::Kokkos::parallel_reduce(
         "dem_count_contacts",
         n_local,
@@ -1111,35 +1192,22 @@ KokkosParticleCloud::count()
               continue;
             const Moose::Kokkos::Real3 vj(cloud.v(j, 0), cloud.v(j, 1), cloud.v(j, 2));
             const Real normal_velocity = (vi - vj).dot_product((1.0 / distance) * (xi - xj));
+            const Real r_eff = cloud.r(i) * cloud.r(j) / (cloud.r(i) + cloud.r(j));
+            const Real m_eff = cloud.m(i) * cloud.m(j) / (cloud.m(i) + cloud.m(j));
             ++contacts;
-            energy += contact.energy(overlap);
-            w += distance * contact.normalForce(overlap, normal_velocity);
+            energy += contact.energy(overlap, r_eff);
+            w += distance * contact.normalForce(overlap, normal_velocity, r_eff, m_eff);
           }
           for (std::size_t wall = 0; wall < walls.n; ++wall)
           {
             const Real overlap = walls.overlap(wall, xi, cloud.r(i));
             if (overlap > 0)
-              energy += contact.energy(overlap);
+              energy += contact.energy(overlap, cloud.r(i));
           }
         },
         num_contacts,
         pe,
         virial);
-
-  // Local values; finalize() reduces them across ranks every step
-  _num_particles = cloud.size();
-  _num_exited = _num_exited_local;
-  _num_unresolved = n_unresolved;
-  _max_hops_taken = max_hops_taken;
-  _num_neighbor_pairs = _neighbor_list.numPairs();
-  _num_contacts = num_contacts;
-  _load_imbalance = cloud.size();
-  _kinetic_energy = ke;
-  _rotational_kinetic_energy = ke_rot;
-  _potential_energy = pe;
-  _virial = virial;
-  _linear_momentum = magnitude(_linear_momentum_vector);
-  _angular_momentum = magnitude(_angular_momentum_vector);
 }
 
 Real
