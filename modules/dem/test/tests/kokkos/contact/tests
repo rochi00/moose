@@ -9,9 +9,7 @@
     # The half-step-velocity dashpot and substep-quantized contact start and end are first order in
     # dt: 8e-5 at 10000 substeps per step, 8e-6 at 50000 (see restitution.i)
     rel_err = 1e-4
-    requirement = 'The system shall compute the head-on collision of two spheres with the linear spring-dashpot contact model such that the coefficient of restitution and final positions match the damped-oscillator solution to the first-order accuracy of the substep size.'
-    # Both spheres must be on one rank until ghost particles are exchanged
-    max_parallel = 1
+    requirement = 'The system shall compute the head-on collision of two spheres with the linear spring-dashpot contact model such that the coefficient of restitution and final positions match the damped-oscillator solution to the first-order accuracy of the substep size, on any number of ranks.'
     capabilities = 'kokkos'
   []
 []

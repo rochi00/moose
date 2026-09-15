@@ -9,13 +9,25 @@ namespace DEM
 
 void
 NeighborList::build(const ParticleCloud & cloud,
+                    const std::size_t n_local,
+                    const std::size_t n_total,
                     const Moose::Kokkos::Real3 & lower,
                     const Moose::Kokkos::Real3 & upper,
                     const Real skin)
 {
-  const auto n = cloud.size();
-  _n = n;
+  const auto n = n_total;
+  _n_local = n_local;
   _skin = skin;
+
+  // A rank without particles still needs a valid (empty) list
+  if (n == 0)
+  {
+    if (_offsets.extent(0) < 1)
+      _offsets = ::Kokkos::View<std::size_t *>("dem_nl_offsets", 1);
+    ::Kokkos::deep_copy(_offsets, 0);
+    _num_pairs = 0;
+    return;
+  }
   // Copies for capture by value in the kernels
   const Moose::Kokkos::Real3 lo = lower;
 
@@ -39,9 +51,10 @@ NeighborList::build(const ParticleCloud & cloud,
     _keys = ::Kokkos::View<uint64_t *>("dem_nl_keys", n);
     _order = ::Kokkos::View<std::size_t *>("dem_nl_order", n);
     _offsets = ::Kokkos::View<std::size_t *>("dem_nl_offsets", n + 1);
-    _x_at_build = libMesh::Kokkos::make_vector_storage<ParticleCloud::StoragePolicy>(
-        "dem_nl_x_at_build", n);
   }
+  if (_x_at_build.extent(0) < n_local)
+    _x_at_build = libMesh::Kokkos::make_vector_storage<ParticleCloud::StoragePolicy>(
+        "dem_nl_x_at_build", n_local);
   if (_counts.extent(0) < num_bins)
     _counts = ::Kokkos::View<std::size_t *>("dem_nl_counts", num_bins);
   if (_bin_offsets.extent(0) < num_bins + 1)
@@ -73,8 +86,9 @@ NeighborList::build(const ParticleCloud & cloud,
         keys(i) = static_cast<uint64_t>(bin) * n + i;
         order(i) = i;
         ::Kokkos::atomic_inc(&counts(bin));
-        for (unsigned int c = 0; c < 3; ++c)
-          x_at_build(i, c) = cloud.x(i, c);
+        if (i < n_local)
+          for (unsigned int c = 0; c < 3; ++c)
+            x_at_build(i, c) = cloud.x(i, c);
       });
   ::Kokkos::Experimental::sort_by_key(::Kokkos::DefaultExecutionSpace(),
                                       ::Kokkos::subview(keys, std::make_pair(std::size_t(0), n)),
@@ -147,21 +161,35 @@ NeighborList::build(const ParticleCloud & cloud,
         auto k = offsets(i);
         for_each_neighbor(i, [&](const std::size_t j) { pairs(k++) = j; });
       });
-  // Every pair is listed from both sides
-  _num_pairs = total / 2;
+
+  // Every pair is listed from both sides: count a local pair from its lower index and a pair with
+  // a ghost from the rank owning the lower global ID
+  std::size_t num_pairs = 0;
+  ::Kokkos::parallel_reduce(
+      "dem_nl_num_pairs",
+      n_local,
+      KOKKOS_LAMBDA(const std::size_t i, std::size_t & sum) {
+        for (auto k = offsets(i); k < offsets(i + 1); ++k)
+        {
+          const auto j = pairs(k);
+          sum += j < n_local ? i < j : cloud.gid(i) < cloud.gid(j);
+        }
+      },
+      num_pairs);
+  _num_pairs = num_pairs;
 }
 
 bool
-NeighborList::stale(const ParticleCloud & cloud) const
+NeighborList::stale(const ParticleCloud & cloud, const std::size_t n_local) const
 {
-  if (cloud.size() != _n)
+  if (n_local != _n_local)
     return true;
 
   const auto x_at_build = _x_at_build;
   Real max_displacement_sq = 0;
   ::Kokkos::parallel_reduce(
       "dem_nl_stale",
-      _n,
+      n_local,
       KOKKOS_LAMBDA(const std::size_t i, Real & max) {
         Real d_sq = 0;
         for (unsigned int c = 0; c < 3; ++c)

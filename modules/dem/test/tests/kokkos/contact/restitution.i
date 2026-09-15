@@ -36,6 +36,7 @@
     skin = 0.01
     substeps = 10000
     verify = true
+    verify_neighbor_list = true
     execute_on = TIMESTEP_END
   []
 []

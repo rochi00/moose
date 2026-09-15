@@ -18,32 +18,40 @@ namespace DEM
 class NeighborList
 {
 public:
-  /// Build the list for the live particles of a cloud within a bounding box
+  /**
+   * Build the list for the first n_total particles of a cloud within a bounding box, of which the
+   * first n_local are owned by this rank and the rest are ghosts. Pairs are listed for every
+   * particle; a pair involving a ghost is counted on the rank whose particle has the smaller
+   * global ID so the pair count is the same on any number of ranks.
+   */
   void build(const ParticleCloud & cloud,
+             const std::size_t n_local,
+             const std::size_t n_total,
              const Moose::Kokkos::Real3 & lower,
              const Moose::Kokkos::Real3 & upper,
              const Real skin);
 
-  /// Whether some particle has moved more than skin / 2 since the build, or the cloud size changed
-  bool stale(const ParticleCloud & cloud) const;
+  /// Whether some local particle has moved more than skin / 2 since the build, or the local
+  /// particle count changed
+  bool stale(const ParticleCloud & cloud, const std::size_t n_local) const;
 
-  /// Number of neighbor pairs, each counted once
+  /// Number of neighbor pairs, each counted once across ranks
   std::size_t numPairs() const { return _num_pairs; }
 
-  /// Neighbor offsets into pairs(), of size n + 1
+  /// Neighbor offsets into pairs(), of size n_total + 1
   const ::Kokkos::View<std::size_t *> & offsets() const { return _offsets; }
   /// Concatenated neighbor indices
   const ::Kokkos::View<std::size_t *> & pairs() const { return _pairs; }
 
 private:
-  /// Number of particles the list was built for
-  std::size_t _n = 0;
+  /// Number of local particles the list was built for
+  std::size_t _n_local = 0;
   /// Skin distance the list was built with
   Real _skin = 0;
   std::size_t _num_pairs = 0;
   ::Kokkos::View<std::size_t *> _offsets;
   ::Kokkos::View<std::size_t *> _pairs;
-  /// Positions at the time of the build, for the staleness check
+  /// Local positions at the time of the build, for the staleness check
   ParticleCloud::VectorView _x_at_build;
 
   ///@{

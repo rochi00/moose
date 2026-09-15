@@ -6,6 +6,7 @@
 #include "LinearSpringDashpot.h"
 
 #include "libmesh/point_locator_base.h"
+#include "libmesh/bounding_box.h"
 
 /**
  * A cloud of spherical particles integrated on device with Velocity Verlet over a number of
@@ -19,9 +20,15 @@
  * particle is left in a ghost element, so a particle may cross several partitions in one step. A
  * particle that walks out of the mesh or exhausts max_hops is marked lost and keeps integrating.
  *
- * Migration compacts the cloud and packs departing particles on device, so only the departing
- * and arriving particles cross to the host for the TIMPI exchange. GPU-aware MPI (sending the
- * device buffer directly) is deferred until there is a GPU build to measure it on.
+ * Contact across partitions uses ghost particles: copies of the neighboring ranks' particles
+ * within the neighbor-list cutoff of this rank's bounding box, appended after the local particles.
+ * The ghost list is rebuilt with the neighbor list and ghost positions and velocities are forwarded
+ * every substep. Every rank computes the forces on its own particles from the ghost copies, so no
+ * force communication is needed.
+ *
+ * Migration and ghost exchange pack on device and stage through host buffers for the TIMPI
+ * exchange, so only the particles that move or are ghosted cross to the host. GPU-aware MPI
+ * (sending the device buffers directly) is deferred until there is a GPU build to measure it on.
  */
 class KokkosParticleCloud : public Moose::Kokkos::GeneralUserObject
 {
@@ -45,6 +52,7 @@ public:
   std::size_t numMigrated() const { return _num_migrated; }
   unsigned int maxHops() const { return _max_hops_taken; }
   std::size_t numNeighborPairs() const { return _num_neighbor_pairs; }
+  std::size_t numGhosts() const { return _num_ghosts; }
   std::size_t numNeighborListBuilds() const { return _num_neighbor_list_builds; }
   Real kineticEnergy() const { return _kinetic_energy; }
   Real rotationalKineticEnergy() const { return _rotational_kinetic_energy; }
@@ -61,8 +69,15 @@ protected:
   void kick();
   /// Re-resolve the containing element of every particle on device, accumulating hops
   void walk();
-  /// Rebuild the neighbor list if some particle has moved more than skin / 2 since the last build
-  void updateNeighborList();
+  /// Rebuild the ghost and neighbor lists if, on any rank, some particle has moved more than
+  /// skin / 2 since the last build or the local particle count changed
+  /// @returns Whether the lists were rebuilt
+  bool updateNeighborList();
+  /// Replace the ghost particles with the neighboring ranks' particles within the neighbor-list
+  /// cutoff of this rank's bounding box, and record what to forward every substep
+  void exchangeGhosts();
+  /// Forward the current positions and velocities of the ghosted particles
+  void updateGhosts();
   /// Send every particle that walked into a ghost element to the rank owning that element and
   /// receive the particles sent here
   /// @returns The number of particles sent from this rank
@@ -112,8 +127,25 @@ protected:
 
   /// Device particle state
   DEM::ParticleCloud _cloud;
-  /// Neighbor list of the local particles
+  /// Neighbor list of the local and ghost particles
   DEM::NeighborList _neighbor_list;
+  /// Number of ghost particles, stored after the _cloud.n local ones
+  std::size_t _num_ghosts = 0;
+  /// Largest radius over all ranks
+  Real _r_max = 0;
+  /// Inflated bounding box of every rank's local elements
+  std::vector<libMesh::BoundingBox> _rank_boxes;
+  /// Ranks whose bounding box comes within the neighbor-list cutoff of ours
+  std::vector<processor_id_type> _neighbor_ranks;
+  ///@{
+  /// Ghost forwarding state fixed between rebuilds: the local particles ghosted to each neighbor
+  /// rank in _neighbor_ranks order, concatenated, with their counts; the ghost slot where each
+  /// source rank's particles start; and the device buffer they are packed into
+  ::Kokkos::View<std::size_t *> _ghost_send_index;
+  std::vector<std::size_t> _ghost_send_counts;
+  std::map<processor_id_type, std::size_t> _ghost_recv_begin;
+  ::Kokkos::View<Real *> _ghost_buffer;
+  ///@}
   /// Second cloud of the same capacity that migrate() compacts into before swapping
   DEM::ParticleCloud _scratch;
   ///@{

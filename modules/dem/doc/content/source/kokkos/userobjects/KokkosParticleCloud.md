@@ -20,10 +20,21 @@ neighbor list. Tangential contact, rolling resistance, and walls are added by la
 A uniform-grid broad phase (`DEM::NeighborList`) bins the local particles on a grid of cell size
 `2 r_max + skin`, counting-sorts them by bin with a unique key so the order is deterministic, and
 lists every pair closer than `r_i + r_j + skin` from both sides, so force kernels can sum a
-particle's contacts without atomics. The list is rebuilt whenever some particle has moved more than
-`skin / 2` since the last build or the number of local particles changed. Pairs spanning a
-partition boundary are not listed until ghost particles are exchanged. With
+particle's contacts without atomics. The list is rebuilt whenever, on any rank, some particle has
+moved more than `skin / 2` since the last build or the number of local particles changed. With
 `verify_neighbor_list = true`, every build is checked against a brute-force pair search on host.
+
+## Ghost particles
+
+Contact across partitions uses ghost particles: at every rebuild, each rank sends copies of its
+particles lying within the neighbor-list cutoff `2 r_max + skin` of a neighboring rank's inflated
+bounding box, and appends the copies it receives after its own particles. The neighbor list covers
+local and ghost particles, and every rank computes the forces on its own particles from the ghost
+copies, so no force communication is needed (a pair spanning two ranks is evaluated once on each).
+Between rebuilds only the ghost positions and velocities are forwarded, every substep. A pair with
+a ghost is counted on the rank owning the smaller global ID, so `num_neighbor_pairs` is the same on
+any number of ranks; it is the count at the last build, which in parallel can be later in the step
+than in serial because migration forces a rebuild.
 
 ## Element tracking
 

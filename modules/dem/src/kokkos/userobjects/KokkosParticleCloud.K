@@ -3,7 +3,8 @@
 #include "MooseMesh.h"
 
 #include "libmesh/elem.h"
-#include "libmesh/bounding_box.h"
+#include <algorithm>
+#include "libmesh/mesh_tools.h"
 #include "timpi/parallel_sync.h"
 
 registerMooseObject("DemApp", KokkosParticleCloud);
@@ -167,6 +168,31 @@ KokkosParticleCloud::initialSetup()
   _cloud.n = n;
   allocateScratch(n);
 
+  // Ghosting is decided against the neighboring ranks' bounding boxes, gathered once since the
+  // mesh does not move
+  _r_max = _initial_radii.size() ? *std::max_element(_initial_radii.begin(), _initial_radii.end())
+                                 : _radius;
+  const auto my_box = _fe_problem.mesh().getInflatedProcessorBoundingBox();
+  std::vector<Real> bounds = {my_box.min()(0),
+                              my_box.min()(1),
+                              my_box.min()(2),
+                              my_box.max()(0),
+                              my_box.max()(1),
+                              my_box.max()(2)};
+  _communicator.allgather(bounds);
+  _rank_boxes.clear();
+  for (const auto rank : make_range(n_processors()))
+    _rank_boxes.emplace_back(Point(bounds[6 * rank], bounds[6 * rank + 1], bounds[6 * rank + 2]),
+                             Point(bounds[6 * rank + 3], bounds[6 * rank + 4], bounds[6 * rank + 5]));
+  const Real cutoff = 2 * _r_max + _skin;
+  auto reach = my_box;
+  reach.first -= Point(cutoff, cutoff, cutoff);
+  reach.second += Point(cutoff, cutoff, cutoff);
+  _neighbor_ranks.clear();
+  for (const auto rank : make_range(n_processors()))
+    if (rank != processor_id() && reach.intersects(_rank_boxes[rank]))
+      _neighbor_ranks.push_back(rank);
+
   updateNeighborList();
   computeForces();
   // Reduce so the initial values are global before the first execution
@@ -186,7 +212,8 @@ KokkosParticleCloud::compute()
   {
     kickDrift();
     walk();
-    updateNeighborList();
+    if (!updateNeighborList())
+      updateGhosts();
     computeForces();
     kick();
   }
@@ -208,7 +235,8 @@ KokkosParticleCloud::compute()
       mooseError("Particles were still crossing partitions after ", n_processors(), " rounds");
   }
   // Received particles arrive without forces, and the next step's first half-kick needs them
-  updateNeighborList();
+  if (!updateNeighborList())
+    updateGhosts();
   computeForces();
 
   count();
@@ -383,24 +411,205 @@ KokkosParticleCloud::walk()
       });
 }
 
-void
+bool
 KokkosParticleCloud::updateNeighborList()
 {
-  if (!_neighbor_list.stale(_cloud))
-    return;
+  // Both sides of a cross-rank pair must rebuild together
+  unsigned int stale = _neighbor_list.stale(_cloud, _cloud.size());
+  if (n_processors() > 1)
+    _communicator.max(stale);
+  if (!stale)
+    return false;
 
-  // Particles that walked out of the mesh are clamped into the edge bins
-  const auto box = _fe_problem.mesh().getInflatedProcessorBoundingBox();
-  _neighbor_list.build(_cloud, box.min(), box.max(), _skin);
+  exchangeGhosts();
+
+  // Ghosts lie within the cutoff of our box; particles that walked out of the mesh are clamped
+  // into the edge bins
+  const Real cutoff = 2 * _r_max + _skin;
+  auto box = _rank_boxes[processor_id()];
+  box.first -= Point(cutoff, cutoff, cutoff);
+  box.second += Point(cutoff, cutoff, cutoff);
+  _neighbor_list.build(_cloud, _cloud.size(), _cloud.size() + _num_ghosts, box.min(), box.max(), _skin);
   ++_num_neighbor_list_builds;
   if (_verify_neighbor_list)
     verifyNeighborList();
+  return true;
+}
+
+void
+KokkosParticleCloud::exchangeGhosts()
+{
+  constexpr auto record_size = DEM::ParticleCloud::record_size;
+  const auto cloud = _cloud;
+  const auto n = _cloud.size();
+  const Real cutoff = 2 * _r_max + _skin;
+  _num_ghosts = 0;
+  _ghost_send_counts.assign(_neighbor_ranks.size(), 0);
+  _ghost_recv_begin.clear();
+  if (_neighbor_ranks.empty())
+    return;
+
+  // Flag, per neighbor rank, the local particles within the cutoff of that rank's box, then
+  // compact the flags into the send index with a scan
+  const auto num_neighbors = _neighbor_ranks.size();
+  if (_slot.extent(0) < n * num_neighbors)
+    _slot = ::Kokkos::View<std::size_t *>("dem_migrate_slot", n * num_neighbors);
+  const auto flags = _slot;
+  ::Kokkos::View<Real * [6], ::Kokkos::LayoutRight> boxes("dem_ghost_boxes", num_neighbors);
+  auto boxes_host = ::Kokkos::create_mirror_view(boxes);
+  for (const auto b : index_range(_neighbor_ranks))
+    for (const auto c : make_range(3))
+    {
+      boxes_host(b, c) = _rank_boxes[_neighbor_ranks[b]].min()(c) - cutoff;
+      boxes_host(b, 3 + c) = _rank_boxes[_neighbor_ranks[b]].max()(c) + cutoff;
+    }
+  ::Kokkos::deep_copy(boxes, boxes_host);
+  ::Kokkos::parallel_for(
+      "dem_ghost_flag", n * num_neighbors, KOKKOS_LAMBDA(const std::size_t k) {
+        const auto b = k / n, i = k % n;
+        bool inside = true;
+        for (unsigned int c = 0; c < 3; ++c)
+          inside = inside && cloud.x(i, c) >= boxes(b, c) && cloud.x(i, c) <= boxes(b, 3 + c);
+        flags(k) = inside;
+      });
+  std::size_t total = 0;
+  ::Kokkos::parallel_scan(
+      "dem_ghost_scan",
+      n * num_neighbors,
+      KOKKOS_LAMBDA(const std::size_t k, std::size_t & sum, const bool final) {
+        const auto flag = flags(k);
+        if (final)
+          flags(k) = flag ? sum : std::numeric_limits<std::size_t>::max();
+        sum += flag;
+      },
+      total);
+  if (_ghost_send_index.extent(0) < total)
+    _ghost_send_index = ::Kokkos::View<std::size_t *>("dem_ghost_send_index", total);
+  if (_ghost_buffer.extent(0) < total * record_size)
+    _ghost_buffer = ::Kokkos::View<Real *>("dem_ghost_buffer", total * record_size);
+  const auto send_index = _ghost_send_index;
+  const auto buffer = _ghost_buffer;
+  ::Kokkos::parallel_for(
+      "dem_ghost_pack", n * num_neighbors, KOKKOS_LAMBDA(const std::size_t k) {
+        const auto slot = flags(k);
+        if (slot == std::numeric_limits<std::size_t>::max())
+          return;
+        const auto i = k % n;
+        send_index(slot) = i;
+        cloud.pack(i, 0, &buffer(slot * record_size));
+      });
+
+  // The send index is ordered by neighbor rank, so the per-rank counts are the slot boundaries
+  auto buffer_host = ::Kokkos::create_mirror_view_and_copy(
+      ::Kokkos::HostSpace{},
+      ::Kokkos::subview(buffer, std::make_pair(std::size_t(0), total * record_size)));
+  auto flags_host = ::Kokkos::create_mirror_view_and_copy(
+      ::Kokkos::HostSpace{}, ::Kokkos::subview(flags, std::make_pair(std::size_t(0), n * num_neighbors)));
+  std::map<processor_id_type, std::vector<Real>> to_send;
+  for (const auto b : index_range(_neighbor_ranks))
+  {
+    auto & data = to_send[_neighbor_ranks[b]];
+    for (const auto i : make_range(n))
+    {
+      const auto slot = flags_host(b * n + i);
+      if (slot == std::numeric_limits<std::size_t>::max())
+        continue;
+      data.insert(data.end(), &buffer_host(slot * record_size), &buffer_host(slot * record_size) + record_size);
+      ++_ghost_send_counts[b];
+    }
+  }
+
+  std::map<processor_id_type, std::vector<Real>> received;
+  Parallel::push_parallel_vector_data(
+      _communicator,
+      to_send,
+      [&received](processor_id_type source, const std::vector<Real> & data)
+      { received[source] = data; });
+
+  // Append the ghosts behind the local particles, grouped by source rank in rank order so the
+  // forwarding of each substep lands in fixed slots
+  for (const auto & [source, data] : received)
+    _num_ghosts += data.size() / record_size;
+  const auto end = n + _num_ghosts;
+  if (end > _cloud.capacity())
+    reserve(std::max(end, 2 * _cloud.capacity()));
+  std::size_t begin = n;
+  for (const auto & [source, data] : received)
+  {
+    const auto count = data.size() / record_size;
+    _ghost_recv_begin[source] = begin;
+    DEM::ParticleCloud::HostMirror host(count);
+    for (const auto r : make_range(count))
+    {
+      host.unpack(data.data() + r * record_size, r);
+      host.elem(r) = libMesh::DofObject::invalid_id;
+    }
+    _cloud.copyFrom(host, begin);
+    begin += count;
+  }
+}
+
+void
+KokkosParticleCloud::updateGhosts()
+{
+  if (_neighbor_ranks.empty())
+    return;
+
+  // Positions and velocities only; the rest of a ghost's state is fixed between rebuilds
+  constexpr std::size_t stride = 6;
+  const auto cloud = _cloud;
+  const auto send_index = _ghost_send_index;
+  const auto buffer = _ghost_buffer;
+  std::size_t total = 0;
+  for (const auto count : _ghost_send_counts)
+    total += count;
+  ::Kokkos::parallel_for(
+      "dem_ghost_forward_pack", total, KOKKOS_LAMBDA(const std::size_t slot) {
+        const auto i = send_index(slot);
+        for (unsigned int c = 0; c < 3; ++c)
+        {
+          buffer(slot * stride + c) = cloud.x(i, c);
+          buffer(slot * stride + 3 + c) = cloud.v(i, c);
+        }
+      });
+  auto buffer_host = ::Kokkos::create_mirror_view_and_copy(
+      ::Kokkos::HostSpace{}, ::Kokkos::subview(buffer, std::make_pair(std::size_t(0), total * stride)));
+  std::map<processor_id_type, std::vector<Real>> to_send;
+  std::size_t slot = 0;
+  for (const auto b : index_range(_neighbor_ranks))
+  {
+    to_send[_neighbor_ranks[b]].assign(&buffer_host(slot * stride),
+                                       &buffer_host(slot * stride) + _ghost_send_counts[b] * stride);
+    slot += _ghost_send_counts[b];
+  }
+
+  auto x_host = ::Kokkos::create_mirror_view(_cloud.x);
+  auto v_host = ::Kokkos::create_mirror_view(_cloud.v);
+  Parallel::push_parallel_vector_data(
+      _communicator,
+      to_send,
+      [&](processor_id_type source, const std::vector<Real> & data)
+      {
+        const auto begin = libmesh_map_find(_ghost_recv_begin, source);
+        for (const auto r : make_range(data.size() / stride))
+          for (const auto c : make_range(3))
+          {
+            x_host(begin + r, c) = data[r * stride + c];
+            v_host(begin + r, c) = data[r * stride + 3 + c];
+          }
+      });
+  const auto range = std::make_pair(_cloud.size(), _cloud.size() + _num_ghosts);
+  ::Kokkos::deep_copy(::Kokkos::subview(_cloud.x, range, ::Kokkos::ALL),
+                      ::Kokkos::subview(x_host, range, ::Kokkos::ALL));
+  ::Kokkos::deep_copy(::Kokkos::subview(_cloud.v, range, ::Kokkos::ALL),
+                      ::Kokkos::subview(v_host, range, ::Kokkos::ALL));
 }
 
 void
 KokkosParticleCloud::verifyNeighborList()
 {
   const auto n = _cloud.size();
+  const auto n_total = n + _num_ghosts;
   auto x = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, _cloud.x);
   auto r = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, _cloud.r);
   auto gid = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, _cloud.gid);
@@ -408,12 +617,13 @@ KokkosParticleCloud::verifyNeighborList()
       ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, _neighbor_list.offsets());
   auto pairs = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, _neighbor_list.pairs());
 
+  // Pairs with at least one local particle; ghost-ghost pairs are listed but never used
   std::set<std::pair<std::size_t, std::size_t>> listed, expected;
   for (const auto i : make_range(n))
     for (auto k = offsets(i); k < offsets(i + 1); ++k)
       listed.emplace(std::min(i, pairs(k)), std::max(i, pairs(k)));
   for (const auto i : make_range(n))
-    for (const auto j : make_range(i + 1, n))
+    for (const auto j : make_range(i + 1, n_total))
     {
       const Point d(x(i, 0) - x(j, 0), x(i, 1) - x(j, 1), x(i, 2) - x(j, 2));
       if (d.norm() < r(i) + r(j) + _skin)
@@ -482,6 +692,8 @@ KokkosParticleCloud::migrate()
       });
   std::swap(_cloud, _scratch);
   _cloud.n = cloud.size() - n_sent;
+  // Ghosts were not compacted along; the rebuild after migration replaces them
+  _num_ghosts = 0;
 
   // Only the departing particles cross to the host
   auto send_buffer_host = ::Kokkos::create_mirror_view_and_copy(

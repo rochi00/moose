@@ -4,7 +4,7 @@
 
 Reports one of the global scalars of a [KokkosParticleCloud.md]: the number of particles, the
 number lost, the number migrated between ranks in the last step, the maximum number of face hops
-any particle took in the last step, the number of neighbor pairs and of neighbor-list builds, the translational and rotational kinetic energies, or the
+any particle took in the last step, the number of neighbor pairs (at the last build), neighbor-list builds, and ghost particles, the translational and rotational kinetic energies, or the
 magnitude of the total spin angular momentum. All values are reduced across ranks.
 
 !syntax parameters /Postprocessors/KokkosParticleCloudValue

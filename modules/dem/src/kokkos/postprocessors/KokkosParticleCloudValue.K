@@ -11,7 +11,7 @@ KokkosParticleCloudValue::validParams()
   params.addRequiredParam<UserObjectName>("cloud", "The KokkosParticleCloud to report on");
   params.addRequiredParam<MooseEnum>("value",
                                      MooseEnum("num_particles num_lost num_migrated max_hops "
-                                               "num_neighbor_pairs num_neighbor_list_builds "
+                                               "num_neighbor_pairs num_neighbor_list_builds num_ghosts "
                                                "kinetic_energy rotational_kinetic_energy "
                                                "angular_momentum"),
                                      "Which value to report");
@@ -40,6 +40,8 @@ KokkosParticleCloudValue::getValue() const
     return _cloud.numNeighborPairs();
   if (_value == "num_neighbor_list_builds")
     return _cloud.numNeighborListBuilds();
+  if (_value == "num_ghosts")
+    return _cloud.numGhosts();
   if (_value == "kinetic_energy")
     return _cloud.kineticEnergy();
   if (_value == "rotational_kinetic_energy")
