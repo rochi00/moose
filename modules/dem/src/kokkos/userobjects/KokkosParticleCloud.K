@@ -43,6 +43,13 @@ KokkosParticleCloud::validParams()
                                     0,
                                     "normal_damping >= 0",
                                     "Dashpot coefficient of the linear spring-dashpot normal contact");
+  params.addParam<std::vector<Point>>(
+      "wall_points", {}, "A point on each fixed planar wall, one per entry of wall_normals");
+  params.addParam<std::vector<RealVectorValue>>(
+      "wall_normals",
+      {},
+      "Normal of each fixed planar wall pointing into the domain, one per entry of wall_points; "
+      "particles overlapping a wall get the normal contact force against it");
   params.addRangeCheckedParam<unsigned int>(
       "substeps", 1, "substeps > 0", "Number of integration substeps per time step");
   // A particle should cross only a few cells per substep; a much larger walk indicates a mesh the
@@ -83,6 +90,8 @@ KokkosParticleCloud::KokkosParticleCloud(const InputParameters & parameters)
     _density(getParam<Real>("density")),
     _gravity(getParam<RealVectorValue>("gravity")),
     _contact({getParam<Real>("normal_stiffness"), getParam<Real>("normal_damping")}),
+    _walls(getParam<std::vector<Point>>("wall_points"),
+           getParam<std::vector<RealVectorValue>>("wall_normals")),
     _substeps(getParam<unsigned int>("substeps")),
     _max_hops(getParam<unsigned int>("max_hops")),
     _skin(isParamValid("skin") ? getParam<Real>("skin") : 0.1 * _radius),
@@ -98,6 +107,14 @@ KokkosParticleCloud::KokkosParticleCloud(const InputParameters & parameters)
       paramError("initial_radii", "Radii must be positive");
   if (_initial_velocities.size() && _initial_velocities.size() != _initial_positions.size())
     paramError("initial_velocities", "Must have one entry per initial position");
+  if (getParam<std::vector<Point>>("wall_points").size() !=
+      getParam<std::vector<RealVectorValue>>("wall_normals").size())
+    paramError("wall_normals", "Must have one entry per wall point");
+  for (const auto & normal : getParam<std::vector<RealVectorValue>>("wall_normals"))
+    if (normal.norm() == 0)
+      paramError("wall_normals", "Normals must be nonzero");
+  if (_walls.n && _contact.stiffness == 0)
+    paramError("wall_points", "Walls need a positive normal_stiffness");
 
   // Side centroids and normals are only cached on request
   _fe_problem.mesh().getKokkosMesh()->setNeedsElementSideGeometry();
@@ -267,6 +284,7 @@ KokkosParticleCloud::computeForces(const ::Kokkos::View<std::size_t *> & subset,
   const auto cloud = _cloud;
   const Moose::Kokkos::Real3 g(_gravity(0), _gravity(1), _gravity(2));
   const auto contact = _contact;
+  const auto walls = _walls;
   const auto offsets = _neighbor_list.offsets();
   const auto pairs = _neighbor_list.pairs();
   constexpr auto exited = DEM::ParticleCloud::exited;
@@ -301,6 +319,16 @@ KokkosParticleCloud::computeForces(const ::Kokkos::View<std::size_t *> & subset,
               const Moose::Kokkos::Real3 vj(cloud.v(j, 0), cloud.v(j, 1), cloud.v(j, 2));
               const Real normal_velocity = (vi - vj).dot_product(normal);
               f += contact.normalForce(overlap, normal_velocity) * normal;
+            }
+
+            // Sphere-plane narrow phase against every wall, which is at rest
+            for (std::size_t w = 0; w < walls.n; ++w)
+            {
+              const Real overlap = walls.overlap(w, xi, cloud.r(i));
+              if (overlap <= 0)
+                continue;
+              const auto normal = walls.normal(w);
+              f += contact.normalForce(overlap, vi.dot_product(normal)) * normal;
             }
           }
         }

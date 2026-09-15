@@ -1,5 +1,5 @@
 [Tests]
-  design = 'KokkosParticleCloud.md LinearSpringDashpot.md'
+  design = 'KokkosParticleCloud.md LinearSpringDashpot.md AnalyticWalls.md'
   issues = '#1'
 
   [restitution]
@@ -18,6 +18,22 @@
     csvdiff = restitution_3d_out_state_0004.csv
     rel_err = 1e-4
     requirement = 'The system shall compute the head-on collision of two spheres along a diagonal of a three-dimensional mesh with the same accuracy as along an axis, on any number of ranks.'
+    capabilities = 'kokkos'
+  []
+  [wall_restitution]
+    type = CSVDiff
+    input = wall_restitution.i
+    csvdiff = wall_restitution_out_state_0004.csv
+    rel_err = 1e-4
+    requirement = 'The system shall compute the oblique impact of a sphere on a fixed planar wall with the linear spring-dashpot contact model such that the normal velocity is reflected with the coefficient of restitution of the damped oscillator with the sphere mass as effective mass and the tangential velocity is unchanged, on any number of ranks.'
+    capabilities = 'kokkos'
+  []
+  [wall_mismatch]
+    type = RunException
+    input = wall_restitution.i
+    cli_args = "UserObjects/cloud/wall_normals='-1 0 0 0 -1 0'"
+    expect_err = 'wall_normals.*Must have one entry per wall point'
+    requirement = 'The system shall report an error when the numbers of wall points and wall normals differ.'
     capabilities = 'kokkos'
   []
 []

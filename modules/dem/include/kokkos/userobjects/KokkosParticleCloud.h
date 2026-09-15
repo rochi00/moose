@@ -4,6 +4,7 @@
 #include "ParticleCloud.h"
 #include "NeighborList.h"
 #include "LinearSpringDashpot.h"
+#include "AnalyticWalls.h"
 
 #include "libmesh/point_locator_base.h"
 #include "libmesh/bounding_box.h"
@@ -33,6 +34,9 @@
  * particles without ghost neighbors are computed while the forward is in flight. Every rank
  * computes the forces on its own particles from the ghost copies, so no force communication is
  * needed.
+ *
+ * Walls are fixed planes given by a point and an inward normal each; a particle overlapping a
+ * wall gets the same normal contact force as against a sphere at rest of infinite mass.
  *
  * Migration packs on device and stages through host buffers for the TIMPI exchange.
  */
@@ -128,8 +132,10 @@ protected:
   const Real _density;
   /// Gravitational acceleration
   const RealVectorValue & _gravity;
-  /// Normal contact model
+  /// Normal contact model, shared by sphere-sphere and sphere-wall contacts
   const DEM::LinearSpringDashpot _contact;
+  /// Fixed planar walls
+  const DEM::AnalyticWalls _walls;
   /// Number of substeps per MOOSE time step
   const unsigned int _substeps;
   /// Upper bound on face hops per particle per walk

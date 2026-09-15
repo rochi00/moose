@@ -13,7 +13,9 @@ device (plan decision D4).
 
 Forces are the body force `m * gravity` and, when `normal_stiffness` is positive, the
 [LinearSpringDashpot.md] normal contact force between overlapping spheres found through the
-neighbor list. Tangential contact, rolling resistance, and walls are added by later layers.
+neighbor list and against the fixed planar walls given by `wall_points` and `wall_normals`
+([AnalyticWalls.md]). Tangential contact, rolling resistance, and mesh-derived walls are added by
+later layers.
 
 ## Neighbor list
 
