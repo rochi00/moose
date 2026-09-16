@@ -10,9 +10,7 @@
 #pragma once
 
 #include "MathFVUtils.h"
-#include "LinearFVFluxKernel.h"
-
-#include <algorithm>
+#include "LinearWCNSFV2PDriftFluxBase.h"
 
 class LinearFVBoundaryCondition;
 
@@ -42,7 +40,7 @@ class LinearFVBoundaryCondition;
  * \f$ \beta_c / \rho_m \to 1 \f$. See Manninen, Taivassalo and Kallio, VTT Publications 288
  * (1996), equations (18), (21) and (76).
  */
-class LinearWCNSFV2PMomentumDriftFlux : public LinearFVFluxKernel
+class LinearWCNSFV2PMomentumDriftFlux : public LinearWCNSFV2PDriftFluxBase
 {
 public:
   static InputParameters validParams();
@@ -87,24 +85,8 @@ protected:
   /// once the fixed point iteration converges.
   Real deferredCorrection() const;
 
-  /// The dimension of the simulation
-  const unsigned int _dim;
-
-  /// Dispersed phase density
-  const Moose::Functor<Real> & _rho_d;
-
   /// Continuous phase density
   const Moose::Functor<Real> & _rho_c;
-
-  /// Dispersed phase fraction
-  const Moose::Functor<Real> & _f_d;
-
-  /// slip velocity in direction x
-  const Moose::Functor<Real> & _u_slip;
-  /// slip velocity in direction y
-  const Moose::Functor<Real> * const _v_slip;
-  /// slip velocity in direction z
-  const Moose::Functor<Real> * const _w_slip;
 
   /// The index of the momentum component
   const unsigned int _index;
@@ -119,28 +101,14 @@ protected:
   /// stress coefficient times the normal slip velocity. Used as the scale of the implicit surrogate
   Real _slip_mass_flux;
 
-  /**
-   * The exact coefficient of the diffusion stress, \f$ \beta_d \beta_c / \rho_m \f$.
-   *
-   * The phase fraction is clamped into [0, 1] before use, matching the clamping the mixture
-   * property material applies, so that a phase fraction which has temporarily left the physical
-   * range cannot drive the mixture density non-positive here.
-   */
+  /// The exact coefficient of the diffusion stress, beta_d beta_c / rho_m, at the given argument
   template <typename SpaceArg>
   Real diffusionStressCoefficient(const SpaceArg & arg, const Moose::StateArg & state) const
   {
-    const auto fd = std::clamp(_f_d(arg, state), 0.0, 1.0);
-    const auto beta_d = fd * _rho_d(arg, state);
-    const auto beta_c = (1.0 - fd) * _rho_c(arg, state);
-    const auto rho_m = beta_d + beta_c;
-    return (rho_m > 0.0) ? beta_d * beta_c / rho_m : 0.0;
+    return NS::diffusionStressCoefficient(_f_d(arg, state), _rho_d(arg, state), _rho_c(arg, state));
   }
 
   /// Coefficient of the implicit surrogate used for the deferred correction. Chosen for
   /// convergence only, see setupFaceData; the converged solution does not depend on it.
   Real _gamma;
-
-  /// Multiplier that keeps the normal pointing outward on boundary faces, including boundaries
-  /// which are internal to the mesh
-  Real _boundary_normal_factor;
 };
