@@ -138,6 +138,23 @@ particleReynoldsNumber(const T & rho_c, const T & particle_diameter, const T & s
 }
 
 /**
+ * The coefficient of the diffusion stress of the mixture model, \f$ \beta_d \beta_c / \rho_m \f$,
+ * which also weights the enthalpy the relative motion carries. The phase fraction is clamped into
+ * [0, 1], matching the clamping the mixture property material applies, so that a phase fraction
+ * which has temporarily left the physical range cannot drive the mixture density non-positive.
+ * Zero where either phase is absent.
+ */
+inline Real
+diffusionStressCoefficient(Real fd, Real rho_d, Real rho_c)
+{
+  fd = std::clamp(fd, 0.0, 1.0);
+  const auto beta_d = fd * rho_d;
+  const auto beta_c = (1.0 - fd) * rho_c;
+  const auto rho_m = beta_d + beta_c;
+  return (rho_m > 0.0) ? beta_d * beta_c / rho_m : 0.0;
+}
+
+/**
  * Assembles the slip velocity vector of a dispersed phase from its component functors. The
  * components a lower dimensional mesh does not carry are passed as null and read as zero.
  */
