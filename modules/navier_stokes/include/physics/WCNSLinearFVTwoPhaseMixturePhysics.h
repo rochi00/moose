@@ -61,6 +61,12 @@ private:
   /// Builds d(rho_m)/dp at fixed phase fraction, the coefficient the pressure driven part of
   /// the storage term carries onto the matrix diagonal
   MooseFunctorName buildMixtureDensityPressureDerivative();
+
+  /// Adds the interfacial mass transfer source to the dispersed phase equation
+  void addInterfacialMassTransferTerm();
+
+  /// Adds the latent heat absorbed or released by the interfacial mass transfer
+  void addLatentHeatTransferTerm();
   void addPhaseChangeEnergySource();
   /// Adds the functor material holding the coefficient of the phase change energy term
   void addPhaseChangeCoefficientMaterial();
