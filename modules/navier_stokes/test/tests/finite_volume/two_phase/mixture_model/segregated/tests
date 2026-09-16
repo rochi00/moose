@@ -110,6 +110,20 @@
     max_threads = 1 # see libmesh issue #3808
   []
 
+  [mass_drift_flux_vanishes]
+    type = CSVDiff
+    input = 'channel-drift-flux-physics.i'
+    cli_args = "rho_d=10.0 Physics/NavierStokes/TwoPhaseMixtureSegregated/mixture/add_drift_flux_mass_term=true Outputs/file_base=mass-drift-flux-vanishes"
+    csvdiff = 'mass-drift-flux-vanishes.csv'
+    design = 'LinearWCNSFV2PMassDriftFlux.md'
+    # The gold was produced with the term switched off and the phase densities set equal. The
+    # dilatation the relative motion produces carries the factor alpha - c_d, and c_d = alpha when
+    # the densities are equal, so the term must vanish identically rather than merely become small.
+    # This is an analytic property of the closure and holds to the last digit.
+    requirement = 'The system shall produce no mixture dilatation from the relative motion of the phases when the two phase densities are equal, since the volumetric and mass averaged mixture velocities then coincide.'
+    max_threads = 1 # see libmesh issue #3808
+  []
+
   [errors]
     requirement = "The system shall return an error if"
     [active_scalar_subcycles_without_reordering]
