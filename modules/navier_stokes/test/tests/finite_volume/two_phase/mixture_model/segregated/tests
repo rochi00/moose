@@ -124,6 +124,19 @@
     max_threads = 1 # see libmesh issue #3808
   []
 
+  [energy_slip_wall_conservation]
+    type = CSVDiff
+    input = 'energy-slip-wall-conservation.i'
+    csvdiff = 'energy-slip-wall-conservation_out.csv'
+    # The enthalpy integral is 1515, and the imbalance left by the segregated solve is 6e-5 of it.
+    # Declaring the walls permeable, which is the defect this guards against, moves the integral by
+    # 1.07, so this tolerance separates the two by four orders of magnitude.
+    abs_zero = 1e-3
+    design = 'LinearWCNSFV2PEnergyDriftFlux.md'
+    requirement = 'The system shall conserve the mixture enthalpy in a closed cavity when the phases move relative to one another, by not carrying enthalpy across impermeable boundaries, even when those boundaries constrain the temperature.'
+    max_threads = 1 # see libmesh issue #3808
+  []
+
   [errors]
     requirement = "The system shall return an error if"
     [active_scalar_subcycles_without_reordering]
