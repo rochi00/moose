@@ -27,6 +27,9 @@ public:
 
 private:
   virtual void addFVKernels() override;
+
+  /// Adds the dilatation the relative motion produces to the pressure equation
+  void addMassDriftFluxTerm();
   virtual void addMaterials() override;
   virtual void checkIntegrity() const override;
 
