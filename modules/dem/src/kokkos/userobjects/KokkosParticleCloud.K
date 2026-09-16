@@ -92,8 +92,16 @@ KokkosParticleCloud::validParams()
   params.addRangeCheckedParam<Real>("restitution",
                                     1,
                                     "restitution > 0 & restitution <= 1",
-                                    "Coefficient of restitution the damping of the Hertz normal "
-                                    "contact is set to reproduce; one for no damping");
+                                    "Coefficient of restitution the Tsuji damping of the Hertz "
+                                    "normal contact is set to reproduce; one for no damping");
+  params.addRangeCheckedParam<Real>(
+      "dissipation_time",
+      0,
+      "dissipation_time >= 0",
+      "Dissipative constant A of the Kuwabara-Kono viscoelastic damping of the Hertz normal "
+      "contact, used instead of the Tsuji damping when positive: the damping force is A times "
+      "the rate of the elastic force, and the restitution coefficient falls with the impact "
+      "velocity as 1 - e ~ v^(1/5)");
   params.addParam<std::vector<BoundaryName>>(
       "wall_boundaries",
       {},
@@ -275,7 +283,8 @@ KokkosParticleCloud::makeHertz() const
   // G = E / (2 (1 + nu))
   return {E / (2 * (1 - nu * nu)),
           -log_e / std::sqrt(log_e * log_e + libMesh::pi * libMesh::pi),
-          E / (2 * (1 + nu)) / (2 * (2 - nu))};
+          E / (2 * (1 + nu)) / (2 * (2 - nu)),
+          getParam<Real>("dissipation_time")};
 }
 
 bool

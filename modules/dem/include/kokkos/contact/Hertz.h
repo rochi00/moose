@@ -6,15 +6,18 @@ namespace DEM
 {
 
 /**
- * Hertz normal contact model with the damping of Tsuji et al. (1992) and the Mindlin no-slip
- * tangential stiffness (plan layer L4), a compile-time policy like LinearSpringDashpot. The
- * elastic force is
+ * Hertz normal contact model with the Mindlin no-slip tangential stiffness (plan layer L4), a
+ * compile-time policy like LinearSpringDashpot. The elastic force is
  *   F = (4/3) E* sqrt(r_eff) overlap^(3/2)
  * with E* the effective modulus E / (2 (1 - nu^2)) of two bodies of the same material (walls
- * included), and the damping force is
- *   -2 sqrt(5/6) beta sqrt(S_n m_eff) v_n,   S_n = 2 E* sqrt(r_eff overlap),
- * with beta = -ln e / sqrt(ln^2 e + pi^2) for a restitution coefficient e, which the contact
- * then reproduces nearly independently of the impact velocity.
+ * included). The normal damping is one of
+ *   Tsuji et al. (1992):  -2 sqrt(5/6) beta sqrt(S_n m_eff) v_n,   S_n = 2 E* sqrt(r_eff overlap),
+ *     with beta = -ln e / sqrt(ln^2 e + pi^2) for a restitution coefficient e, which the contact
+ *     then reproduces nearly independently of the impact velocity;
+ *   Kuwabara and Kono (1987), Brilliantov et al. (1996):  A d(F_el)/d(overlap) d(overlap)/dt
+ *     = -(3/2) A (4/3) E* sqrt(r_eff overlap) v_n, the viscoelastic damping with a dissipative
+ *     constant A (a time), whose restitution coefficient falls with the impact velocity as
+ *     1 - e ~ v^(1/5).
  */
 struct Hertz
 {
@@ -25,6 +28,8 @@ struct Hertz
   /// Effective shear modulus G / (2 (2 - nu)) of two bodies of the same material, with
   /// G = E / (2 (1 + nu)); zero for a frictionless contact
   Real effective_shear_modulus = 0;
+  /// Dissipative constant A of the Kuwabara-Kono damping, used instead of Tsuji's when positive
+  Real dissipation_time = 0;
 
   /// Whether the model applies any force
   bool enabled() const { return effective_modulus > 0; }
@@ -37,6 +42,8 @@ struct Hertz
   {
     // S_n = 2 E* sqrt(r_eff overlap) is the tangent stiffness dF/d(overlap)
     const Real s_n = 2 * effective_modulus * ::Kokkos::sqrt(r_eff * overlap);
+    if (dissipation_time > 0)
+      return 2.0 / 3.0 * s_n * overlap - dissipation_time * s_n * normal_velocity;
     // 2 sqrt(5/6) = 1.8257418583505538
     return 2.0 / 3.0 * s_n * overlap -
            1.8257418583505538 * beta * ::Kokkos::sqrt(s_n * m_eff) * normal_velocity;

@@ -21,4 +21,23 @@ The elastic energy of a contact is $\frac{8}{15} E^* \sqrt{r_\text{eff}} \, \del
 
 The parameters are `youngs_modulus` ($E$), `poissons_ratio` ($\nu$), and `restitution` ($e$, one
 for no damping) of [KokkosParticleCloud.md]. The `stack` test checks the force law through the
-equilibrium overlaps of two spheres stacked on a wall under gravity.
+equilibrium overlaps of two spheres stacked on a wall under gravity, and the `hertz_impact`
+validation the force history, maximum overlap, and contact duration of an elastic impact against
+Hertz's impact solution.
+
+## Kuwabara-Kono damping
+
+With a positive `dissipation_time` $A$, the damping is instead the viscoelastic one of Kuwabara
+and Kono (1987) and Brilliantov et al. (1996), the dissipative constant times the rate of the
+elastic force,
+
+!equation
+F_n = \frac{4}{3} E^* \sqrt{r_\text{eff}} \, \delta^{3/2} - \frac{3}{2} A \, \frac{4}{3} E^*
+\sqrt{r_\text{eff} \delta} \, v_n,
+
+whose coefficient of restitution is not a material constant but falls with the impact velocity,
+$e = 1 - 1.15344 \, A \kappa^{2/5} v^{1/5} + \dots$ with $\kappa = (3/2)^{3/2} \cdot
+\frac{4}{3} E^* \sqrt{r_\text{eff}} / m_\text{eff}$ (Schwager and Poeschel 1998; Ramirez et al.
+1999). The `kk_*` validation tests check it against the integrated collision at four speeds
+spanning a decade and a half. The total force may be attractive at the end of a contact, as in
+the model; it is not clipped.

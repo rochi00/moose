@@ -1,0 +1,56 @@
+[Tests]
+  design = 'KokkosParticleCloud.md Hertz.md'
+  issues = '#1'
+
+  [hertz_impact]
+    type = CSVDiff
+    input = hertz_impact.i
+    csvdiff = 'hertz_impact_out_state_0004.csv hertz_impact_out_state_0020.csv hertz_impact_out_state_0040.csv hertz_impact_out_state_0050.csv hertz_impact_out_state_0060.csv hertz_impact_out_state_0070.csv hertz_impact_out_state_0080.csv hertz_impact_out_state_0090.csv'
+    # The force, position, and velocity histories match the Hertz impact solution to 1.2e-4
+    # (the substep is t_c / 400); the maximum overlap sampled every 1e-5 s is within 1.4e-4 of
+    # (15 m_eff v^2 / (16 E* sqrt(r_eff)))^(2/5) and the contact lasts 0.81-0.83 ms against
+    # 2.94 (m_eff^2 / (r_eff E*^2 v))^(1/5) = 0.832 ms
+    rel_err = 5e-4
+    abs_zero = 1e-10
+    requirement = 'The system shall reproduce the force history, maximum overlap, and contact duration of the elastic Hertz impact of two spheres.'
+    capabilities = 'kokkos'
+  []
+  [kk_v01]
+    type = CSVDiff
+    input = kuwabara_kono.i
+    cli_args = "UserObjects/cloud/initial_velocities='0.05 0 0 -0.05 0 0' Outputs/file_base=kk_v01"
+    csvdiff = kk_v01_state_0012.csv
+    # First order in the substep, as the restitution tests: below 1e-4 here
+    rel_err = 1e-4
+    requirement = 'The system shall give the restitution coefficient of the Kuwabara-Kono viscoelastic collision at a closing speed of 0.1 m/s, 0.809.'
+    capabilities = 'kokkos'
+  []
+  [kk_v03]
+    type = CSVDiff
+    input = kuwabara_kono.i
+    cli_args = "UserObjects/cloud/initial_velocities='0.15 0 0 -0.15 0 0' Outputs/file_base=kk_v03"
+    csvdiff = kk_v03_state_0012.csv
+    rel_err = 1e-4
+    requirement = 'The system shall give the restitution coefficient of the Kuwabara-Kono viscoelastic collision at a closing speed of 0.3 m/s, 0.768.'
+    capabilities = 'kokkos'
+  []
+  [kk_v1]
+    type = CSVDiff
+    input = kuwabara_kono.i
+    cli_args = "Outputs/file_base=kk_v1"
+    csvdiff = kk_v1_state_0012.csv
+    rel_err = 1e-4
+    requirement = 'The system shall give the restitution coefficient of the Kuwabara-Kono viscoelastic collision at a closing speed of 1 m/s, 0.716.'
+    capabilities = 'kokkos'
+  []
+  [kk_v3]
+    type = CSVDiff
+    input = kuwabara_kono.i
+    cli_args = "UserObjects/cloud/initial_velocities='1.5 0 0 -1.5 0 0' Outputs/file_base=kk_v3"
+    csvdiff = kk_v3_state_0012.csv
+    # The fastest collision has the fewest substeps (340) and touches between two of them: 1.3e-4
+    rel_err = 3e-4
+    requirement = 'The system shall give the restitution coefficient of the Kuwabara-Kono viscoelastic collision at a closing speed of 3 m/s, 0.661, so that 1 - e grows with the impact velocity.'
+    capabilities = 'kokkos'
+  []
+[]
