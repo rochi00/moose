@@ -52,6 +52,24 @@
     max_threads = 1 # see libmesh issue #3808
   []
 
+  [interface_area_hibiki_ishii]
+    type = CSVDiff
+    input = 'interface-area-verification.i'
+    csvdiff = 'interface-area-verification_out.csv'
+    design = 'LinearWCNSFV2PInterfaceAreaSourceSink.md'
+    requirement = 'The system shall reproduce the analytic steady state of the Hibiki and Ishii interfacial area closure, at which coalescence balances breakage.'
+    max_threads = 1 # see libmesh issue #3808
+  []
+  [interface_area_ishii_kim]
+    type = CSVDiff
+    input = 'interface-area-verification.i'
+    cli_args = "model=ishii-kim Outputs/file_base=interface-area-verification-ik"
+    csvdiff = 'interface-area-verification-ik.csv'
+    design = 'LinearWCNSFV2PInterfaceAreaSourceSink.md'
+    requirement = 'The system shall reproduce the analytic steady state of the Ishii and Kim interfacial area closure, at which random collision and wake entrainment balance turbulent impact.'
+    max_threads = 1 # see libmesh issue #3808
+  []
+
   [errors]
     requirement = "The system shall return an error if"
     [skewness]
