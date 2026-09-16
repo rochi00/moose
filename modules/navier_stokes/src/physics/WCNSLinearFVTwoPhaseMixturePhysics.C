@@ -284,6 +284,23 @@ WCNSLinearFVTwoPhaseMixturePhysics::addFVKernels()
 {
   WCNSLinearFVScalarTransportPhysics::addFVKernels();
 
+  // The phase fraction equation is an advection equation whose boundedness rests on the time
+  // derivative. Solved steady, the discrete operator loses the property that each cell value is a
+  // convex combination of its neighbours wherever the dispersed phase velocity is compressive, and
+  // the phase fraction can leave [0, 1]. That is not hypothetical: the same case which converges
+  // when marched in time diverges when solved steady, the phase fraction reaching -18 before the
+  // residual goes non-finite. It is tolerable at low void fraction, where the drift flux is a
+  // small part of the transport, and it is not at moderate void fraction.
+  if (_add_phase_equation && !isTransient())
+    mooseInfoRepeated(
+        "The phase transport equation is being solved without a time derivative. Its boundedness "
+        "is not guaranteed in that form and the phase fraction may leave [0, 1], which in turn "
+        "drives the mixture properties and the slip closure outside their range of validity. "
+        "Whether it bites depends on how large the drift flux is: it is benign when the slip is "
+        "small, as it is without gravity, and it is not when the slip is a significant part of "
+        "the transport. Prefer a transient executioner, marching to steady state if a steady "
+        "answer is wanted.");
+
   if (_add_phase_equation && isParamSetByUser("alpha_exchange"))
     addPhaseInterfaceTerm();
 
