@@ -71,6 +71,14 @@ WCNSLinearFVTwoPhaseMixturePhysics::validParams()
                               "slip_single_particle_friction_pressure_gradient",
                               "Friction model");
 
+  params.addParam<InterpolationMethodName>(
+      "phase_drift_advection_interpolation",
+      "Scheme for the drift flux in the phase transport equation. The drift is always interpolated "
+      "separately from the mixture flux; this chooses which scheme the drift half uses, and "
+      "defaults to 'phase_advection_interpolation'. Setting it is what allows a limiter to act on "
+      "the drift correction alone.");
+  params.addParamNamesToGroup("phase_drift_advection_interpolation", "Numerical scheme");
+
   // This is added to match a nonlinear test result. If the underlying issue is fixed, remove it
   params.addParam<bool>("add_gravity_term_in_slip_velocity",
                         true,
@@ -213,6 +221,23 @@ WCNSLinearFVTwoPhaseMixturePhysics::addFVKernels()
 void
 WCNSLinearFVTwoPhaseMixturePhysics::setSlipVelocityParams(InputParameters & params) const
 {
+  // Only the phase advection kernel interpolates the drift separately; the momentum and energy
+  // drift terms are kernels of their own already.
+  if (isParamValid("phase_drift_advection_interpolation") &&
+      params.have_parameter<InterpolationMethodName>("slip_advected_interp_method_name"))
+    params.set<InterpolationMethodName>("slip_advected_interp_method_name") =
+        getParam<InterpolationMethodName>("phase_drift_advection_interpolation");
+
+  params.set<MooseFunctorName>("u_slip") = "vel_drift_x";
+  if (dimension() >= 2)
+    params.set<MooseFunctorName>("v_slip") = "vel_drift_y";
+  if (dimension() >= 3)
+    params.set<MooseFunctorName>("w_slip") = "vel_drift_z";
+}
+
+void
+WCNSLinearFVTwoPhaseMixturePhysics::setRelativeVelocityParams(InputParameters & params) const
+{
   params.set<MooseFunctorName>("u_slip") = "vel_slip_x";
   if (dimension() >= 2)
     params.set<MooseFunctorName>("v_slip") = "vel_slip_y";
@@ -258,7 +283,7 @@ WCNSLinearFVTwoPhaseMixturePhysics::addPhaseDriftFluxTerm()
     auto params = getFactory().getValidParams(object_type);
     assignBlocks(params, _blocks);
     params.set<LinearVariableName>("variable") = _flow_equations_physics->getVelocityNames()[dim];
-    setSlipVelocityParams(params);
+    setRelativeVelocityParams(params);
     params.set<MooseFunctorName>("rho_d") = _phase_2_density;
     params.set<MooseFunctorName>("rho_c") = _phase_1_density;
     params.set<MooseFunctorName>("fraction_dispersed") = _phase_2_fraction_name;
