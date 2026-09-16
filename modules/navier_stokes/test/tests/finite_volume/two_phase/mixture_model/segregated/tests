@@ -43,6 +43,15 @@
     max_threads = 1 # see libmesh issue #3808
   []
 
+  [slip_closure_verification]
+    type = CSVDiff
+    input = 'slip-closure-verification.i'
+    csvdiff = 'slip-closure-verification_out.csv'
+    design = 'LinearWCNSFV2PSlipVelocityFunctorMaterial.md'
+    requirement = 'The system shall compute the algebraic slip velocity of a two phase mixture, the diffusion velocity derived from it, and the slip velocity obtained by solving the drag correlation together with the force balance, in agreement with their analytic values.'
+    max_threads = 1 # see libmesh issue #3808
+  []
+
   [errors]
     requirement = "The system shall return an error if"
     [skewness]
