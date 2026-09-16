@@ -20,3 +20,16 @@ tied to the mesh are [SidesetWalls.md].
 
 The walls are given by the `wall_points` and `wall_normals` parameters of [KokkosParticleCloud.md],
 one entry each per wall; normals are normalized on input.
+
+## Moving and servo-controlled walls
+
+A wall may translate at a prescribed `wall_velocities` entry, which its contacts see as the
+partner's velocity and which carries its point along every substep (velocity-controlled shear,
+compression). With `servo_walls`, `servo_forces`, `servo_gain`, and `servo_max_velocity`, a wall
+is instead driven to a target compressive force, the particles' push against its inward normal
+as measured by [KokkosWallForce.md] at the end of the previous step: every step its velocity
+along the normal is the gain times the force error, capped by `servo_max_velocity` and by the
+velocity that would change a single contact's force by the error within the step (from the
+contact stiffness at the target force), which keeps the control stable for any gain and is what
+limits the approach speed of a wall not yet in contact. The `compress` test squeezes a sphere
+between the floor and a servo wall to 1 N, reached to 4e-11. Wall positions are checkpointed.

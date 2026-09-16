@@ -136,7 +136,7 @@ struct ContactEvaluator
                 Moose::Kokkos::Real3(cloud.omega(i, 0), cloud.omega(i, 1), cloud.omega(i, 2)),
                 cloud.r(i),
                 cloud.m(i),
-                Moose::Kokkos::Real3(0),
+                walls.velocity(w),
                 Moose::Kokkos::Real3(0),
                 0,
                 0);

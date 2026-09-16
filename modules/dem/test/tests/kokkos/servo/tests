@@ -1,0 +1,16 @@
+[Tests]
+  design = 'KokkosParticleCloud.md AnalyticWalls.md'
+  issues = '#1'
+
+  [compress]
+    type = CSVDiff
+    input = compress.i
+    cli_args = 'Outputs/csv=false Outputs/final/type=CSV Outputs/final/execute_on=FINAL Outputs/final/file_base=compress_final'
+    csvdiff = compress_final.csv
+    # The servo reaches the target force to 4e-11 and the sphere the position of the static
+    # squeeze to 1e-13
+    rel_err = 1e-8
+    requirement = 'The system shall drive a planar wall with a servo to a target compressive force, the wall moving at a velocity proportional to the force error and capped by the contact stiffness, so that a sphere is squeezed between the floor and the wall at the target force.'
+    capabilities = 'kokkos'
+  []
+[]

@@ -35,6 +35,8 @@ struct CloudCheckpoint
   /// Sideset wall vertex positions and velocities, which move between steps
   std::vector<Real> wall_vertices;
   std::vector<Real> wall_velocities;
+  /// Analytic wall points, which move under prescribed velocities or servos
+  std::vector<Real> analytic_wall_points;
   std::size_t num_exited = 0;
   std::size_t num_migrated = 0;
   std::size_t num_neighbor_list_builds = 0;
@@ -230,6 +232,9 @@ protected:
   std::vector<Point> displacedWallVertices() const;
   /// Place the particles of initial_positions that start in this rank's elements
   void placeInitialParticles();
+  /// Set the velocity of each servo wall for this step from the error between the target and
+  /// the last measured normal force on it
+  void servoWalls();
   /// Insert this step's share of the insertion rate at random positions in the insertion box
   /// that overlap no particle, the same on every rank, each rank keeping those in its elements
   void insertParticles();
@@ -323,8 +328,14 @@ protected:
   const DEM::Friction _friction;
   /// Contact histories of the listed pairs and wall contacts
   DEM::PairStateMap _pair_states;
-  /// Fixed planar walls
-  const DEM::AnalyticWalls _walls;
+  /// Planar walls, with the prescribed velocities and the servo settings moving them
+  DEM::AnalyticWalls _walls;
+  std::vector<RealVectorValue> _wall_normals;
+  std::vector<RealVectorValue> _wall_velocities;
+  const std::vector<unsigned int> _servo_walls;
+  const std::vector<Real> _servo_forces;
+  const Real _servo_gain;
+  const Real _servo_max_velocity;
   /// Sidesets whose faces are walls, the extra candidate reach for their motion, the
   /// displacement variables moving them, and the walls built from them
   const std::vector<BoundaryName> _wall_boundaries;

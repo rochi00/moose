@@ -102,6 +102,22 @@ KokkosParticleCloud::validParams()
       "contact, used instead of the Tsuji damping when positive: the damping force is A times "
       "the rate of the elastic force, and the restitution coefficient falls with the impact "
       "velocity as 1 - e ~ v^(1/5)");
+  params.addParam<std::vector<RealVectorValue>>(
+      "wall_velocities", {}, "Translation velocity of each fixed planar wall, one per wall");
+  params.addParam<std::vector<unsigned int>>(
+      "servo_walls", {}, "Planar walls (by index) driven to a target normal force by a servo");
+  params.addParam<std::vector<Real>>(
+      "servo_forces",
+      {},
+      "Target compressive force on each servo wall (the particles' push against its normal)");
+  params.addRangeCheckedParam<Real>(
+      "servo_gain",
+      0,
+      "servo_gain >= 0",
+      "Servo velocity per unit of force error (m/s per N): the wall moves into the domain when "
+      "the force is below the target and out when above");
+  params.addRangeCheckedParam<Real>(
+      "servo_max_velocity", 0, "servo_max_velocity >= 0", "Largest servo velocity");
   params.addParam<std::vector<BoundaryName>>(
       "wall_boundaries",
       {},
@@ -230,6 +246,11 @@ KokkosParticleCloud::KokkosParticleCloud(const InputParameters & parameters)
                getParam<Real>("rolling_damping")}),
     _walls(getParam<std::vector<Point>>("wall_points"),
            getParam<std::vector<RealVectorValue>>("wall_normals")),
+    _wall_velocities(getParam<std::vector<RealVectorValue>>("wall_velocities")),
+    _servo_walls(getParam<std::vector<unsigned int>>("servo_walls")),
+    _servo_forces(getParam<std::vector<Real>>("servo_forces")),
+    _servo_gain(getParam<Real>("servo_gain")),
+    _servo_max_velocity(getParam<Real>("servo_max_velocity")),
     _wall_boundaries(getParam<std::vector<BoundaryName>>("wall_boundaries")),
     _wall_reach(getParam<Real>("wall_reach")),
     _wall_curvature(getParam<Real>("wall_curvature") * libMesh::pi / 180),
@@ -270,6 +291,20 @@ KokkosParticleCloud::KokkosParticleCloud(const InputParameters & parameters)
       paramError("wall_normals", "Normals must be nonzero");
   if ((_walls.n || _wall_boundaries.size()) && !contactEnabled())
     paramError("wall_points", "Walls need a contact model with a positive stiffness or modulus");
+  for (const auto & normal : getParam<std::vector<RealVectorValue>>("wall_normals"))
+    _wall_normals.push_back(normal.unit());
+  if (_wall_velocities.empty())
+    _wall_velocities.assign(_walls.n, RealVectorValue(0, 0, 0));
+  else if (_wall_velocities.size() != _walls.n)
+    paramError("wall_velocities", "One per wall point");
+  if (_servo_walls.size() != _servo_forces.size())
+    paramError("servo_forces", "One per servo wall");
+  for (const auto w : _servo_walls)
+    if (w >= _walls.n)
+      paramError("servo_walls", "Wall ", w, " does not exist");
+  if (_servo_walls.size() && (_servo_gain <= 0 || _servo_max_velocity <= 0))
+    paramError("servo_gain", "Servo walls need a positive gain and maximum velocity");
+  _walls.setVelocities(_wall_velocities);
   if (_insertion_box.size() && _insertion_box.size() != 2)
     paramError("insertion_box", "Two corners");
   if (_insertion_rate > 0 && _insertion_box.empty())
@@ -504,6 +539,7 @@ KokkosParticleCloud::checkpoint(DEM::CloudCheckpoint & checkpoint)
   checkpoint.histories.assign(histories_host.data(),
                               histories_host.data() + total * pair_state_record_size);
 
+  checkpoint.analytic_wall_points = _walls.savePoints();
   if (_sideset_walls.n)
     _sideset_walls.save(checkpoint.wall_vertices, checkpoint.wall_velocities);
   else
@@ -563,6 +599,8 @@ KokkosParticleCloud::restore()
 
   // Moving walls resume where they were, with the velocities they had, so the forces below
   // see the same relative velocities as before the checkpoint
+  if (checkpoint.analytic_wall_points.size() == 3 * _walls.n)
+    _walls.loadPoints(checkpoint.analytic_wall_points);
   if (_sideset_walls.n)
   {
     if (checkpoint.wall_vertices.size() != 9 * _sideset_walls.n)
@@ -604,6 +642,7 @@ DEM::dataStore(std::ostream & stream, DEM::CloudCheckpoint & checkpoint, void * 
   ::dataStore(stream, checkpoint.particles, context);
   ::dataStore(stream, checkpoint.histories, context);
   ::dataStore(stream, checkpoint.wall_vertices, context);
+  ::dataStore(stream, checkpoint.analytic_wall_points, context);
   ::dataStore(stream, checkpoint.wall_velocities, context);
   ::dataStore(stream, checkpoint.num_exited, context);
   ::dataStore(stream, checkpoint.num_migrated, context);
@@ -621,6 +660,7 @@ DEM::dataLoad(std::istream & stream, DEM::CloudCheckpoint & checkpoint, void * c
   ::dataLoad(stream, checkpoint.particles, context);
   ::dataLoad(stream, checkpoint.histories, context);
   ::dataLoad(stream, checkpoint.wall_vertices, context);
+  ::dataLoad(stream, checkpoint.analytic_wall_points, context);
   ::dataLoad(stream, checkpoint.wall_velocities, context);
   ::dataLoad(stream, checkpoint.num_exited, context);
   ::dataLoad(stream, checkpoint.num_migrated, context);
@@ -681,6 +721,37 @@ KokkosParticleCloud::placeInitialParticles()
   _cloud.copyFrom(host, 0);
   _cloud.n = n;
   allocateScratch(n);
+}
+
+void
+KokkosParticleCloud::servoWalls()
+{
+  // Proportional control on the force measured at the end of the last step: the compressive
+  // force is the particles' push against the wall's inward normal. The velocity is capped so
+  // the wall cannot change the force of a single contact by more than the error within the
+  // step, with the contact stiffness at the target force (the servo sees the force one step
+  // late), which keeps the control stable for any gain
+  const Real dt = _dt;
+  for (const auto k : index_range(_servo_walls))
+  {
+    const auto w = _servo_walls[k];
+    const auto normal = _wall_normals[w];
+    const Real target = _servo_forces[k];
+    const Real error = target - (-(wallForce(w) * normal));
+    Real stiffness = _linear.stiffness;
+    if (_contact_model == ContactModel::HERTZ)
+    {
+      const Real r = _r_max;
+      const Real overlap = std::pow(std::max(target, 1e-12) / (4.0 / 3.0 * _hertz.effective_modulus * std::sqrt(r)), 2.0 / 3.0);
+      stiffness = 2 * _hertz.effective_modulus * std::sqrt(r * overlap);
+    }
+    Real limit = _servo_max_velocity;
+    if (stiffness > 0 && dt > 0)
+      limit = std::min(limit, std::abs(error) / (stiffness * dt));
+    const Real v = std::clamp(_servo_gain * error, -limit, limit);
+    _wall_velocities[w] = v * normal;
+  }
+  _walls.setVelocities(_wall_velocities);
 }
 
 void
@@ -986,6 +1057,8 @@ KokkosParticleCloud::compute()
     _sideset_walls.move(displacedWallVertices(), _dt);
   if (_insertion_rate > 0)
     insertParticles();
+  if (_servo_walls.size())
+    servoWalls();
   // The Hertz time depends on the current speeds
   checkTimestep();
 
@@ -995,6 +1068,7 @@ KokkosParticleCloud::compute()
   {
     kickDrift();
     _sideset_walls.advance(_dt / _substeps);
+    _walls.advance(_dt / _substeps);
     walk();
     // A particle that has strayed beyond its rank's box, across a partition or a periodic face,
     // is settled at once: beyond the skin its far-side neighbors are no longer ghosted here
