@@ -363,6 +363,32 @@ WCNSLinearFVTwoPhaseMixturePhysics::addPhaseDriftFluxTerm()
 }
 
 void
+WCNSLinearFVTwoPhaseMixturePhysics::addMixtureSpecificHeatMaterial()
+{
+  // The mixture energy density is the sum over the phases of each phase's own enthalpy density,
+  // rho_m e_m = sum_k a_k rho_k cp_k T, so the specific heat that reproduces it when multiplied by
+  // the mixture density is the mass-weighted average, not the volume-weighted average used for the
+  // density, the viscosity and the conductivity. See Fluent Theory Guide equation 16.4-7. The
+  // phase fraction is clamped to match the mixture property material.
+  auto params = getFactory().getValidParams("ParsedFunctorMaterial");
+  assignBlocks(params, _blocks);
+  params.set<std::string>("expression") =
+      "(min(max(fd, 0), 1) * rho_d * cp_d + (1 - min(max(fd, 0), 1)) * rho_c * cp_c) / rho_m";
+  params.set<std::vector<std::string>>("functor_names") = {_phase_2_fraction_name,
+                                                          _phase_2_density,
+                                                          _phase_2_specific_heat,
+                                                          _phase_1_density,
+                                                          _phase_1_specific_heat,
+                                                          "rho_mixture"};
+  params.set<std::vector<std::string>>("functor_symbols") = {
+      "fd", "rho_d", "cp_d", "rho_c", "cp_c", "rho_m"};
+  params.set<std::string>("property_name") = "cp_mixture";
+  if (getParam<bool>("output_all_properties"))
+    params.set<std::vector<OutputName>>("outputs") = {"all"};
+  getProblem().addMaterial("ParsedFunctorMaterial", prefix() + "mixture_specific_heat", params);
+}
+
+void
 WCNSLinearFVTwoPhaseMixturePhysics::addAdvectionSlipTerm()
 {
   mooseError("Phase advection slip not implemented at this time for linear finite volume");
@@ -405,25 +431,27 @@ WCNSLinearFVTwoPhaseMixturePhysics::addMaterials()
   {
     auto params = getFactory().getValidParams("WCNSLinearFVMixtureFunctorMaterial");
     assignBlocks(params, _blocks);
+    // The specific heat is deliberately absent from this list. This object forms a volume-weighted
+    // average, which is correct for the density, the viscosity and the conductivity, but the
+    // specific heat has to be mass-weighted for rho_m cp_m T to be the mixture enthalpy density.
+    // It is added by addMixtureSpecificHeatMaterial below.
     params.set<std::vector<MooseFunctorName>>("prop_names") = {
-        "rho_mixture", "mu_mixture", "cp_mixture", "k_mixture"};
+        "rho_mixture", "mu_mixture", "k_mixture"};
     // The phase_1 and phase_2 assignments are only local to this object.
     // We use the phase 2 variable to save a functor evaluation as we expect
     // the phase 2 variable to be a nonlinear variable in the phase transport equation
-    params.set<std::vector<MooseFunctorName>>("phase_2_names") = {_phase_1_density,
-                                                                  _phase_1_viscosity,
-                                                                  _phase_1_specific_heat,
-                                                                  _phase_1_thermal_conductivity};
-    params.set<std::vector<MooseFunctorName>>("phase_1_names") = {_phase_2_density,
-                                                                  _phase_2_viscosity,
-                                                                  _phase_2_specific_heat,
-                                                                  _phase_2_thermal_conductivity};
+    params.set<std::vector<MooseFunctorName>>("phase_2_names") = {
+        _phase_1_density, _phase_1_viscosity, _phase_1_thermal_conductivity};
+    params.set<std::vector<MooseFunctorName>>("phase_1_names") = {
+        _phase_2_density, _phase_2_viscosity, _phase_2_thermal_conductivity};
     params.set<MooseFunctorName>("phase_1_fraction") = _phase_2_fraction_name;
     if (getParam<bool>("output_all_properties"))
       params.set<std::vector<OutputName>>("outputs") = {"all"};
     params.set<bool>("limit_phase_fraction") = true;
     getProblem().addMaterial(
         "WCNSLinearFVMixtureFunctorMaterial", prefix() + "mixture_material", params);
+
+    addMixtureSpecificHeatMaterial();
   }
 
   // Compute slip terms as functors, used by the drift flux kernels. The drag model needs them too,

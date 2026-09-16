@@ -56,6 +56,9 @@ private:
   void addPhaseChangeEnergySource();
   void addPhaseDriftFluxTerm();
   void addAdvectionSlipTerm();
+  /// Adds the mass-weighted mixture specific heat, the weighting required for rho_m cp_m T to be
+  /// the mixture enthalpy density
+  void addMixtureSpecificHeatMaterial();
 
   /// Fluid heat transfer physics
   const WCNSLinearFVFluidHeatTransferPhysics * _fluid_energy_physics;
