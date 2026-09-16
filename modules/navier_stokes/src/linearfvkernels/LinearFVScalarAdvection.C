@@ -11,6 +11,7 @@
 #include "LinearFVGradientManager.h"
 #include "MooseLinearVariableFV.h"
 #include "NS.h"
+#include "NavierStokesMethods.h"
 
 registerMooseObject("NavierStokesApp", LinearFVScalarAdvection);
 
@@ -182,13 +183,8 @@ LinearFVScalarAdvection::setupFaceData(const FaceInfo * face_info)
                                                nullptr}
                               : singleSidedFaceArg(face_info);
 
-    RealVectorValue velocity_slip_vel_vec;
-    if (_u_slip)
-      velocity_slip_vel_vec(0) = (*_u_slip)(face_arg, state).value();
-    if (_v_slip)
-      velocity_slip_vel_vec(1) = (*_v_slip)(face_arg, state).value();
-    if (_w_slip)
-      velocity_slip_vel_vec(2) = (*_w_slip)(face_arg, state).value();
+    const RealVectorValue velocity_slip_vel_vec = MetaPhysicL::raw_value(
+        NS::slipVelocityVector(*_u_slip, _v_slip, _w_slip, face_arg, state));
 
     // The drift is held apart from the mixture flux and interpolated on its own terms, so the
     // donor cell it selects is the one the drift itself points away from. Each part is then
