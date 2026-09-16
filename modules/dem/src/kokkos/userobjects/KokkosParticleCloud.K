@@ -165,6 +165,22 @@ KokkosParticleCloud::validParams()
       0.2,
       "timestep_fraction > 0",
       "Largest allowed ratio of the substep to the contact time scales");
+  params.addParam<std::vector<Point>>(
+      "insertion_box",
+      {},
+      "Two corners of a box in which particles are inserted at insertion_rate, at random "
+      "positions overlapping no particle, with the given radius and density");
+  params.addRangeCheckedParam<Real>(
+      "insertion_rate", 0, "insertion_rate >= 0", "Particles inserted per unit time");
+  params.addParam<RealVectorValue>(
+      "insertion_velocity", RealVectorValue(0, 0, 0), "Velocity of the inserted particles");
+  params.addParam<Real>("insertion_start_time", 0, "Time insertion starts");
+  params.addParam<Real>("insertion_end_time",
+                        std::numeric_limits<Real>::max(),
+                        "Time insertion ends");
+  params.addParam<unsigned int>("insertion_seed", 0, "Seed of the insertion positions");
+  params.addParam<std::vector<Point>>(
+      "outflow_box", {}, "Two corners of a box in which particles are removed");
   params.addParam<bool>("allow_unresolved",
                         false,
                         "Allow particles to remain unresolved (not located in any element) at "
@@ -228,6 +244,13 @@ KokkosParticleCloud::KokkosParticleCloud(const InputParameters & parameters)
     _timestep_check(getParam<MooseEnum>("timestep_check")),
     _timestep_fraction(getParam<Real>("timestep_fraction")),
     _allow_unresolved(getParam<bool>("allow_unresolved")),
+    _insertion_box(getParam<std::vector<Point>>("insertion_box")),
+    _insertion_rate(getParam<Real>("insertion_rate")),
+    _insertion_velocity(getParam<RealVectorValue>("insertion_velocity")),
+    _insertion_start_time(getParam<Real>("insertion_start_time")),
+    _insertion_end_time(getParam<Real>("insertion_end_time")),
+    _insertion_generator(getParam<unsigned int>("insertion_seed")),
+    _outflow_box(getParam<std::vector<Point>>("outflow_box")),
     _checkpoint(declareRestartableData<DEM::CloudCheckpoint>("checkpoint")),
     _ghost_tag(_communicator.get_unique_tag()),
     _gpu_aware_mpi(getParam<bool>("gpu_aware_mpi"))
@@ -247,6 +270,12 @@ KokkosParticleCloud::KokkosParticleCloud(const InputParameters & parameters)
       paramError("wall_normals", "Normals must be nonzero");
   if ((_walls.n || _wall_boundaries.size()) && !contactEnabled())
     paramError("wall_points", "Walls need a contact model with a positive stiffness or modulus");
+  if (_insertion_box.size() && _insertion_box.size() != 2)
+    paramError("insertion_box", "Two corners");
+  if (_insertion_rate > 0 && _insertion_box.empty())
+    paramError("insertion_rate", "Needs an insertion_box");
+  if (_outflow_box.size() && _outflow_box.size() != 2)
+    paramError("outflow_box", "Two corners");
   for (const auto & name : getParam<std::vector<VariableName>>("wall_displacements"))
     _wall_displacements.push_back(&_fe_problem.getStandardVariable(0, name));
   if (_wall_displacements.size() &&
@@ -326,6 +355,7 @@ KokkosParticleCloud::initialSetup()
 
   if (!_checkpoint.loaded)
     placeInitialParticles();
+  _next_gid = _initial_positions.size();
 
   // Ghosting is decided against the neighboring ranks' bounding boxes, gathered once since the
   // mesh does not move
@@ -487,6 +517,9 @@ KokkosParticleCloud::checkpoint(DEM::CloudCheckpoint & checkpoint)
   checkpoint.num_neighbor_list_builds = _num_neighbor_list_builds;
   checkpoint.num_ghost_forwards = _num_ghost_forwards;
   checkpoint.timestep_warned = _timestep_warned;
+  checkpoint.insertion_draws = _insertion_draws;
+  checkpoint.insertion_carry = _insertion_carry;
+  checkpoint.next_gid = _next_gid;
 }
 
 void
@@ -544,6 +577,12 @@ KokkosParticleCloud::restore()
   _num_neighbor_list_builds = checkpoint.num_neighbor_list_builds;
   _num_ghost_forwards = checkpoint.num_ghost_forwards;
   _timestep_warned = checkpoint.timestep_warned;
+  // The generator is replayed to where it was
+  _insertion_generator.seed(getParam<unsigned int>("insertion_seed"));
+  _insertion_generator.discard(checkpoint.insertion_draws);
+  _insertion_draws = checkpoint.insertion_draws;
+  _insertion_carry = checkpoint.insertion_carry;
+  _next_gid = checkpoint.next_gid;
   checkpoint.particles.clear();
   checkpoint.histories.clear();
 
@@ -571,6 +610,9 @@ DEM::dataStore(std::ostream & stream, DEM::CloudCheckpoint & checkpoint, void * 
   ::dataStore(stream, checkpoint.num_neighbor_list_builds, context);
   ::dataStore(stream, checkpoint.num_ghost_forwards, context);
   ::dataStore(stream, checkpoint.timestep_warned, context);
+  ::dataStore(stream, checkpoint.insertion_draws, context);
+  ::dataStore(stream, checkpoint.insertion_carry, context);
+  ::dataStore(stream, checkpoint.next_gid, context);
 }
 
 void
@@ -585,6 +627,9 @@ DEM::dataLoad(std::istream & stream, DEM::CloudCheckpoint & checkpoint, void * c
   ::dataLoad(stream, checkpoint.num_neighbor_list_builds, context);
   ::dataLoad(stream, checkpoint.num_ghost_forwards, context);
   ::dataLoad(stream, checkpoint.timestep_warned, context);
+  ::dataLoad(stream, checkpoint.insertion_draws, context);
+  ::dataLoad(stream, checkpoint.insertion_carry, context);
+  ::dataLoad(stream, checkpoint.next_gid, context);
   checkpoint.loaded = true;
   // After setup (a restep or backup) restore at once; before it, initialSetup() will
   if (checkpoint.cloud && checkpoint.cloud->isSetUp())
@@ -636,6 +681,161 @@ KokkosParticleCloud::placeInitialParticles()
   _cloud.copyFrom(host, 0);
   _cloud.n = n;
   allocateScratch(n);
+}
+
+void
+KokkosParticleCloud::appendParticles(const DEM::ParticleCloud::HostMirror & host,
+                                     const std::size_t count)
+{
+  const auto begin = _cloud.size();
+  const auto end = begin + count;
+  if (end > _cloud.capacity())
+    reserve(std::max(end, 2 * _cloud.capacity()));
+  _cloud.copyFrom(host, begin);
+  _cloud.n = end;
+}
+
+void
+KokkosParticleCloud::insertParticles()
+{
+  if (_t < _insertion_start_time || _t > _insertion_end_time)
+    return;
+  const auto & mesh = kokkosMesh();
+  const Point lower(std::min(_insertion_box[0](0), _insertion_box[1](0)),
+                    std::min(_insertion_box[0](1), _insertion_box[1](1)),
+                    std::min(_insertion_box[0](2), _insertion_box[1](2)));
+  const Point upper(std::max(_insertion_box[0](0), _insertion_box[1](0)),
+                    std::max(_insertion_box[0](1), _insertion_box[1](1)),
+                    std::max(_insertion_box[0](2), _insertion_box[1](2)));
+  const Real radius = _radius;
+
+  // Whole particles this step, the fraction carried over
+  _insertion_carry += _insertion_rate * _dt;
+  const auto wanted = static_cast<std::size_t>(std::floor(_insertion_carry));
+  if (!wanted)
+    return;
+
+  // Positions of the local particles near the box, on host, to test candidates against
+  const auto cloud = _cloud;
+  const Moose::Kokkos::Real3 lo(lower(0) - 2 * _r_max, lower(1) - 2 * _r_max, lower(2) - 2 * _r_max);
+  const Moose::Kokkos::Real3 hi(upper(0) + 2 * _r_max, upper(1) + 2 * _r_max, upper(2) + 2 * _r_max);
+  ::Kokkos::View<std::size_t *> slot("dem_insert_slot", cloud.size() + 1);
+  std::size_t near = 0;
+  ::Kokkos::parallel_scan(
+      "dem_insert_near",
+      cloud.size(),
+      KOKKOS_LAMBDA(const std::size_t i, std::size_t & sum, const bool final) {
+        bool inside = cloud.elem(i) != DEM::ParticleCloud::exited;
+        for (unsigned int c = 0; c < 3; ++c)
+          inside = inside && cloud.x(i, c) >= lo(c) && cloud.x(i, c) <= hi(c);
+        if (final)
+          slot(i) = inside ? sum : std::numeric_limits<std::size_t>::max();
+        sum += inside;
+      },
+      near);
+  ::Kokkos::View<Real * [4], ::Kokkos::LayoutRight> packed("dem_insert_near_particles", near);
+  ::Kokkos::parallel_for(
+      "dem_insert_pack", cloud.size(), KOKKOS_LAMBDA(const std::size_t i) {
+        const auto s = slot(i);
+        if (s == std::numeric_limits<std::size_t>::max())
+          return;
+        for (unsigned int c = 0; c < 3; ++c)
+          packed(s, c) = cloud.x(i, c);
+        packed(s, 3) = cloud.r(i);
+      });
+  auto existing = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, packed);
+
+  // Every rank draws the same candidates; a candidate is rejected when it overlaps a particle
+  // on any rank (a global decision) or an earlier accepted candidate, with the mesh dimension's
+  // coordinates only, and at most ten tries per particle wanted
+  // One engine call per coordinate, so discard() replays the sequence exactly on restart
+  const auto unit = [this]()
+  {
+    ++_insertion_draws;
+    return (_insertion_generator() >> 11) * 0x1.0p-53;
+  };
+  const auto dim = _fe_problem.mesh().dimension();
+  std::vector<Point> accepted;
+  for (unsigned int attempt = 0; attempt < 10 * wanted && accepted.size() < wanted; ++attempt)
+  {
+    Point p;
+    for (const auto c : make_range(3))
+    {
+      const Real u = unit();
+      p(c) = c < dim ? lower(c) + u * (upper(c) - lower(c)) : lower(c);
+    }
+    unsigned int overlaps = 0;
+    for (const auto & q : accepted)
+      overlaps = overlaps || (p - q).norm() < 2 * radius;
+    for (const auto e : make_range(near))
+      overlaps = overlaps ||
+                 (p - Point(existing(e, 0), existing(e, 1), existing(e, 2))).norm() <
+                     radius + existing(e, 3);
+    _communicator.max(overlaps);
+    if (!overlaps)
+      accepted.push_back(p);
+  }
+  _insertion_carry -= accepted.size();
+
+  // Each rank keeps the accepted particles that lie in its elements
+  std::vector<std::pair<Point, ContiguousElementID>> mine;
+  std::vector<int64_t> gids;
+  for (const auto & p : accepted)
+  {
+    const auto * elem = (*_locator)(p);
+    if (elem && elem->processor_id() == processor_id())
+    {
+      mine.emplace_back(p, mesh.getContiguousElementID(elem));
+      gids.push_back(_next_gid);
+    }
+    ++_next_gid;
+  }
+  if (mine.empty())
+    return;
+  DEM::ParticleCloud::HostMirror host(mine.size());
+  const Real mass = _density * 4.0 / 3.0 * libMesh::pi * Utility::pow<3>(radius);
+  for (const auto j : index_range(mine))
+  {
+    host.gid(j) = gids[j];
+    for (const auto c : make_range(3))
+    {
+      host.x(j, c) = mine[j].first(c);
+      host.v(j, c) = _insertion_velocity(c);
+      host.omega(j, c) = 0;
+      host.f(j, c) = 0;
+      host.tau(j, c) = 0;
+    }
+    host.q(j, 0) = 1;
+    host.q(j, 1) = host.q(j, 2) = host.q(j, 3) = 0;
+    host.r(j) = radius;
+    host.m(j) = mass;
+    host.inertia(j) = 0.4 * mass * radius * radius;
+    host.elem(j) = mine[j].second;
+    host.target_rank(j) = libMesh::DofObject::invalid_processor_id;
+    host.hops(j) = 0;
+  }
+  appendParticles(host, mine.size());
+}
+
+void
+KokkosParticleCloud::applyOutflow()
+{
+  const auto cloud = _cloud;
+  const Moose::Kokkos::Real3 lo(std::min(_outflow_box[0](0), _outflow_box[1](0)),
+                                std::min(_outflow_box[0](1), _outflow_box[1](1)),
+                                std::min(_outflow_box[0](2), _outflow_box[1](2)));
+  const Moose::Kokkos::Real3 hi(std::max(_outflow_box[0](0), _outflow_box[1](0)),
+                                std::max(_outflow_box[0](1), _outflow_box[1](1)),
+                                std::max(_outflow_box[0](2), _outflow_box[1](2)));
+  constexpr auto exited = DEM::ParticleCloud::exited;
+  ::Kokkos::parallel_for(
+      "dem_outflow", cloud.size(), KOKKOS_LAMBDA(const std::size_t i) {
+        bool inside = true;
+        for (unsigned int c = 0; c < 3; ++c)
+          inside = inside && cloud.x(i, c) >= lo(c) && cloud.x(i, c) <= hi(c);
+        if (inside)
+          cloud.elem(i) = exited;
+      });
 }
 
 void
@@ -784,6 +984,8 @@ KokkosParticleCloud::compute()
   // Moving walls travel to this step's displaced positions over the step
   if (_wall_displacements.size())
     _sideset_walls.move(displacedWallVertices(), _dt);
+  if (_insertion_rate > 0)
+    insertParticles();
   // The Hertz time depends on the current speeds
   checkTimestep();
 
@@ -804,7 +1006,10 @@ KokkosParticleCloud::compute()
     kick();
   }
 
-  // Every particle is settled at the end of the step, so it is located and owned where it is
+  // Every particle is settled at the end of the step, so it is located and owned where it is;
+  // those in the outflow box leave with the exited
+  if (_outflow_box.size())
+    applyOutflow();
   settle();
   // Received particles arrive without forces, and the next step's first half-kick needs them;
   // the histories were advanced for this substep already and travelled with the particles

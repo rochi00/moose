@@ -1,0 +1,17 @@
+[Tests]
+  design = 'KokkosParticleCloud.md'
+  issues = '#1'
+
+  [pour]
+    type = CSVDiff
+    input = pour.i
+    cli_args = 'Executioner/num_steps=30'
+    csvdiff = pour_out.csv
+    # The counts are exact integers; the floor force is a fluctuating dynamic quantity and the
+    # contact count depends on the chaotic pile, so neither is compared. Later than 0.4 s the
+    # moment a particle reaches the outflow box differs by a step between rank counts
+    ignore_columns = 'floor num_contacts'
+    requirement = 'The system shall insert particles at the given rate at random positions that overlap no particle, the same on any number of ranks, and remove those reaching the outflow box.'
+    capabilities = 'kokkos'
+  []
+[]

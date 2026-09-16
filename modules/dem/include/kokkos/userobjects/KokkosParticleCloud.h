@@ -14,6 +14,8 @@
 
 #include <mpi.h>
 
+#include <random>
+
 class KokkosParticleCloud;
 
 namespace DEM
@@ -38,6 +40,9 @@ struct CloudCheckpoint
   std::size_t num_neighbor_list_builds = 0;
   std::size_t num_ghost_forwards = 0;
   bool timestep_warned = false;
+  std::size_t insertion_draws = 0;
+  Real insertion_carry = 0;
+  int64_t next_gid = 0;
   /// Whether dataLoad() filled this and the cloud has yet to restore from it
   bool loaded = false;
 };
@@ -203,6 +208,13 @@ protected:
   std::vector<Point> displacedWallVertices() const;
   /// Place the particles of initial_positions that start in this rank's elements
   void placeInitialParticles();
+  /// Insert this step's share of the insertion rate at random positions in the insertion box
+  /// that overlap no particle, the same on every rank, each rank keeping those in its elements
+  void insertParticles();
+  /// Mark the particles inside the outflow box as exited, to be removed when settling
+  void applyOutflow();
+  /// Append particles from a host mirror to the cloud
+  void appendParticles(const DEM::ParticleCloud::HostMirror & host, const std::size_t count);
   /// Error on a mesh the tracking or the walls cannot handle: non-planar faces, or elements
   /// thinner than a particle's reach to a sideset wall across the ghost layer
   void checkMesh();
@@ -331,6 +343,22 @@ protected:
   ///@}
   /// Whether unresolved particles at the end of a step are allowed rather than an error
   const bool _allow_unresolved;
+  ///@{
+  /// Insertion: box corners, rate, velocity, time window, and the generator every rank
+  /// advances identically, with the number of draws made (for checkpoints), the fractional
+  /// particle carried between steps, and the next global ID
+  const std::vector<Point> _insertion_box;
+  const Real _insertion_rate;
+  const RealVectorValue & _insertion_velocity;
+  const Real _insertion_start_time;
+  const Real _insertion_end_time;
+  std::mt19937_64 _insertion_generator;
+  std::size_t _insertion_draws = 0;
+  Real _insertion_carry = 0;
+  int64_t _next_gid = 0;
+  ///@}
+  /// Outflow box corners; particles inside are removed
+  const std::vector<Point> _outflow_box;
   /// Whether finalize() is the one of initialSetup(), where nothing can be unresolved yet
   bool _initial_finalize = true;
   /// The restartable checkpoint of this cloud

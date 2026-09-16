@@ -124,6 +124,21 @@ With `verify = true`, each step the device assignment is checked on host against
 Global scalars are exposed through [KokkosParticleCloudValue.md] and per-particle state through
 [KokkosParticleState.md].
 
+## Insertion and outflow
+
+With an `insertion_box` and `insertion_rate`, every step (between `insertion_start_time` and
+`insertion_end_time`) the cloud inserts the step's share of the rate, the fraction being carried
+over, at random positions in the box (uniform, in the mesh dimension's coordinates, from the
+`insertion_seed`) that overlap no existing particle on any rank nor an earlier candidate of the
+step, with the cloud's `radius` and `density`, `insertion_velocity`, and no spin, trying at most
+ten candidates per particle. Every rank draws the same candidates and takes part in the
+overlap decision, so the insertion is the same on any number of ranks; the rank whose element
+holds an accepted position keeps it. New particles get the next global IDs. Particles whose
+center lies in the `outflow_box` at the end of a step are removed, counted with those that left
+the mesh in `num_exited`. The generator's position is checkpointed so a restart continues the
+same sequence. The `pour` test inserts at 400 per second above a floor and drains through an
+outflow box.
+
 ## Checkpoints and restart
 
 The cloud is restartable: a checkpoint holds its local particles (as migration records, with the
