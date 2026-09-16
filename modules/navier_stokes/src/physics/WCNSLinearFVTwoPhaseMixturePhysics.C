@@ -79,6 +79,16 @@ WCNSLinearFVTwoPhaseMixturePhysics::validParams()
       "the drift correction alone.");
   params.addParamNamesToGroup("phase_drift_advection_interpolation", "Numerical scheme");
 
+  params.addParam<bool>(
+      "add_drift_flux_mass_term",
+      false,
+      "Whether to add the dilatation the relative motion of the phases produces to the pressure "
+      "equation. The mixture momentum equation is written for the mass averaged velocity, which is "
+      "not solenoidal wherever the mixture density varies, so constraining it to be divergence "
+      "free omits that dilatation. The term is an exact identity and vanishes when the two phase "
+      "densities are equal.");
+  params.addParamNamesToGroup("add_drift_flux_mass_term", "Numerical scheme");
+
   // This is added to match a nonlinear test result. If the underlying issue is fixed, remove it
   params.addParam<bool>("add_gravity_term_in_slip_velocity",
                         true,
@@ -219,6 +229,10 @@ WCNSLinearFVTwoPhaseMixturePhysics::addFVKernels()
       getParam<bool>("add_phase_change_energy_term"))
     addPhaseChangeEnergySource();
 
+  if (_flow_equations_physics && _flow_equations_physics->hasFlowEquations() &&
+      getParam<bool>("add_drift_flux_mass_term"))
+    addMassDriftFluxTerm();
+
   if (_flow_equations_physics && _flow_equations_physics->hasFlowEquations() && _use_drift_flux)
     addPhaseDriftFluxTerm();
   if (_flow_equations_physics && _flow_equations_physics->hasFlowEquations() && _use_advection_slip)
@@ -231,6 +245,30 @@ WCNSLinearFVTwoPhaseMixturePhysics::scalarConservativeDensity(const VariableName
   // Only the phase fraction is transported as a mass. Any other scalar carried by this Physics is
   // solved for itself.
   return (vname == _phase_2_fraction_name) ? _phase_2_density : MooseFunctorName();
+}
+
+void
+WCNSLinearFVTwoPhaseMixturePhysics::addMassDriftFluxTerm()
+{
+  const std::string object_type = "LinearWCNSFV2PMassDriftFlux";
+  auto params = getFactory().getValidParams(object_type);
+  assignBlocks(params, _blocks);
+  params.set<LinearVariableName>("variable") = _flow_equations_physics->getPressureName();
+  params.set<MooseFunctorName>("fraction_dispersed") = _phase_2_fraction_name;
+  params.set<MooseFunctorName>("rho_d") = _phase_2_density;
+  params.set<MooseFunctorName>(NS::density) = "rho_mixture";
+
+  // The dilatation comes from the relative velocity, since the identity it is derived from is
+  // written in terms of the slip rather than the diffusion velocity
+  setRelativeVelocityParams(params);
+
+  // The phases cannot separate across an impermeable boundary
+  auto slip_boundaries = _flow_equations_physics->getInletBoundaries();
+  const auto & outlet_boundaries = _flow_equations_physics->getOutletBoundaries();
+  slip_boundaries.insert(slip_boundaries.end(), outlet_boundaries.begin(), outlet_boundaries.end());
+  params.set<std::vector<BoundaryName>>("slip_boundaries") = slip_boundaries;
+
+  getProblem().addLinearFVKernel(object_type, prefix() + "mass_drift_flux", params);
 }
 
 void
