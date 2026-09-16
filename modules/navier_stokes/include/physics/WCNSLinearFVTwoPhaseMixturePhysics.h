@@ -58,6 +58,9 @@ private:
   void addMassDensityTransientTerm();
   /// Builds d(rho_m)/dt once, on demand, and returns the functor name. Several equations need it.
   MooseFunctorName buildMixtureDensityTimeDerivative();
+  /// Builds d(rho_m)/dp at fixed phase fraction, the coefficient the pressure driven part of
+  /// the storage term carries onto the matrix diagonal
+  MooseFunctorName buildMixtureDensityPressureDerivative();
   void addPhaseChangeEnergySource();
   /// Adds the functor material holding the coefficient of the phase change energy term
   void addPhaseChangeCoefficientMaterial();
@@ -71,6 +74,7 @@ private:
 
   /// Whether d(rho_m)/dt has already been constructed, so it is built at most once
   bool _built_drho_m_dt = false;
+  bool _built_drho_m_dp = false;
 
   /// Fluid heat transfer physics
   const WCNSLinearFVFluidHeatTransferPhysics * _fluid_energy_physics;
