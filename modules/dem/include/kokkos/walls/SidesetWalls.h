@@ -79,6 +79,9 @@ struct SidesetWalls
   ///@}
   /// Most contacts a sphere is evaluated against at once
   static constexpr unsigned int max_contacts = 16;
+  /// Set by contacts() when a sphere had more candidate contacts than max_contacts; checked
+  /// after the kernels so the truncation is an error rather than a silent loss of contacts
+  ::Kokkos::View<int> overflow;
 
   /**
    * Build the walls from the given boundaries of the local and one-layer ghost elements
@@ -211,7 +214,7 @@ SidesetWalls::contacts(const ContiguousElementID elem,
   unsigned int count = 0;
   bool interior_flags[max_contacts];
   std::size_t faces[max_contacts];
-  for (auto k = elem_offsets(elem); k < elem_offsets(elem + 1) && count < max_contacts; ++k)
+  for (auto k = elem_offsets(elem); k < elem_offsets(elem + 1); ++k)
   {
     const auto f = elem_faces(k);
     bool interior;
@@ -236,6 +239,11 @@ SidesetWalls::contacts(const ContiguousElementID elem,
         continue;
       overlap = r - distance;
       normal = (1.0 / distance) * d;
+    }
+    if (count == max_contacts)
+    {
+      overflow() = 1;
+      break;
     }
     out[count] = {p, normal, overlap, f, boundary(f), velocityAt(f, p)};
     interior_flags[count] = interior;

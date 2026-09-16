@@ -72,6 +72,7 @@ public:
   virtual void initialize() override {}
   virtual void compute() override;
   virtual void finalize() override;
+  virtual void meshChanged() override;
 
   /// Device particle state
   const DEM::ParticleCloud & cloud() const { return _cloud; }
@@ -143,6 +144,11 @@ protected:
   DEM::Hertz makeHertz() const;
   /// The sideset walls' vertices displaced by the wall_displacements variables' current values
   std::vector<Point> displacedWallVertices() const;
+  /// Error on a mesh the tracking or the walls cannot handle: non-planar faces, or elements
+  /// thinner than a particle's reach to a sideset wall across the ghost layer
+  void checkMesh();
+  /// Check the substep against the contact time scales, warning or erroring as asked
+  void checkTimestep();
   /// Whether the selected contact model applies any force
   bool contactEnabled() const;
   /// Whether contacts need a history: friction or rolling resistance is on
@@ -251,6 +257,17 @@ protected:
   const bool _verify_neighbor_list;
   /// Whether to run verifyPairStates() every step
   const bool _verify_pair_states;
+  ///@{
+  /// Time step check mode and allowed fraction of the contact time scales, and whether the
+  /// warning was already given
+  const MooseEnum _timestep_check;
+  const Real _timestep_fraction;
+  bool _timestep_warned = false;
+  ///@}
+  /// Whether unresolved particles at the end of a step are allowed rather than an error
+  const bool _allow_unresolved;
+  /// Whether finalize() is the one of initialSetup(), where nothing can be unresolved yet
+  bool _initial_finalize = true;
 
   /// Device particle state
   DEM::ParticleCloud _cloud;

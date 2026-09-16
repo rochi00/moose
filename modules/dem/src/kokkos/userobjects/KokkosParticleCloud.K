@@ -138,6 +138,22 @@ KokkosParticleCloud::validParams()
                                     "Verlet skin distance of the neighbor list; the list is rebuilt "
                                     "once some particle has moved skin / 2. Defaults to a tenth of "
                                     "radius");
+  params.addParam<MooseEnum>("timestep_check",
+                             MooseEnum("none warn error", "warn"),
+                             "Check that the substep is below timestep_fraction of the contact "
+                             "time scales (the contact duration of the linear model, or the "
+                             "Rayleigh and Hertz times of the Hertz model, as LIGGGHTS's "
+                             "check/timestep/gran) at setup and every step, and warn or error "
+                             "when it is not");
+  params.addRangeCheckedParam<Real>(
+      "timestep_fraction",
+      0.2,
+      "timestep_fraction > 0",
+      "Largest allowed ratio of the substep to the contact time scales");
+  params.addParam<bool>("allow_unresolved",
+                        false,
+                        "Allow particles to remain unresolved (not located in any element) at "
+                        "the end of a step instead of erroring");
   params.addParam<bool>("gpu_aware_mpi",
                         false,
                         "Pass device buffers directly to MPI for the ghost update on a GPU build; "
@@ -193,6 +209,9 @@ KokkosParticleCloud::KokkosParticleCloud(const InputParameters & parameters)
     _verify(getParam<bool>("verify")),
     _verify_neighbor_list(getParam<bool>("verify_neighbor_list")),
     _verify_pair_states(getParam<bool>("verify_pair_states")),
+    _timestep_check(getParam<MooseEnum>("timestep_check")),
+    _timestep_fraction(getParam<Real>("timestep_fraction")),
+    _allow_unresolved(getParam<bool>("allow_unresolved")),
     _ghost_tag(_communicator.get_unique_tag()),
     _gpu_aware_mpi(getParam<bool>("gpu_aware_mpi"))
 {
@@ -398,11 +417,130 @@ KokkosParticleCloud::initialSetup()
           _ghost_targets.push_back({_neighbor_ranks.size() - 1, shift});
         }
 
+  checkMesh();
+  checkTimestep();
+
   updateNeighborList();
   computeForces(false);
   // Reduce so the initial values are global before the first execution
   count();
   finalize();
+}
+
+void
+KokkosParticleCloud::checkMesh()
+{
+  // The face walk assumes planar faces: every side's vertices must lie in the plane of its
+  // first three, to a tolerance relative to the element size
+  Real worst = 0;
+  Real h_min = std::numeric_limits<Real>::max();
+  for (const auto * elem : _cid_to_elem)
+  {
+    const Real h = elem->hmin();
+    h_min = std::min(h_min, h);
+    for (const auto s : make_range(elem->n_sides()))
+    {
+      const auto side = elem->side_ptr(s);
+      if (side->n_vertices() < 4)
+        continue;
+      const Point a = side->point(0), b = side->point(1), c = side->point(2);
+      Point normal = (b - a).cross(c - a);
+      if (normal.norm() == 0)
+        continue;
+      normal /= normal.norm();
+      for (const auto k : make_range(3u, side->n_vertices()))
+        worst = std::max(worst, std::abs((side->point(k) - a) * normal) / h);
+    }
+  }
+  _communicator.max(worst);
+  _communicator.min(h_min);
+  // 1e-8: roundoff of rotated or transformed meshes is 1e-16, a warped element far larger
+  if (worst > 1e-8)
+    mooseError("The mesh has a face that is not planar (a vertex ",
+               worst,
+               " element sizes out of its plane); the face walk needs planar faces");
+
+  // Sideset walls come from the local and one-layer ghost elements only, so a particle must not
+  // reach past the ghost layer to touch one: its radius, the skin, and the wall motion must fit
+  // in the thinnest element
+  if (_wall_boundaries.size() && n_processors() > 1 && _r_max + _skin + _wall_reach > h_min)
+    mooseError("The largest particle radius plus the neighbor-list skin and the wall reach, ",
+               _r_max + _skin + _wall_reach,
+               ", exceeds the smallest element size, ",
+               h_min,
+               ": a particle near a partition boundary could touch a sideset wall face beyond "
+               "the ghost layer");
+}
+
+void
+KokkosParticleCloud::checkTimestep()
+{
+  if (_timestep_check == "none" || !contactEnabled())
+    return;
+  const Real dt = _dt / _substeps;
+  const Real r_min = _initial_radii.size()
+                         ? *std::min_element(_initial_radii.begin(), _initial_radii.end())
+                         : _radius;
+  const Real m_min = _density * 4.0 / 3.0 * libMesh::pi * Utility::pow<3>(r_min);
+  // A pair of the smallest particles has the shortest contact time
+  const Real m_eff = m_min / 2, r_eff = r_min / 2;
+  std::vector<std::pair<std::string, Real>> scales;
+  if (_contact_model == ContactModel::HERTZ)
+  {
+    // Rayleigh time of the smallest particle (LIGGGHTS check/timestep/gran)
+    const Real E = getParam<Real>("youngs_modulus"), nu = getParam<Real>("poissons_ratio");
+    const Real G = E / (2 * (1 + nu));
+    scales.emplace_back("Rayleigh",
+                        libMesh::pi * r_min * std::sqrt(_density / G) / (0.1631 * nu + 0.8766));
+    // Hertz contact time at the largest relative speed, twice the largest particle speed
+    const auto cloud = _cloud;
+    Real v_max_sq = 0;
+    ::Kokkos::parallel_reduce(
+        "dem_check_vmax",
+        cloud.size(),
+        KOKKOS_LAMBDA(const std::size_t i, Real & max) {
+          const Real v_sq = libMesh::Kokkos::make_vector_ref(cloud.v, i).norm_sq();
+          max = v_sq > max ? v_sq : max;
+        },
+        ::Kokkos::Max<Real>(v_max_sq));
+    _communicator.max(v_max_sq);
+    if (v_max_sq > 0)
+      scales.emplace_back(
+          "Hertz",
+          2.87 * std::pow(m_eff * m_eff /
+                              (r_eff * Utility::pow<2>(_hertz.effective_modulus) * 2 *
+                               std::sqrt(v_max_sq)),
+                          0.2));
+  }
+  else
+  {
+    // Contact duration of the linear spring: half a period of the stiffest spring
+    const Real k = std::max(_linear.stiffness, _linear.tangential_stiffness);
+    scales.emplace_back("linear-spring contact", libMesh::pi * std::sqrt(m_eff / k));
+  }
+
+  for (const auto & [name, scale] : scales)
+    if (dt > _timestep_fraction * scale)
+    {
+      const auto message = "The substep " + Moose::stringify(dt) + " is " +
+                           Moose::stringify(100 * dt / scale) + "% of the " + name + " time " +
+                           Moose::stringify(scale) + ", above the allowed " +
+                           Moose::stringify(100 * _timestep_fraction) + "%";
+      if (_timestep_check == "error")
+        mooseError(message);
+      else if (!_timestep_warned)
+      {
+        mooseWarning(message, "; increase substeps (further violations are not reported)");
+        _timestep_warned = true;
+      }
+    }
+}
+
+void
+KokkosParticleCloud::meshChanged()
+{
+  mooseError("The mesh changed; the particle cloud does not support adaptivity or mesh "
+             "modification after setup");
 }
 
 std::vector<Point>
@@ -444,6 +582,8 @@ KokkosParticleCloud::compute()
   // Moving walls travel to this step's displaced positions over the step
   if (_wall_displacements.size())
     _sideset_walls.move(displacedWallVertices(), _dt);
+  // The Hertz time depends on the current speeds
+  checkTimestep();
 
   // Velocity Verlet; the forces at the start of the step were computed at the end of the last one
   for (unsigned int substep = 0; substep < _substeps; ++substep)
@@ -491,6 +631,19 @@ KokkosParticleCloud::compute()
   computeForces(false);
 
   count();
+  // Every rank takes part in the reduction, whether or not it holds wall faces
+  if (_wall_boundaries.size())
+  {
+    int overflow = 0;
+    if (_sideset_walls.n)
+      ::Kokkos::deep_copy(overflow, _sideset_walls.overflow);
+    _communicator.max(overflow);
+    if (overflow)
+      mooseError("A particle had more than ",
+                 DEM::SidesetWalls::max_contacts,
+                 " candidate sideset wall contacts; the walls are too finely meshed for the "
+                 "particle size");
+  }
   if (_verify)
     verify();
   if (_verify_pair_states)
@@ -1863,6 +2016,11 @@ KokkosParticleCloud::finalize()
   _communicator.sum(_num_particles);
   _communicator.sum(_num_exited);
   _communicator.sum(_num_unresolved);
+  if (_num_unresolved && !_allow_unresolved && !_initial_finalize)
+    mooseError(_num_unresolved,
+               " particle(s) could not be located in any element at the end of the step; set "
+               "allow_unresolved = true to continue with them integrating without walls");
+  _initial_finalize = false;
   _communicator.sum(_num_migrated);
   _communicator.max(_max_hops_taken);
   _communicator.sum(_num_neighbor_pairs);

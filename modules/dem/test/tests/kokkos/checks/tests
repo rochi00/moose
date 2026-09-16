@@ -1,0 +1,56 @@
+[Tests]
+  design = 'KokkosParticleCloud.md'
+  issues = '#1'
+
+  [timestep_linear]
+    type = RunException
+    input = ../contact/restitution.i
+    cli_args = 'UserObjects/cloud/substeps=2 UserObjects/cloud/timestep_check=error Outputs/csv=false'
+    expect_err = 'The substep 0.0025 is 49.18\d*% of the linear-spring contact time'
+    requirement = 'The system shall report a substep exceeding the allowed fraction of the contact duration of the linear spring-dashpot model.'
+    capabilities = 'kokkos'
+  []
+  [timestep_linear_warn]
+    type = RunException
+    input = ../contact/restitution.i
+    cli_args = 'UserObjects/cloud/substeps=2 Outputs/csv=false'
+    # The harness runs with --error, which turns the default warning into an error
+    expect_err = 'increase substeps'
+    requirement = 'The system shall, by default, warn about a substep exceeding the allowed fraction of the contact time scales.'
+    capabilities = 'kokkos'
+  []
+  [timestep_hertz]
+    type = RunException
+    input = ../hertz/stack.i
+    cli_args = 'UserObjects/cloud/substeps=10 UserObjects/cloud/timestep_check=error Outputs/csv=false'
+    expect_err = 'The substep 0.002 is 231.1\d*% of the Rayleigh time'
+    requirement = 'The system shall report a substep exceeding the allowed fraction of the Rayleigh time of the Hertz model.'
+    capabilities = 'kokkos'
+  []
+  [nonplanar_face]
+    type = RunException
+    input = ../integration/ballistic.i
+    cli_args = 'Mesh/gen/dim=3 Mesh/gen/nz=2 Mesh/warp/type=ParsedNodeTransformGenerator Mesh/warp/input=gen Mesh/warp/z_function=z+0.2*x*y Mesh/final_generator=warp Outputs/csv=false'
+    expect_err = 'The mesh has a face that is not planar'
+    requirement = 'The system shall report at setup a mesh with non-planar element faces, which the face walk cannot track through.'
+    capabilities = 'kokkos'
+  []
+  [wall_reach_vs_element]
+    type = RunException
+    input = ../walls/floor.i
+    cli_args = 'UserObjects/cloud/wall_reach=1 Outputs/csv=false'
+    expect_err = 'exceeds the smallest element size'
+    min_parallel = 2
+    requirement = 'The system shall report at setup, in parallel, a particle reach to the sideset walls larger than the smallest element, which could miss wall faces beyond the ghost layer.'
+    capabilities = 'kokkos'
+  []
+  [wall_contact_overflow]
+    type = RunException
+    input = ../walls/floor.i
+    cli_args = 'Mesh/gen/nx=40000 Executioner/num_steps=2 Outputs/csv=false'
+    expect_err = 'more than 16 candidate sideset wall contacts'
+    max_parallel = 1
+    requirement = 'The system shall report a particle touching more sideset wall faces at once than it can evaluate, rather than dropping contacts.'
+    capabilities = 'kokkos'
+  []
+[]

@@ -122,6 +122,26 @@ With `verify = true`, each step the device assignment is checked on host against
 Global scalars are exposed through [KokkosParticleCloudValue.md] and per-particle state through
 [KokkosParticleState.md].
 
+## Checks
+
+At setup the cloud errors on a mesh it cannot handle: a face that is not planar (a vertex more
+than 1e-8 element sizes out of the plane of the face's first three vertices; the face walk is
+exact only for planar faces) and, in parallel with sideset walls, a particle reach
+(`r_max + skin + wall_reach`) larger than the smallest element, which could touch a wall face
+beyond the one-element ghost layer. Mesh adaptivity is not supported. A particle with more
+sideset wall contacts at once than can be evaluated (16) is an error rather than a loss of
+contacts, and a particle left unresolved at the end of a step (not located in any element) is an
+error unless `allow_unresolved = true`.
+
+The substep is checked against the contact time scales at setup and every step, as LIGGGHTS's
+`fix check/timestep/gran` does (`timestep_check`, `warn` by default, `error`, or `none`): for the
+linear model the contact duration $\pi \sqrt{m_\text{eff} / k}$ of the stiffest spring, for the
+Hertz model the Rayleigh time $\pi r_\text{min} \sqrt{\rho / G} / (0.1631 \nu + 0.8766)$ and the
+Hertz contact time $2.87 (m_\text{eff}^2 / (r_\text{eff} E^{*2} v_\text{max}))^{1/5}$ at twice
+the largest particle speed, with the smallest particle's mass and radius. The substep must be
+below `timestep_fraction` (0.2 by default, plan Section 5.1) of each; the warning is given once.
+Rolling springs are not included.
+
 ## Example Input Syntax
 
 !listing modules/dem/test/tests/kokkos/integration/ballistic.i block=UserObjects

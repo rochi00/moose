@@ -138,6 +138,7 @@ SidesetWalls::build(const MooseMesh & mesh,
   num_vertices = ::Kokkos::View<unsigned int *>("dem_wall_num_vertices", n);
   normals = ::Kokkos::View<Real * [3], ::Kokkos::LayoutRight>("dem_wall_normals", n);
   velocities = ::Kokkos::View<Real * [3][3], ::Kokkos::LayoutRight>("dem_wall_velocities", n);
+  overflow = ::Kokkos::View<int>("dem_wall_overflow");
   moving = false;
   boundary = ::Kokkos::View<std::size_t *>("dem_wall_boundary", n);
   elem_offsets = ::Kokkos::View<std::size_t *>("dem_wall_elem_offsets", num_elems + 1);
