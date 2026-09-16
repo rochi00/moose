@@ -157,6 +157,20 @@ public:
   Real centerOfMass(const unsigned int c) const { return _center_of_mass[c]; }
   ///@}
 
+  /// Number of sums accumulated per bin by profile()
+  static constexpr unsigned int profile_sums = 18;
+  /**
+   * Coarse-grain the local particles into slabs along a direction: per bin, the count, the
+   * mass, the particle volume, the momentum (3), the second moments of the momentum flux
+   * m v v (6: xx, yy, zz, xy, xz, yz), and the contact virial r_ij f_ij summed over the contacts
+   * of the bin's particles with half of each pair (6). Local sums, to be reduced by the caller
+   */
+  void profile(const unsigned int direction,
+               const Real lower,
+               const Real upper,
+               const std::size_t num_bins,
+               std::vector<Real> & sums) const;
+
   ///@{
   /// Force on a wall: the analytic walls in order, then the sideset boundaries in the order of
   /// wall_boundaries; global after finalize()
@@ -184,6 +198,14 @@ protected:
   /// Sum the contact forces on every wall (analytic, then sideset boundaries) into _wall_force
   template <typename Model>
   void countWallForces(const Model & contact);
+  /// profile() with a contact model
+  template <typename Model>
+  void profile(const Model & contact,
+               const unsigned int direction,
+               const Real lower,
+               const Real upper,
+               const std::size_t num_bins,
+               ::Kokkos::View<Real **> & sums) const;
   /// Advance the contact histories by one substep, each pair from one side: the pairs of local
   /// particles and the wall contacts, or the pairs with a ghost (which need the ghost update)
   void updatePairStates(const bool ghost_pairs);

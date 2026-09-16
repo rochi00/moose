@@ -2442,6 +2442,111 @@ KokkosParticleCloud::countWallForces(const Model & contact)
       _wall_force_host[3 * w + k] = host(w, k);
 }
 
+void
+KokkosParticleCloud::profile(const unsigned int direction,
+                             const Real lower,
+                             const Real upper,
+                             const std::size_t num_bins,
+                             std::vector<Real> & sums) const
+{
+  ::Kokkos::View<Real **> device("dem_profile", num_bins, profile_sums);
+  if (_contact_model == ContactModel::HERTZ)
+    profile(_hertz, direction, lower, upper, num_bins, device);
+  else
+    profile(_linear, direction, lower, upper, num_bins, device);
+  auto host = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, device);
+  sums.assign(num_bins * profile_sums, 0);
+  for (const auto b : make_range(num_bins))
+    for (const auto k : make_range(profile_sums))
+      sums[b * profile_sums + k] = host(b, k);
+}
+
+template <typename Model>
+void
+KokkosParticleCloud::profile(const Model & contact,
+                             const unsigned int direction,
+                             const Real lower,
+                             const Real upper,
+                             const std::size_t num_bins,
+                             ::Kokkos::View<Real **> & sums) const
+{
+  const auto cloud = _cloud;
+  const auto n_local = _cloud.size();
+  const auto eval = evaluator(contact);
+  const bool enabled = contact.enabled();
+  const auto num_walls = _walls.n;
+  const auto offsets = _neighbor_list.offsets();
+  const auto pairs = _neighbor_list.pairs();
+  constexpr auto exited = DEM::ParticleCloud::exited;
+  const Real width = (upper - lower) / num_bins;
+  // Symmetric tensor components in the order xx, yy, zz, xy, xz, yz
+  constexpr unsigned int ia[6] = {0, 1, 2, 0, 0, 1}, ib[6] = {0, 1, 2, 1, 2, 2};
+
+  ::Kokkos::parallel_for(
+      "dem_profile", n_local, KOKKOS_LAMBDA(const std::size_t i) {
+        if (cloud.elem(i) == exited)
+          return;
+        const int bin = static_cast<int>(::Kokkos::floor((cloud.x(i, direction) - lower) / width));
+        if (bin < 0 || bin >= static_cast<int>(num_bins))
+          return;
+        const auto add = [&](const unsigned int k, const Real value)
+        { ::Kokkos::atomic_add(&sums(bin, k), value); };
+        const Real m = cloud.m(i);
+        const Moose::Kokkos::Real3 v(cloud.v(i, 0), cloud.v(i, 1), cloud.v(i, 2));
+        add(0, 1);
+        add(1, m);
+        add(2, 4.0 / 3.0 * 3.14159265358979323846 * cloud.r(i) * cloud.r(i) * cloud.r(i));
+        for (unsigned int c = 0; c < 3; ++c)
+          add(3 + c, m * v(c));
+        for (unsigned int k = 0; k < 6; ++k)
+          add(6 + k, m * v(ia[k]) * v(ib[k]));
+        if (!enabled)
+          return;
+
+        // Contact virial: half of each pair to this particle's bin (the pair is visited from
+        // both sides), the whole of a wall contact
+        DEM::Contact c;
+        Real f_n;
+        Moose::Kokkos::Real3 f_t, tau_r;
+        const Moose::Kokkos::Real3 xi(cloud.x(i, 0), cloud.x(i, 1), cloud.x(i, 2));
+        for (auto k = offsets(i); k < offsets(i + 1); ++k)
+        {
+          const auto j = pairs(k);
+          if (cloud.elem(j) == exited || !eval.sphere(i, j, c))
+            continue;
+          const Real sign = cloud.gid(i) < cloud.gid(j) ? 1 : -1;
+          eval.forces(
+              c, DEM::PairKey::pair(cloud.gid(i), cloud.gid(j)), sign, false, f_n, f_t, tau_r);
+          const Moose::Kokkos::Real3 f = f_n * c.normal + f_t;
+          const Moose::Kokkos::Real3 r(
+              xi(0) - cloud.x(j, 0), xi(1) - cloud.x(j, 1), xi(2) - cloud.x(j, 2));
+          for (unsigned int q = 0; q < 6; ++q)
+            add(12 + q, 0.5 * r(ia[q]) * f(ib[q]));
+        }
+        for (std::size_t w = 0; w < num_walls; ++w)
+          if (eval.wall(i, w, c))
+          {
+            eval.forces(c, DEM::PairKey::wall(cloud.gid(i), w), 1, false, f_n, f_t, tau_r);
+            const Moose::Kokkos::Real3 f = f_n * c.normal + f_t;
+            // The contact point is r_i behind the center along the normal
+            const Moose::Kokkos::Real3 r = cloud.r(i) * c.normal;
+            for (unsigned int q = 0; q < 6; ++q)
+              add(12 + q, r(ia[q]) * f(ib[q]));
+          }
+        DEM::WallContact wc[DEM::SidesetWalls::max_contacts];
+        const auto n_wc = eval.sidesetContacts(i, cloud.r(i), wc);
+        for (unsigned int k = 0; k < n_wc; ++k)
+        {
+          c = eval.sideset(i, wc[k]);
+          eval.forces(c, eval.sidesetKey(i, wc[k]), 1, false, f_n, f_t, tau_r);
+          const Moose::Kokkos::Real3 f = f_n * c.normal + f_t;
+          const Moose::Kokkos::Real3 r = xi - wc[k].point;
+          for (unsigned int q = 0; q < 6; ++q)
+            add(12 + q, r(ia[q]) * f(ib[q]));
+        }
+      });
+}
+
 RealVectorValue
 KokkosParticleCloud::wallForce(const std::size_t wall) const
 {

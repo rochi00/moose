@@ -13,4 +13,13 @@
     requirement = 'The system shall conserve the total energy, linear momentum, and angular momentum of an elastic granular gas in a fully periodic box, with particles wrapping through the periodic faces and colliding across them, on any number of ranks.'
     capabilities = 'kokkos'
   []
+  [profile]
+    type = CSVDiff
+    input = periodic_gas.i
+    cli_args = "Executioner/num_steps=1 VectorPostprocessors/profile/type=KokkosParticleProfile VectorPostprocessors/profile/cloud=cloud VectorPostprocessors/profile/direction=x VectorPostprocessors/profile/num_bins=4 VectorPostprocessors/profile/execute_on='INITIAL TIMESTEP_END' Outputs/file_base=periodic_gas_profile_out"
+    csvdiff = periodic_gas_profile_out_profile_0000.csv
+    rel_err = 1e-10
+    requirement = 'The system shall coarse-grain the particles into slabs, reporting per slab the count, solid fraction, mean velocity, granular temperature, and kinetic stress of the initial gas, on any number of ranks.'
+    capabilities = 'kokkos'
+  []
 []

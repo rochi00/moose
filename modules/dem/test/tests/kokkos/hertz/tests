@@ -29,4 +29,18 @@
     requirement = 'The system shall report the force the particles exert on a wall, the weight of the settled stack on the floor, and the extent of the bed, the top of the stack.'
     capabilities = 'kokkos'
   []
+  [stack_profile]
+    type = CSVDiff
+    input = stack.i
+    cli_args = "VectorPostprocessors/profile/type=KokkosParticleProfile VectorPostprocessors/profile/cloud=cloud VectorPostprocessors/profile/direction=y VectorPostprocessors/profile/num_bins=1 VectorPostprocessors/profile/execute_on=TIMESTEP_END Outputs/file_base=stack_profile_out"
+    csvdiff = stack_profile_out_profile_0010.csv
+    # The contact stress of the settled stack in one slab over the domain: the virial of the
+    # pair contact, (2 r - delta) m g, and of the wall contact carrying both, r 2 m g, over the
+    # slab area; the settled overlaps match to 1e-12 and the residual velocities are under
+    # abs_zero
+    rel_err = 1e-8
+    abs_zero = 1e-8
+    requirement = 'The system shall report the contact stress of a settled stack from the pair and wall contact virials.'
+    capabilities = 'kokkos'
+  []
 []
