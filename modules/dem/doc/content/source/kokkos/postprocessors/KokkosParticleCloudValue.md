@@ -15,7 +15,9 @@ the magnitudes of the total linear and spin angular momenta, or the virial press
 P = \frac{1}{d V} \left( 2 K + \sum_{i<j} r_{ij} \cdot f_{ij} \right)
 
 over the overlapping pairs, with $V$ the volume of the mesh bounding box in the mesh dimension
-$d$ and $K$ the translational kinetic energy. All values are reduced across ranks.
+$d$ and $K$ the translational kinetic energy; or the extent of the bed, the largest and smallest
+coordinate of a particle surface in each direction (`max_x` .. `min_z`), and the center of mass
+(`center_of_mass_x` ..). All values are reduced across ranks.
 
 !syntax parameters /Postprocessors/KokkosParticleCloudValue
 

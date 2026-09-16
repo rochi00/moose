@@ -33,8 +33,10 @@ SidesetWalls::build(const MooseMesh & mesh,
     int64_t id;
     std::array<libMesh::dof_id_type, 3> nodes;
     libMesh::BoundingBox box;
+    std::size_t boundary;
   };
-  constexpr std::size_t record_size = 9 + 1 + 3 + 1 + 3;
+  constexpr std::size_t record_size = 9 + 1 + 3 + 1 + 3 + 1;
+  num_boundaries = boundaries.size();
   const auto pack = [](const Face & face, std::vector<Real> & out)
   {
     for (const auto k : make_range(3))
@@ -46,6 +48,7 @@ SidesetWalls::build(const MooseMesh & mesh,
     out.push_back(face.id);
     for (const auto k : make_range(3))
       out.push_back(face.nodes[k]);
+    out.push_back(face.boundary);
   };
   const auto unpack = [](const Real * record)
   {
@@ -59,6 +62,7 @@ SidesetWalls::build(const MooseMesh & mesh,
     face.id = record[13];
     for (const auto k : make_range(3))
       face.nodes[k] = record[14 + k];
+    face.boundary = record[17];
     for (const auto k : make_range(face.nv))
       face.box.union_with(face.v[k]);
     return face;
@@ -72,9 +76,10 @@ SidesetWalls::build(const MooseMesh & mesh,
                            const unsigned int nv,
                            const Point & centroid,
                            const int64_t id,
-                           const std::array<libMesh::dof_id_type, 3> & nodes)
+                           const std::array<libMesh::dof_id_type, 3> & nodes,
+                           const std::size_t boundary)
   {
-    Face face{{a, b, c}, nv, Point(), id, nodes, libMesh::BoundingBox()};
+    Face face{{a, b, c}, nv, Point(), id, nodes, libMesh::BoundingBox(), boundary};
     // Normal toward the element's centroid, which is inside the domain
     face.normal = nv == 3 ? (b - a).cross(c - a) : Point(-(b - a)(1), (b - a)(0), 0);
     face.normal /= face.normal.norm();
@@ -89,10 +94,13 @@ SidesetWalls::build(const MooseMesh & mesh,
     const auto * elem = cid_to_elem[cid];
     for (const auto s : make_range(elem->n_sides()))
     {
+      // A side on several of the boundaries goes with the first listed
       const auto ids = mesh.getBoundaryIDs(elem, s);
-      if (std::none_of(ids.begin(), ids.end(), [&boundaries](auto id) {
-            return std::find(boundaries.begin(), boundaries.end(), id) != boundaries.end();
-          }))
+      std::size_t b = 0;
+      for (; b < boundaries.size(); ++b)
+        if (std::find(ids.begin(), ids.end(), boundaries[b]) != ids.end())
+          break;
+      if (b == boundaries.size())
         continue;
       const auto side = elem->side_ptr(s);
       const auto centroid = elem->vertex_average();
@@ -106,13 +114,13 @@ SidesetWalls::build(const MooseMesh & mesh,
         nd.push_back(side->node_id(k));
       }
       if (v.size() == 2)
-        add(v[0], v[1], v[1], 2, centroid, base, {nd[0], nd[1], nd[1]});
+        add(v[0], v[1], v[1], 2, centroid, base, {nd[0], nd[1], nd[1]}, b);
       else if (v.size() == 3)
-        add(v[0], v[1], v[2], 3, centroid, base, {nd[0], nd[1], nd[2]});
+        add(v[0], v[1], v[2], 3, centroid, base, {nd[0], nd[1], nd[2]}, b);
       else if (v.size() == 4)
       {
-        add(v[0], v[1], v[2], 3, centroid, base, {nd[0], nd[1], nd[2]});
-        add(v[0], v[2], v[3], 3, centroid, base + 1, {nd[0], nd[2], nd[3]});
+        add(v[0], v[1], v[2], 3, centroid, base, {nd[0], nd[1], nd[2]}, b);
+        add(v[0], v[2], v[3], 3, centroid, base + 1, {nd[0], nd[2], nd[3]}, b);
       }
       else
         mooseError("Unsupported side with ", v.size(), " vertices for a sideset wall");
@@ -226,6 +234,7 @@ SidesetWalls::build(const MooseMesh & mesh,
   overflow = ::Kokkos::View<int>("dem_wall_overflow");
   moving = false;
   ids = ::Kokkos::View<int64_t *>("dem_wall_ids", n);
+  boundary = ::Kokkos::View<std::size_t *>("dem_wall_boundary", n);
   neighbors = ::Kokkos::View<int * [3], ::Kokkos::LayoutRight>("dem_wall_neighbors", n);
   same_surface = ::Kokkos::View<bool * [3], ::Kokkos::LayoutRight>("dem_wall_same_surface", n);
   elem_offsets = ::Kokkos::View<std::size_t *>("dem_wall_elem_offsets", num_elems + 1);
@@ -234,6 +243,7 @@ SidesetWalls::build(const MooseMesh & mesh,
   auto num_vertices_h = ::Kokkos::create_mirror_view(num_vertices);
   auto normals_h = ::Kokkos::create_mirror_view(normals);
   auto ids_h = ::Kokkos::create_mirror_view(ids);
+  auto boundary_h = ::Kokkos::create_mirror_view(boundary);
   auto neighbors_h = ::Kokkos::create_mirror_view(neighbors);
   auto same_h = ::Kokkos::create_mirror_view(same_surface);
   auto elem_offsets_h = ::Kokkos::create_mirror_view(elem_offsets);
@@ -247,6 +257,7 @@ SidesetWalls::build(const MooseMesh & mesh,
     for (const auto c : make_range(3))
       normals_h(f, c) = faces[f].normal(c);
     ids_h(f) = faces[f].id;
+    boundary_h(f) = faces[f].boundary;
     for (const auto e : make_range(3))
     {
       neighbors_h(f, e) = neighbors_host[f][e];
@@ -261,6 +272,7 @@ SidesetWalls::build(const MooseMesh & mesh,
   ::Kokkos::deep_copy(num_vertices, num_vertices_h);
   ::Kokkos::deep_copy(normals, normals_h);
   ::Kokkos::deep_copy(ids, ids_h);
+  ::Kokkos::deep_copy(boundary, boundary_h);
   ::Kokkos::deep_copy(neighbors, neighbors_h);
   ::Kokkos::deep_copy(same_surface, same_h);
   ::Kokkos::deep_copy(elem_offsets, elem_offsets_h);

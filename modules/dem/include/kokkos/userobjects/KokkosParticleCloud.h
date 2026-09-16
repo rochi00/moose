@@ -146,6 +146,19 @@ public:
   Real linearMomentum() const { return _linear_momentum; }
   Real angularMomentum() const { return _angular_momentum; }
   Real virialPressure() const { return _virial_pressure; }
+  /// Extent of the particles (surfaces) and their center of mass, per component
+  Real maxExtent(const unsigned int c) const { return _max_extent[c]; }
+  Real minExtent(const unsigned int c) const { return _min_extent[c]; }
+  Real centerOfMass(const unsigned int c) const { return _center_of_mass[c]; }
+  ///@}
+
+  ///@{
+  /// Force on a wall: the analytic walls in order, then the sideset boundaries in the order of
+  /// wall_boundaries; global after finalize()
+  std::size_t numWalls() const { return _walls.n + _wall_boundaries.size(); }
+  RealVectorValue wallForce(const std::size_t wall) const;
+  /// Index of a sideset wall boundary by name, after the analytic walls; errors if not a wall
+  std::size_t wallIndex(const BoundaryName & boundary) const;
   ///@}
 
 protected:
@@ -163,6 +176,9 @@ protected:
                      std::size_t & num_contacts,
                      Real & pe,
                      Real & virial) const;
+  /// Sum the contact forces on every wall (analytic, then sideset boundaries) into _wall_force
+  template <typename Model>
+  void countWallForces(const Model & contact);
   /// Advance the contact histories by one substep, each pair from one side: the pairs of local
   /// particles and the wall contacts, or the pairs with a ghost (which need the ghost update)
   void updatePairStates(const bool ghost_pairs);
@@ -425,6 +441,16 @@ protected:
   /// Pair virial sum over the overlapping pairs, r_ij . f_ij, each counted once
   Real _virial = 0;
   Real _virial_pressure = 0;
+  ///@{
+  /// Bed extent (particle surfaces) and center of mass
+  Real _max_extent[3] = {0, 0, 0};
+  Real _min_extent[3] = {0, 0, 0};
+  Real _center_of_mass[3] = {0, 0, 0};
+  Real _total_mass = 0;
+  ///@}
+  /// Force on every wall, three components each, on device and gathered on host
+  ::Kokkos::View<Real * [3], ::Kokkos::LayoutRight> _wall_force;
+  std::vector<Real> _wall_force_host;
   ///@{
   /// Total linear and spin angular momentum vectors and their magnitudes
   Real _linear_momentum_vector[3] = {0, 0, 0};

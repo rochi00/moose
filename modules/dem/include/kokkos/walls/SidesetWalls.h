@@ -24,6 +24,8 @@ struct WallContact
   Real overlap;
   std::size_t face;
   int64_t id;
+  /// Index of the face's boundary
+  std::size_t boundary;
   /// Velocity of the wall at the point (zero unless the walls move)
   Moose::Kokkos::Real3 velocity;
 };
@@ -74,6 +76,10 @@ struct SidesetWalls
   bool moving = false;
   /// Global ID of each face, the same on every rank: (element ID * 8 + side) * 2 + triangle
   ::Kokkos::View<int64_t *> ids;
+  /// Index of each face's boundary in the list the walls were built from
+  ::Kokkos::View<std::size_t *> boundary;
+  /// Number of boundaries the walls were built from
+  std::size_t num_boundaries = 0;
   ///@{
   /// The face across each edge (from vertex e to vertex e + 1) of each face, or -1 at a free
   /// edge, and whether the two belong to the same surface (normals within the curvature angle),
@@ -273,7 +279,7 @@ SidesetWalls::contacts(const ContiguousElementID elem,
       overflow() = 1;
       break;
     }
-    out[count] = {p, normal, overlap, f, ids(f), velocityAt(f, p)};
+    out[count] = {p, normal, overlap, f, ids(f), boundary(f), velocityAt(f, p)};
     interior_flags[count] = interior;
     faces[count] = f;
     ++count;

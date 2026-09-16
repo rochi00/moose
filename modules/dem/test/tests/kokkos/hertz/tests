@@ -20,4 +20,13 @@
     requirement = 'The system shall report an error when the Hertz contact model is selected without its material parameters.'
     capabilities = 'kokkos'
   []
+  [stack_force]
+    type = CSVDiff
+    input = stack.i
+    cli_args = "Postprocessors/floor/type=KokkosWallForce Postprocessors/floor/cloud=cloud Postprocessors/floor/wall=0 Postprocessors/floor/component=y Postprocessors/top/type=KokkosParticleCloudValue Postprocessors/top/cloud=cloud Postprocessors/top/value=max_y Outputs/csv=false Outputs/final/type=CSV Outputs/final/execute_on=FINAL Outputs/final/file_base=stack_force_out"
+    csvdiff = stack_force_out.csv
+    rel_err = 1e-10
+    requirement = 'The system shall report the force the particles exert on a wall, the weight of the settled stack on the floor, and the extent of the bed, the top of the stack.'
+    capabilities = 'kokkos'
+  []
 []

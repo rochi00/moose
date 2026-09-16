@@ -17,7 +17,9 @@ KokkosParticleCloudValue::validParams()
                                                "coordination_number load_imbalance kinetic_energy "
                                                "rotational_kinetic_energy potential_energy "
                                                "total_energy linear_momentum angular_momentum "
-                                               "virial_pressure"),
+                                               "virial_pressure max_x max_y max_z min_x min_y "
+                                               "min_z center_of_mass_x center_of_mass_y "
+                                               "center_of_mass_z"),
                                      "Which value to report");
   return params;
 }
@@ -70,5 +72,13 @@ KokkosParticleCloudValue::getValue() const
     return _cloud.linearMomentum();
   if (_value == "angular_momentum")
     return _cloud.angularMomentum();
-  return _cloud.virialPressure();
+  if (_value == "virial_pressure")
+    return _cloud.virialPressure();
+  const std::string name = _value;
+  const unsigned int c = name.back() - 'x';
+  if (name.rfind("max_", 0) == 0)
+    return _cloud.maxExtent(c);
+  if (name.rfind("min_", 0) == 0)
+    return _cloud.minExtent(c);
+  return _cloud.centerOfMass(c);
 }

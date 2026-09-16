@@ -2127,9 +2127,46 @@ KokkosParticleCloud::count()
   std::size_t num_contacts = 0;
   Real pe = 0, virial = 0;
   if (_contact_model == ContactModel::HERTZ)
+  {
     countContacts(_hertz, num_contacts, pe, virial);
+    countWallForces(_hertz);
+  }
   else
+  {
     countContacts(_linear, num_contacts, pe, virial);
+    countWallForces(_linear);
+  }
+
+  // Bed extent and center of mass
+  for (unsigned int c = 0; c < 3; ++c)
+  {
+    ::Kokkos::parallel_reduce(
+        "dem_count_max_extent",
+        cloud.size(),
+        KOKKOS_LAMBDA(const std::size_t i, Real & max) {
+          const Real x = cloud.x(i, c) + cloud.r(i);
+          max = x > max ? x : max;
+        },
+        ::Kokkos::Max<Real>(_max_extent[c]));
+    ::Kokkos::parallel_reduce(
+        "dem_count_min_extent",
+        cloud.size(),
+        KOKKOS_LAMBDA(const std::size_t i, Real & min) {
+          const Real x = cloud.x(i, c) - cloud.r(i);
+          min = x < min ? x : min;
+        },
+        ::Kokkos::Min<Real>(_min_extent[c]));
+    ::Kokkos::parallel_reduce(
+        "dem_count_com",
+        cloud.size(),
+        KOKKOS_LAMBDA(const std::size_t i, Real & sum) { sum += cloud.m(i) * cloud.x(i, c); },
+        _center_of_mass[c]);
+  }
+  ::Kokkos::parallel_reduce(
+      "dem_count_mass",
+      cloud.size(),
+      KOKKOS_LAMBDA(const std::size_t i, Real & sum) { sum += cloud.m(i); },
+      _total_mass);
 
   // Local values; finalize() reduces them across ranks every step
   _num_particles = cloud.size();
@@ -2146,6 +2183,75 @@ KokkosParticleCloud::count()
   _virial = virial;
   _linear_momentum = magnitude(_linear_momentum_vector);
   _angular_momentum = magnitude(_angular_momentum_vector);
+}
+
+template <typename Model>
+void
+KokkosParticleCloud::countWallForces(const Model & contact)
+{
+  const auto num = numWalls();
+  _wall_force_host.assign(3 * num, 0);
+  if (!num || !contact.enabled())
+    return;
+  if (_wall_force.extent(0) < num)
+    _wall_force = ::Kokkos::View<Real * [3], ::Kokkos::LayoutRight>("dem_wall_force", num);
+  const auto wall_force = _wall_force;
+  ::Kokkos::deep_copy(wall_force, 0);
+
+  // The forces the walls exert on the particles, negated, summed per wall from the current
+  // histories (not advanced)
+  const auto cloud = _cloud;
+  const auto eval = evaluator(contact);
+  const auto num_walls = _walls.n;
+  constexpr auto exited = DEM::ParticleCloud::exited;
+  ::Kokkos::parallel_for(
+      "dem_wall_forces", cloud.size(), KOKKOS_LAMBDA(const std::size_t i) {
+        if (cloud.elem(i) == exited)
+          return;
+        DEM::Contact c;
+        Real f_n;
+        Moose::Kokkos::Real3 f_t, tau_r;
+        const auto add = [&](const std::size_t w, const Moose::Kokkos::Real3 & f)
+        {
+          for (unsigned int k = 0; k < 3; ++k)
+            ::Kokkos::atomic_add(&wall_force(w, k), -f(k));
+        };
+        for (std::size_t w = 0; w < num_walls; ++w)
+          if (eval.wall(i, w, c))
+          {
+            eval.forces(c, DEM::PairKey::wall(cloud.gid(i), w), 1, false, f_n, f_t, tau_r);
+            add(w, f_n * c.normal + f_t);
+          }
+        DEM::WallContact wc[DEM::SidesetWalls::max_contacts];
+        const auto n_wc = eval.sidesetContacts(i, cloud.r(i), wc);
+        for (unsigned int k = 0; k < n_wc; ++k)
+        {
+          c = eval.sideset(i, wc[k]);
+          eval.forces(c, eval.sidesetKey(i, wc[k]), 1, false, f_n, f_t, tau_r);
+          add(num_walls + wc[k].boundary, f_n * c.normal + f_t);
+        }
+      });
+  auto host = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, wall_force);
+  for (const auto w : make_range(num))
+    for (unsigned int k = 0; k < 3; ++k)
+      _wall_force_host[3 * w + k] = host(w, k);
+}
+
+RealVectorValue
+KokkosParticleCloud::wallForce(const std::size_t wall) const
+{
+  mooseAssert(wall < numWalls(), "Wall index out of range");
+  return RealVectorValue(
+      _wall_force_host[3 * wall], _wall_force_host[3 * wall + 1], _wall_force_host[3 * wall + 2]);
+}
+
+std::size_t
+KokkosParticleCloud::wallIndex(const BoundaryName & boundary) const
+{
+  const auto it = std::find(_wall_boundaries.begin(), _wall_boundaries.end(), boundary);
+  if (it == _wall_boundaries.end())
+    mooseError("Boundary '", boundary, "' is not one of the wall_boundaries of ", name());
+  return _walls.n + std::distance(_wall_boundaries.begin(), it);
 }
 
 template <typename Model>
@@ -2280,6 +2386,16 @@ KokkosParticleCloud::finalize()
   _communicator.sum(_virial);
   for (auto & p : _linear_momentum_vector)
     _communicator.sum(p);
+  for (unsigned int c = 0; c < 3; ++c)
+  {
+    _communicator.max(_max_extent[c]);
+    _communicator.min(_min_extent[c]);
+    _communicator.sum(_center_of_mass[c]);
+  }
+  _communicator.sum(_total_mass);
+  for (unsigned int c = 0; c < 3; ++c)
+    _center_of_mass[c] = _total_mass > 0 ? _center_of_mass[c] / _total_mass : 0;
+  _communicator.sum(_wall_force_host);
   for (auto & L : _angular_momentum_vector)
     _communicator.sum(L);
   _linear_momentum = magnitude(_linear_momentum_vector);
