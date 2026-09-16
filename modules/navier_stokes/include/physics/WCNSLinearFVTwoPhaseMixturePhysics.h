@@ -55,6 +55,8 @@ private:
   void addPhaseInterfaceTerm();
   void addPhaseChangeEnergySource();
   void addPhaseDriftFluxTerm();
+  /// Adds the enthalpy carried by the relative motion of the phases to the energy equation
+  void addPhaseEnergyDriftFluxTerm();
   void addAdvectionSlipTerm();
   /// Adds the mass-weighted mixture specific heat, the weighting required for rho_m cp_m T to be
   /// the mixture enthalpy density
