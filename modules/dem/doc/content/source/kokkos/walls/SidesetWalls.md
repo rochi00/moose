@@ -1,14 +1,17 @@
 # SidesetWalls
 
 Walls derived from mesh sidesets for a [KokkosParticleCloud.md] (plan layer L5, decision D9),
-given by its `wall_boundaries` parameter. The faces of the listed boundaries on the local and
-one-layer ghost elements are exported to device, triangulated (a quad is split along its first
-diagonal; in 2D a face is an edge segment) with their normals pointing into the mesh, which is the
-inside of the walls. Each local or ghost element lists the faces whose bounding box, inflated by
-the largest radius plus the neighbor-list skin, meets its own, so a particle only tests the faces
-near the element it is tracked in ([KokkosParticleCloud.md#element-tracking]). The lists are built
-once at setup, the mesh being static. A particle whose element is unresolved sees no sideset
-walls until it is placed at the end of the step.
+given by its `wall_boundaries` parameter. The faces of the listed boundaries are triangulated (a
+quad is split along its first diagonal; in 2D a face is an edge segment) with their normals
+pointing into the mesh, which is the inside of the walls, and exported to device. Every rank
+holds the faces of its own elements and, as LIGGGHTS distributes its meshes, receives from the
+other ranks the faces within a particle's reach (the largest radius plus the neighbor-list skin
+and `wall_reach`) of its bounding box, so a particle can touch any face it can reach whatever the
+partitioning. Each local or ghost element lists the faces whose bounding box, inflated by the
+reach, meets its own, so a particle only tests the faces near the element it is tracked in
+([KokkosParticleCloud.md#element-tracking]). The lists are built once at setup, the mesh being
+static. A particle whose element is unresolved sees no sideset walls until it is placed at the
+end of the step.
 
 ## Narrow phase
 
@@ -31,11 +34,15 @@ restitution of a single contact (`corner`).
 
 The contact acts as a rigid partner at rest of infinite radius and mass, with the same normal,
 tangential, and rolling models as sphere-sphere contact ([LinearSpringDashpot.md], [Hertz.md],
-[Friction.md]). The contact history is keyed by the face's boundary, not the face, so it carries
-across the faces of one sideset as the contact point slides over them; faces a particle can touch
-at the same time with different normals (the floor and a side of a box) should therefore be in
-different sidesets. A boundary's history is advanced once per substep, from its first overlapping
-face, and reset only when none of its listed faces overlaps.
+[Friction.md]). The contact history is keyed by the face. Faces sharing an edge (a node in 2D)
+whose normals are within `wall_curvature` degrees of each other belong to one surface, and when
+the contact point slides from one to the other the history is handed over (LIGGGHTS's
+`curvature`): a touching face with an unstretched history takes the stretched history of a
+same-surface neighbor the contact has just left. So a triangulated plane keeps its tangential
+spring like a plane, while faces meeting at a crease keep separate histories, and the sides of a
+box may share a sideset (the `hopper_one_sideset` test). Histories are kept for every face within
+the skin, listed without the contact reduction so that a face whose edge contact is hidden by a
+neighbor's face contact, the next face to be touched, already has one.
 
 ## Moving walls
 

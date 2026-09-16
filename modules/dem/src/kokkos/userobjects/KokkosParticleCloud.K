@@ -110,6 +110,13 @@ KokkosParticleCloud::validParams()
       "wall_reach >= 0",
       "Extra distance within which a sideset face is a candidate of an element, at least the "
       "largest wall displacement expected");
+  params.addRangeCheckedParam<Real>(
+      "wall_curvature",
+      1,
+      "wall_curvature >= 0 & wall_curvature < 180",
+      "Largest angle in degrees between the normals of two sideset faces sharing an edge for "
+      "them to be one surface, across which a contact history is carried as the contact point "
+      "slides from one to the other");
   params.addParam<std::vector<Point>>(
       "wall_points", {}, "A point on each fixed planar wall, one per entry of wall_normals");
   params.addParam<std::vector<RealVectorValue>>(
@@ -201,6 +208,7 @@ KokkosParticleCloud::KokkosParticleCloud(const InputParameters & parameters)
            getParam<std::vector<RealVectorValue>>("wall_normals")),
     _wall_boundaries(getParam<std::vector<BoundaryName>>("wall_boundaries")),
     _wall_reach(getParam<Real>("wall_reach")),
+    _wall_curvature(getParam<Real>("wall_curvature") * libMesh::pi / 180),
     _periodic(getParam<MultiMooseEnum>("periodic")),
     _substeps(getParam<unsigned int>("substeps")),
     _max_hops(getParam<unsigned int>("max_hops")),
@@ -354,10 +362,13 @@ KokkosParticleCloud::initialSetup()
   if (_wall_boundaries.size())
   {
     _sideset_walls.build(_fe_problem.mesh(),
-                         mesh,
                          _cid_to_elem,
+                         mesh.getNumLocalElements(),
                          _fe_problem.mesh().getBoundaryIDs(_wall_boundaries, true),
-                         _r_max + _skin + _wall_reach);
+                         _r_max + _skin + _wall_reach,
+                         _wall_curvature,
+                         _rank_boxes,
+                         _communicator);
     // Start from the initially displaced positions, at rest
     if (_wall_displacements.size())
       _sideset_walls.move(displacedWallVertices(), 0);
@@ -651,16 +662,7 @@ KokkosParticleCloud::checkMesh()
                worst,
                " element sizes out of its plane); the face walk needs planar faces");
 
-  // Sideset walls come from the local and one-layer ghost elements only, so a particle must not
-  // reach past the ghost layer to touch one: its radius, the skin, and the wall motion must fit
-  // in the thinnest element
-  if (_wall_boundaries.size() && n_processors() > 1 && _r_max + _skin + _wall_reach > h_min)
-    mooseError("The largest particle radius plus the neighbor-list skin and the wall reach, ",
-               _r_max + _skin + _wall_reach,
-               ", exceeds the smallest element size, ",
-               h_min,
-               ": a particle near a partition boundary could touch a sideset wall face beyond "
-               "the ghost layer");
+  libmesh_ignore(h_min);
 }
 
 void
@@ -977,34 +979,27 @@ KokkosParticleCloud::updatePairStates(const Model & contact, const bool ghost_pa
             else
               eval.reset(key);
           }
-          // Sideset faces within the skin are listed. Their histories are per boundary, so a
-          // boundary's history is advanced once, from its first overlapping face, and reset
-          // only when none of its listed faces overlaps
+          // The touching faces (the reduced contacts) inherit the history of a same-surface
+          // neighbor the contact slid off, then advance; every other listed face (within the
+          // skin, unreduced) is reset
           DEM::WallContact wc[DEM::SidesetWalls::max_contacts];
-          const auto n_wc = eval.sidesetContacts(i, cloud.r(i) + skin, wc);
-          bool advanced[DEM::SidesetWalls::max_contacts];
-          for (unsigned int k = 0; k < n_wc; ++k)
+          DEM::WallContact listed[DEM::SidesetWalls::max_contacts];
+          const auto n_touching = eval.sidesetContacts(i, cloud.r(i), wc);
+          const auto n_listed = eval.sidesetContacts(i, cloud.r(i) + skin, listed, false);
+          for (unsigned int k = 0; k < n_touching; ++k)
+            eval.transferHistory(i, wc, n_touching, k);
+          for (unsigned int k = 0; k < n_touching; ++k)
           {
-            advanced[k] = false;
-            if (wc[k].overlap <= 0)
-              continue;
-            for (unsigned int l = 0; l < k && !advanced[k]; ++l)
-              advanced[k] = advanced[l] && wc[l].boundary == wc[k].boundary;
-            if (advanced[k])
-              continue;
             c = eval.sideset(i, wc[k]);
             eval.forces(c, eval.sidesetKey(i, wc[k]), 1, true, f_n, f_t, tau_r);
-            advanced[k] = true;
           }
-          for (unsigned int k = 0; k < n_wc; ++k)
+          for (unsigned int k = 0; k < n_listed; ++k)
           {
-            if (wc[k].overlap > 0)
-              continue;
             bool touching = false;
-            for (unsigned int l = 0; l < n_wc && !touching; ++l)
-              touching = wc[l].overlap > 0 && wc[l].boundary == wc[k].boundary;
+            for (unsigned int l = 0; l < n_touching && !touching; ++l)
+              touching = wc[l].face == listed[k].face;
             if (!touching)
-              eval.reset(eval.sidesetKey(i, wc[k]));
+              eval.reset(eval.sidesetKey(i, listed[k]));
           }
         }
       });
@@ -1302,7 +1297,7 @@ KokkosParticleCloud::rebuildPairStates()
       KOKKOS_LAMBDA(const std::size_t i, std::size_t & sum) {
         for (auto k = offsets(i); k < offsets(i + 1); ++k)
           sum += pairs(k) >= n_local || i < pairs(k);
-        sum += walls.n + sidesets.num_boundaries;
+        sum += walls.n + DEM::SidesetWalls::max_contacts;
       },
       needed);
   DEM::PairStateMap map(2 * needed + 128);
@@ -1328,9 +1323,10 @@ KokkosParticleCloud::rebuildPairStates()
             if (walls.overlap(w, xi, cloud.r(i)) > -skin)
               insert(DEM::PairKey::wall(cloud.gid(i), w));
           DEM::WallContact wc[DEM::SidesetWalls::max_contacts];
-          const auto n_wc = sidesets.contacts(cloud.elem(i), xi, cloud.r(i), cloud.r(i) + skin, wc);
+          const auto n_wc =
+              sidesets.contacts(cloud.elem(i), xi, cloud.r(i), cloud.r(i) + skin, wc, false);
           for (unsigned int k = 0; k < n_wc; ++k)
-            insert(DEM::PairKey::wall(cloud.gid(i), walls.n + wc[k].boundary));
+            insert(DEM::PairKey::wall(cloud.gid(i), walls.n + static_cast<std::size_t>(wc[k].id)));
         });
     if (!map.failed_insert())
       break;
@@ -1801,7 +1797,8 @@ KokkosParticleCloud::verifyPairStates()
   }
 
   // Sideset wall contacts are found on device: per particle, the boundaries within the skin
-  // and those overlapping, as (particle, boundary, overlapping) records
+  // (unreduced, the faces given a history) and those touching (reduced), as (particle, face
+  // key, touching) records
   if (_sideset_walls.n)
   {
     const auto cloud = _cloud;
@@ -1809,34 +1806,40 @@ KokkosParticleCloud::verifyPairStates()
     const Real skin = _skin;
     const auto num_walls = _walls.n;
     constexpr auto max_contacts = DEM::SidesetWalls::max_contacts;
-    ::Kokkos::View<int64_t * [3]> records("dem_verify_wall_records", n * max_contacts);
+    ::Kokkos::View<int64_t * [3]> records("dem_verify_wall_records", n * 2 * max_contacts);
     ::Kokkos::View<unsigned int *> counts("dem_verify_wall_counts", n);
     ::Kokkos::parallel_for(
         "dem_verify_walls", n, KOKKOS_LAMBDA(const std::size_t i) {
           DEM::WallContact wc[max_contacts];
-          const auto count = sidesets.contacts(
-              cloud.elem(i),
-              Moose::Kokkos::Real3(cloud.x(i, 0), cloud.x(i, 1), cloud.x(i, 2)),
-              cloud.r(i),
-              cloud.r(i) + skin,
-              wc);
-          counts(i) = count;
-          for (unsigned int k = 0; k < count; ++k)
+          const Moose::Kokkos::Real3 xi(cloud.x(i, 0), cloud.x(i, 1), cloud.x(i, 2));
+          unsigned int count = 0;
+          for (const bool touching : {false, true})
           {
-            records(i * max_contacts + k, 0) = cloud.gid(i);
-            records(i * max_contacts + k, 1) = -1 - static_cast<int64_t>(num_walls + wc[k].boundary);
-            records(i * max_contacts + k, 2) = wc[k].overlap > 0;
+            const auto found = sidesets.contacts(cloud.elem(i),
+                                                 xi,
+                                                 cloud.r(i),
+                                                 touching ? cloud.r(i) : cloud.r(i) + skin,
+                                                 wc,
+                                                 touching);
+            for (unsigned int k = 0; k < found; ++k, ++count)
+            {
+              records(i * 2 * max_contacts + count, 0) = cloud.gid(i);
+              records(i * 2 * max_contacts + count, 1) =
+                  -1 - static_cast<int64_t>(num_walls) - wc[k].id;
+              records(i * 2 * max_contacts + count, 2) = touching;
+            }
           }
+          counts(i) = count;
         });
     auto records_h = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, records);
     auto counts_h = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, counts);
     for (const auto i : make_range(n))
       for (const auto k : make_range(counts_h(i)))
       {
-        const auto key = std::make_pair(records_h(i * max_contacts + k, 0),
-                                        records_h(i * max_contacts + k, 1));
+        const auto key = std::make_pair(records_h(i * 2 * max_contacts + k, 0),
+                                        records_h(i * 2 * max_contacts + k, 1));
         listed.insert(key);
-        if (records_h(i * max_contacts + k, 2))
+        if (records_h(i * 2 * max_contacts + k, 2))
           overlapping.insert(key);
       }
   }
@@ -1882,7 +1885,7 @@ KokkosParticleCloud::packPairStates(std::map<processor_id_type, std::vector<Real
   const auto states = _pair_states;
   const auto sideset_key = KOKKOS_LAMBDA(const std::size_t i, const DEM::WallContact & wc)
   {
-    return DEM::PairKey::wall(cloud.gid(i), num_walls + wc.boundary);
+    return DEM::PairKey::wall(cloud.gid(i), num_walls + static_cast<std::size_t>(wc.id));
   };
   const auto sideset_contacts =
       KOKKOS_LAMBDA(const std::size_t i, DEM::WallContact * const out)
@@ -1891,7 +1894,8 @@ KokkosParticleCloud::packPairStates(std::map<processor_id_type, std::vector<Real
                              Moose::Kokkos::Real3(cloud.x(i, 0), cloud.x(i, 1), cloud.x(i, 2)),
                              cloud.r(i),
                              cloud.r(i) + skin,
-                             out);
+                             out,
+                             false);
   };
 
   // A departing particle's records are its stretched histories: the key and the spring, as

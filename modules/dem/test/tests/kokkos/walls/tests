@@ -82,4 +82,31 @@
     requirement = 'The system shall settle a bed of frictional spheres in a hopper whose walls are the sidesets of a rotated mesh into the pile obtained with the equivalent analytic planes, on any number of ranks.'
     capabilities = 'kokkos'
   []
+  [floor_fine_parallel]
+    type = CSVDiff
+    input = floor.i
+    cli_args = 'Mesh/gen/nx=80 Mesh/gen/ny=40 Outputs/file_base=floor_fine_parallel_out'
+    csvdiff = floor_fine_parallel_out_state_0006.csv
+    # Elements of 0.005 under a sphere of radius 0.01: the wall faces a particle can reach are
+    # exchanged between ranks by distance, not taken from the one-element ghost layer, so the
+    # partitioning does not matter
+    rel_err = 1e-10
+    min_parallel = 2
+    requirement = 'The system shall bounce a sphere on a sideset floor meshed finer than the sphere identically to the analytic plane on several ranks, the wall faces within reach being exchanged between ranks.'
+    capabilities = 'kokkos'
+  []
+  [hopper_one_sideset]
+    type = CSVDiff
+    input = hopper.i
+    cli_args = "Mesh/rename/type=RenameBoundaryGenerator Mesh/rename/input=rotate Mesh/rename/old_boundary='bottom left' Mesh/rename/new_boundary='v v' Mesh/final_generator=rename UserObjects/cloud/wall_boundaries=v Outputs/file_base=hopper_one_sideset_out"
+    csvdiff = hopper_one_sideset_out_state_0030.csv
+    # Both sides of the V in one sideset: the contact histories are per face, carried across the
+    # coplanar faces of a side and kept apart at the 90 degree crease, so the run is bitwise the
+    # same as with the sides in two sidesets on a given number of ranks (the gold is the serial
+    # two-sideset run; in parallel the bounces amplify the ghost summation roundoff, as in hopper)
+    rel_err = 2e-4
+    abs_zero = 1e-5
+    requirement = 'The system shall keep separate contact histories on the faces of one sideset that meet at a crease, so a bed settling in a V-hopper whose two sides are one sideset gives the same pile as with two.'
+    capabilities = 'kokkos'
+  []
 []

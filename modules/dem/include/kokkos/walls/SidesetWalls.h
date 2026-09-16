@@ -4,6 +4,7 @@
 #include "KokkosMesh.h"
 
 #include "libmesh/bounding_box.h"
+#include "libmesh/parallel.h"
 
 #include <vector>
 #include <array>
@@ -14,26 +15,28 @@ namespace DEM
 {
 
 /// A sphere's contact with a wall face: the closest point of the face, the unit normal from it
-/// toward the sphere center, the overlap, the face, and the index of the face's boundary, which
-/// keys the contact history
+/// toward the sphere center, the overlap, the face, and its global ID, which keys the contact
+/// history
 struct WallContact
 {
   Moose::Kokkos::Real3 point;
   Moose::Kokkos::Real3 normal;
   Real overlap;
   std::size_t face;
-  std::size_t boundary;
+  int64_t id;
   /// Velocity of the wall at the point (zero unless the walls move)
   Moose::Kokkos::Real3 velocity;
 };
 
 /**
  * Walls derived from mesh sidesets (plan layer L5, decision D9): the faces of the selected
- * boundaries of the local and one-layer ghost elements, triangulated (a quad split along its
- * first diagonal; in 2D a face is an edge segment), exported to device with their inward
- * normals and a global ID. Each element (local or ghost) lists the faces whose bounding box,
- * inflated by the reach, meets its own, so a particle only tests the faces near the element it
- * is tracked in.
+ * boundaries, triangulated (a quad split along its first diagonal; in 2D a face is an edge
+ * segment), exported to device with their inward normals and a global ID. Every rank holds the
+ * faces of its own elements and, as LIGGGHTS distributes its meshes, receives from the other
+ * ranks the faces within a particle's reach of its bounding box, so a particle can touch any
+ * face it can reach whatever the partitioning. Each local or ghost element lists the faces whose
+ * bounding box, inflated by the reach, meets its own, so a particle only tests the faces near the
+ * element it is tracked in.
  *
  * The sphere-face narrow phase finds the closest point of each candidate face (Ericson 2005).
  * Contacts are then reduced so that a sphere over an edge or vertex shared by several faces
@@ -42,10 +45,11 @@ struct WallContact
  * so a triangulated plane acts exactly as a plane and a convex edge or vertex as a single
  * contact along the line to the center.
  *
- * The contact history is keyed by the face's boundary, not the face, so it carries across the
- * faces of one sideset as the contact point slides over them, a triangulated plane keeping its
- * tangential spring like a plane. Faces a particle can touch at the same time with different
- * normals (the floor and a side of a box) should therefore be in different sidesets.
+ * The contact history is keyed by the face. Faces sharing an edge whose normals differ by less
+ * than the curvature angle belong to the same surface, and when the contact point slides from
+ * one to the other the history is transferred (LIGGGHTS's curvature), so a triangulated plane
+ * keeps its tangential spring like a plane while a crease or a box corner keeps one history per
+ * face.
  *
  * The walls can move: given new vertex positions once per MOOSE step, each vertex is assigned
  * the velocity that carries it there over the step, and the faces advance with it every substep,
@@ -68,10 +72,15 @@ struct SidesetWalls
   std::vector<std::array<libMesh::dof_id_type, 3>> nodes;
   /// Whether any vertex velocity is nonzero
   bool moving = false;
-  /// Index of each face's boundary in the list the walls were built from
-  ::Kokkos::View<std::size_t *> boundary;
-  /// Number of boundaries the walls were built from
-  std::size_t num_boundaries = 0;
+  /// Global ID of each face, the same on every rank: (element ID * 8 + side) * 2 + triangle
+  ::Kokkos::View<int64_t *> ids;
+  ///@{
+  /// The face across each edge (from vertex e to vertex e + 1) of each face, or -1 at a free
+  /// edge, and whether the two belong to the same surface (normals within the curvature angle),
+  /// so a contact history carries over between them
+  ::Kokkos::View<int * [3], ::Kokkos::LayoutRight> neighbors;
+  ::Kokkos::View<bool * [3], ::Kokkos::LayoutRight> same_surface;
+  ///@}
   ///@{
   /// CSR list of the candidate faces of each local and ghost element, by contiguous element ID
   ::Kokkos::View<std::size_t *> elem_offsets;
@@ -84,15 +93,23 @@ struct SidesetWalls
   ::Kokkos::View<int> overflow;
 
   /**
-   * Build the walls from the given boundaries of the local and one-layer ghost elements
-   * @param reach The distance within which a face is a candidate of an element (largest radius
-   *        plus the neighbor-list skin)
+   * Build the walls from the given boundaries: the faces of this rank's elements, exchanged
+   * with the other ranks by reach of their bounding boxes
+   * @param cid_to_elem The local and ghost elements by contiguous ID, of which the first
+   *        num_local are local
+   * @param reach The distance within which a face is a candidate of an element and is sent to
+   *        a rank (largest radius plus the neighbor-list skin and the wall motion)
+   * @param curvature Largest angle (radians) between the normals of faces sharing an edge for
+   *        them to be one surface
    */
   void build(const MooseMesh & mesh,
-             const Moose::Kokkos::Mesh & kokkos_mesh,
              const std::vector<const libMesh::Elem *> & cid_to_elem,
+             const std::size_t num_local,
              const std::vector<BoundaryID> & boundaries,
-             const Real reach);
+             const Real reach,
+             const Real curvature,
+             const std::vector<libMesh::BoundingBox> & rank_boxes,
+             const libMesh::Parallel::Communicator & comm);
 
   /**
    * Set the vertex velocities so that the vertices reach the given positions (three per face,
@@ -124,13 +141,17 @@ struct SidesetWalls
    * @param out Filled with at most max_contacts contacts; the overlap is r minus the distance
    *        along the line from the closest point, or the signed distance to the face plane for
    *        an interior contact, so a center behind the face is pushed back through it
+   * @param reduce Whether to reduce the contacts as described above; the faces to keep a
+   *        history for (within the skin) are listed without reduction, since a face whose edge
+   *        contact is hidden by a neighbor's face contact may be the next face touched
    * @returns The number of contacts
    */
   KOKKOS_INLINE_FUNCTION unsigned int contacts(const ContiguousElementID elem,
                                                const Moose::Kokkos::Real3 & x,
                                                const Real r,
                                                const Real reach,
-                                               WallContact * const out) const;
+                                               WallContact * const out,
+                                               const bool reduce = true) const;
 };
 
 KOKKOS_INLINE_FUNCTION Moose::Kokkos::Real3
@@ -213,7 +234,8 @@ SidesetWalls::contacts(const ContiguousElementID elem,
                        const Moose::Kokkos::Real3 & x,
                        const Real r,
                        const Real reach,
-                       WallContact * const out) const
+                       WallContact * const out,
+                       const bool reduce) const
 {
   if (n == 0 || elem >= elem_offsets.extent(0) - 1)
     return 0;
@@ -251,11 +273,14 @@ SidesetWalls::contacts(const ContiguousElementID elem,
       overflow() = 1;
       break;
     }
-    out[count] = {p, normal, overlap, f, boundary(f), velocityAt(f, p)};
+    out[count] = {p, normal, overlap, f, ids(f), velocityAt(f, p)};
     interior_flags[count] = interior;
     faces[count] = f;
     ++count;
   }
+
+  if (!reduce)
+    return count;
 
   // Reduce: merge contacts at the same point (keep the lowest ID), and drop an edge or vertex
   // contact whose point lies on a face with an interior contact

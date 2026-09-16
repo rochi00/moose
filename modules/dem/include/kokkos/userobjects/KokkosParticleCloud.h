@@ -274,6 +274,7 @@ protected:
   /// displacement variables moving them, and the walls built from them
   const std::vector<BoundaryName> _wall_boundaries;
   const Real _wall_reach;
+  const Real _wall_curvature;
   std::vector<const MooseVariable *> _wall_displacements;
   DEM::SidesetWalls _sideset_walls;
   /// Directions in which the domain is periodic

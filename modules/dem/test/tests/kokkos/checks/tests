@@ -35,15 +35,6 @@
     requirement = 'The system shall report at setup a mesh with non-planar element faces, which the face walk cannot track through.'
     capabilities = 'kokkos'
   []
-  [wall_reach_vs_element]
-    type = RunException
-    input = ../walls/floor.i
-    cli_args = 'UserObjects/cloud/wall_reach=1 Outputs/csv=false'
-    expect_err = 'exceeds the smallest element size'
-    min_parallel = 2
-    requirement = 'The system shall report at setup, in parallel, a particle reach to the sideset walls larger than the smallest element, which could miss wall faces beyond the ghost layer.'
-    capabilities = 'kokkos'
-  []
   [wall_contact_overflow]
     type = RunException
     input = ../walls/floor.i

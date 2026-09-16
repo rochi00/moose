@@ -3,6 +3,7 @@
 #include "MooseMesh.h"
 
 #include "libmesh/elem.h"
+#include "timpi/parallel_sync.h"
 
 #include <map>
 #include <algorithm>
@@ -12,35 +13,68 @@ namespace DEM
 
 void
 SidesetWalls::build(const MooseMesh & mesh,
-                    const Moose::Kokkos::Mesh & kokkos_mesh,
                     const std::vector<const libMesh::Elem *> & cid_to_elem,
+                    const std::size_t num_local,
                     const std::vector<BoundaryID> & boundaries,
-                    const Real reach)
+                    const Real reach,
+                    const Real curvature,
+                    const std::vector<libMesh::BoundingBox> & rank_boxes,
+                    const libMesh::Parallel::Communicator & comm)
 {
-  libmesh_ignore(kokkos_mesh);
   const auto num_elems = cid_to_elem.size();
-  num_boundaries = boundaries.size();
 
-  // Faces on host: vertices, vertex count, inward normal, boundary index, bounding box, nodes
+  // Faces on host: vertices, vertex count, inward normal, global ID, nodes, bounding box; and as
+  // a flat record of Reals for the exchange (the IDs are exact below 2^53)
   struct Face
   {
     Point v[3];
     unsigned int nv;
     Point normal;
-    std::size_t boundary;
-    libMesh::BoundingBox box;
+    int64_t id;
     std::array<libMesh::dof_id_type, 3> nodes;
+    libMesh::BoundingBox box;
   };
-  std::vector<Face> faces;
-  const auto add = [&faces](const Point & a,
-                            const Point & b,
-                            const Point & c,
-                            const unsigned int nv,
-                            const Point & centroid,
-                            const std::size_t boundary,
-                            const std::array<libMesh::dof_id_type, 3> & nodes)
+  constexpr std::size_t record_size = 9 + 1 + 3 + 1 + 3;
+  const auto pack = [](const Face & face, std::vector<Real> & out)
   {
-    Face face{{a, b, c}, nv, Point(), boundary, libMesh::BoundingBox(), nodes};
+    for (const auto k : make_range(3))
+      for (const auto c : make_range(3))
+        out.push_back(face.v[k](c));
+    out.push_back(face.nv);
+    for (const auto c : make_range(3))
+      out.push_back(face.normal(c));
+    out.push_back(face.id);
+    for (const auto k : make_range(3))
+      out.push_back(face.nodes[k]);
+  };
+  const auto unpack = [](const Real * record)
+  {
+    Face face;
+    for (const auto k : make_range(3))
+      for (const auto c : make_range(3))
+        face.v[k](c) = record[3 * k + c];
+    face.nv = record[9];
+    for (const auto c : make_range(3))
+      face.normal(c) = record[10 + c];
+    face.id = record[13];
+    for (const auto k : make_range(3))
+      face.nodes[k] = record[14 + k];
+    for (const auto k : make_range(face.nv))
+      face.box.union_with(face.v[k]);
+    return face;
+  };
+
+  // The faces of this rank's own elements
+  std::vector<Face> mine;
+  const auto add = [&mine](const Point & a,
+                           const Point & b,
+                           const Point & c,
+                           const unsigned int nv,
+                           const Point & centroid,
+                           const int64_t id,
+                           const std::array<libMesh::dof_id_type, 3> & nodes)
+  {
+    Face face{{a, b, c}, nv, Point(), id, nodes, libMesh::BoundingBox()};
     // Normal toward the element's centroid, which is inside the domain
     face.normal = nv == 3 ? (b - a).cross(c - a) : Point(-(b - a)(1), (b - a)(0), 0);
     face.normal /= face.normal.norm();
@@ -48,23 +82,21 @@ SidesetWalls::build(const MooseMesh & mesh,
       face.normal *= -1;
     for (const auto k : make_range(nv))
       face.box.union_with(face.v[k]);
-    faces.push_back(face);
+    mine.push_back(face);
   };
-  for (const auto cid : make_range(num_elems))
+  for (const auto cid : make_range(num_local))
   {
     const auto * elem = cid_to_elem[cid];
     for (const auto s : make_range(elem->n_sides()))
     {
-      // A side on several of the boundaries goes with the first listed
       const auto ids = mesh.getBoundaryIDs(elem, s);
-      std::size_t b = 0;
-      for (; b < boundaries.size(); ++b)
-        if (std::find(ids.begin(), ids.end(), boundaries[b]) != ids.end())
-          break;
-      if (b == boundaries.size())
+      if (std::none_of(ids.begin(), ids.end(), [&boundaries](auto id) {
+            return std::find(boundaries.begin(), boundaries.end(), id) != boundaries.end();
+          }))
         continue;
       const auto side = elem->side_ptr(s);
       const auto centroid = elem->vertex_average();
+      const int64_t base = (static_cast<int64_t>(elem->id()) * 8 + s) * 2;
       // Vertices only: higher-order sides are used through their corner nodes
       std::vector<Point> v;
       std::vector<libMesh::dof_id_type> nd;
@@ -74,22 +106,75 @@ SidesetWalls::build(const MooseMesh & mesh,
         nd.push_back(side->node_id(k));
       }
       if (v.size() == 2)
-        add(v[0], v[1], v[1], 2, centroid, b, {nd[0], nd[1], nd[1]});
+        add(v[0], v[1], v[1], 2, centroid, base, {nd[0], nd[1], nd[1]});
       else if (v.size() == 3)
-        add(v[0], v[1], v[2], 3, centroid, b, {nd[0], nd[1], nd[2]});
+        add(v[0], v[1], v[2], 3, centroid, base, {nd[0], nd[1], nd[2]});
       else if (v.size() == 4)
       {
-        add(v[0], v[1], v[2], 3, centroid, b, {nd[0], nd[1], nd[2]});
-        add(v[0], v[2], v[3], 3, centroid, b, {nd[0], nd[2], nd[3]});
+        add(v[0], v[1], v[2], 3, centroid, base, {nd[0], nd[1], nd[2]});
+        add(v[0], v[2], v[3], 3, centroid, base + 1, {nd[0], nd[2], nd[3]});
       }
       else
         mooseError("Unsupported side with ", v.size(), " vertices for a sideset wall");
     }
   }
+
+  // Every rank gets the faces within the reach of its bounding box, this rank's own included:
+  // a collective exchange every rank enters
+  std::map<processor_id_type, std::vector<Real>> to_send;
+  for (const auto & face : mine)
+  {
+    auto box = face.box;
+    box.first -= Point(reach, reach, reach);
+    box.second += Point(reach, reach, reach);
+    for (const auto rank : index_range(rank_boxes))
+      if (box.intersects(rank_boxes[rank]))
+        pack(face, to_send[rank]);
+  }
+  std::vector<Face> faces;
+  Parallel::push_parallel_vector_data(
+      comm,
+      to_send,
+      [&faces, &unpack](processor_id_type, const std::vector<Real> & data)
+      {
+        for (std::size_t r = 0; r < data.size() / record_size; ++r)
+          faces.push_back(unpack(data.data() + r * record_size));
+      });
+  // Deterministic order whatever the arrival order
+  std::sort(faces.begin(), faces.end(), [](const Face & a, const Face & b) { return a.id < b.id; });
   n = faces.size();
   nodes.resize(n);
   for (const auto f : index_range(faces))
     nodes[f] = faces[f].nodes;
+
+  // Adjacency across edges, by the node pair of each edge (the faces of a split quad share its
+  // diagonal); segments in 2D are adjacent through their end nodes. Two neighbors are one
+  // surface when their normals are within the curvature angle
+  std::vector<std::array<int, 3>> neighbors_host(n, {-1, -1, -1});
+  std::vector<std::array<bool, 3>> same_host(n, {false, false, false});
+  std::map<std::pair<libMesh::dof_id_type, libMesh::dof_id_type>, std::vector<std::pair<std::size_t, unsigned int>>> edges;
+  for (const auto f : index_range(faces))
+    if (faces[f].nv == 3)
+      for (const auto e : make_range(3u))
+      {
+        const auto a = faces[f].nodes[e], b = faces[f].nodes[(e + 1) % 3];
+        edges[{std::min(a, b), std::max(a, b)}].emplace_back(f, e);
+      }
+    else
+      for (const auto e : make_range(2u))
+        edges[{faces[f].nodes[e], faces[f].nodes[e]}].emplace_back(f, e);
+  const Real cos_curvature = std::cos(curvature);
+  for (const auto & [edge, sharing] : edges)
+    if (sharing.size() == 2)
+    {
+      const auto [f, e] = sharing[0];
+      const auto [g, d] = sharing[1];
+      neighbors_host[f][e] = g;
+      neighbors_host[g][d] = f;
+      const bool same = faces[f].normal * faces[g].normal >= cos_curvature;
+      same_host[f][e] = same;
+      same_host[g][d] = same;
+    }
 
   // Candidate faces of each element: those whose bounding box, inflated by the reach, meets
   // the element's. Faces are binned on a host grid so the search is linear in their number
@@ -140,13 +225,17 @@ SidesetWalls::build(const MooseMesh & mesh,
   velocities = ::Kokkos::View<Real * [3][3], ::Kokkos::LayoutRight>("dem_wall_velocities", n);
   overflow = ::Kokkos::View<int>("dem_wall_overflow");
   moving = false;
-  boundary = ::Kokkos::View<std::size_t *>("dem_wall_boundary", n);
+  ids = ::Kokkos::View<int64_t *>("dem_wall_ids", n);
+  neighbors = ::Kokkos::View<int * [3], ::Kokkos::LayoutRight>("dem_wall_neighbors", n);
+  same_surface = ::Kokkos::View<bool * [3], ::Kokkos::LayoutRight>("dem_wall_same_surface", n);
   elem_offsets = ::Kokkos::View<std::size_t *>("dem_wall_elem_offsets", num_elems + 1);
   elem_faces = ::Kokkos::View<std::size_t *>("dem_wall_elem_faces", faces_host.size());
   auto vertices_h = ::Kokkos::create_mirror_view(vertices);
   auto num_vertices_h = ::Kokkos::create_mirror_view(num_vertices);
   auto normals_h = ::Kokkos::create_mirror_view(normals);
-  auto boundary_h = ::Kokkos::create_mirror_view(boundary);
+  auto ids_h = ::Kokkos::create_mirror_view(ids);
+  auto neighbors_h = ::Kokkos::create_mirror_view(neighbors);
+  auto same_h = ::Kokkos::create_mirror_view(same_surface);
   auto elem_offsets_h = ::Kokkos::create_mirror_view(elem_offsets);
   auto elem_faces_h = ::Kokkos::create_mirror_view(elem_faces);
   for (const auto f : index_range(faces))
@@ -157,7 +246,12 @@ SidesetWalls::build(const MooseMesh & mesh,
     num_vertices_h(f) = faces[f].nv;
     for (const auto c : make_range(3))
       normals_h(f, c) = faces[f].normal(c);
-    boundary_h(f) = faces[f].boundary;
+    ids_h(f) = faces[f].id;
+    for (const auto e : make_range(3))
+    {
+      neighbors_h(f, e) = neighbors_host[f][e];
+      same_h(f, e) = same_host[f][e];
+    }
   }
   for (const auto e : index_range(offsets_host))
     elem_offsets_h(e) = offsets_host[e];
@@ -166,7 +260,9 @@ SidesetWalls::build(const MooseMesh & mesh,
   ::Kokkos::deep_copy(vertices, vertices_h);
   ::Kokkos::deep_copy(num_vertices, num_vertices_h);
   ::Kokkos::deep_copy(normals, normals_h);
-  ::Kokkos::deep_copy(boundary, boundary_h);
+  ::Kokkos::deep_copy(ids, ids_h);
+  ::Kokkos::deep_copy(neighbors, neighbors_h);
+  ::Kokkos::deep_copy(same_surface, same_h);
   ::Kokkos::deep_copy(elem_offsets, elem_offsets_h);
   ::Kokkos::deep_copy(elem_faces, elem_faces_h);
 }

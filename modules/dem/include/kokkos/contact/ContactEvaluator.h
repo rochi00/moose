@@ -49,15 +49,19 @@ struct ContactEvaluator
     return true;
   }
 
-  /// The contacts of particle i with the sideset walls within a reach of its center
-  KOKKOS_INLINE_FUNCTION unsigned int
-  sidesetContacts(const std::size_t i, const Real reach, WallContact * const out) const
+  /// The contacts of particle i with the sideset walls within a reach of its center, reduced
+  /// to the physical ones or not (the faces to list histories for)
+  KOKKOS_INLINE_FUNCTION unsigned int sidesetContacts(const std::size_t i,
+                                                      const Real reach,
+                                                      WallContact * const out,
+                                                      const bool reduce = true) const
   {
     return sidesets.contacts(cloud.elem(i),
                              Moose::Kokkos::Real3(cloud.x(i, 0), cloud.x(i, 1), cloud.x(i, 2)),
                              cloud.r(i),
                              reach,
-                             out);
+                             out,
+                             reduce);
   }
 
   /// The contact of particle i with a sideset wall face found by sidesetContacts()
@@ -75,11 +79,48 @@ struct ContactEvaluator
                    0);
   }
 
-  /// History key of particle i's contact with a sideset wall: by boundary, numbered after the
-  /// analytic walls
+  /// History key of particle i's contact with a sideset wall face, numbered after the analytic
+  /// walls by global face ID
+  KOKKOS_INLINE_FUNCTION PairKey sidesetKey(const std::size_t i, const int64_t id) const
+  {
+    return PairKey::wall(cloud.gid(i), walls.n + static_cast<std::size_t>(id));
+  }
   KOKKOS_INLINE_FUNCTION PairKey sidesetKey(const std::size_t i, const WallContact & wc) const
   {
-    return PairKey::wall(cloud.gid(i), walls.n + wc.boundary);
+    return sidesetKey(i, wc.id);
+  }
+
+  /**
+   * Carry the history of a contact that slid across an edge onto its new face: for the touching
+   * contact k with an unstretched history, a neighbor face on the same surface that is not
+   * among the touching contacts and has a stretched history hands it over and is reset
+   * @param wc The contacts of particle i, the first n_touching of which overlap
+   */
+  KOKKOS_INLINE_FUNCTION void transferHistory(const std::size_t i,
+                                              const WallContact * const wc,
+                                              const unsigned int n_touching,
+                                              const unsigned int k) const
+  {
+    const auto to = states.find(sidesetKey(i, wc[k]));
+    if (!states.valid_at(to) || states.value_at(to).stretched())
+      return;
+    for (unsigned int e = 0; e < 3; ++e)
+    {
+      const int g = sidesets.neighbors(wc[k].face, e);
+      if (g < 0 || !sidesets.same_surface(wc[k].face, e))
+        continue;
+      bool touching = false;
+      for (unsigned int l = 0; l < n_touching && !touching; ++l)
+        touching = wc[l].face == static_cast<std::size_t>(g);
+      if (touching)
+        continue;
+      const auto from = states.find(sidesetKey(i, sidesets.ids(g)));
+      if (!states.valid_at(from) || !states.value_at(from).stretched())
+        continue;
+      states.value_at(to) = states.value_at(from);
+      states.value_at(from) = PairState();
+      return;
+    }
   }
 
   /// The contact of particle i with wall w, if they overlap

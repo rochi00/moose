@@ -137,9 +137,7 @@ is an error). Particles unresolved at the checkpoint are located by the point lo
 
 At setup the cloud errors on a mesh it cannot handle: a face that is not planar (a vertex more
 than 1e-8 element sizes out of the plane of the face's first three vertices; the face walk is
-exact only for planar faces) and, in parallel with sideset walls, a particle reach
-(`r_max + skin + wall_reach`) larger than the smallest element, which could touch a wall face
-beyond the one-element ghost layer. Mesh adaptivity is not supported. A particle with more
+exact only for planar faces). Mesh adaptivity is not supported. A particle with more
 sideset wall contacts at once than can be evaluated (16) is an error rather than a loss of
 contacts, and a particle left unresolved at the end of a step (not located in any element) is an
 error unless `allow_unresolved = true`.
