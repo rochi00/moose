@@ -234,7 +234,13 @@ WCNSLinearFVTwoPhaseMixturePhysics::addFVKernels()
     addMassDriftFluxTerm();
 
   if (_flow_equations_physics && _flow_equations_physics->hasFlowEquations() && _use_drift_flux)
+  {
     addPhaseDriftFluxTerm();
+    // The enthalpy carried by the relative motion is the energy counterpart of the diffusion
+    // stress, so it belongs wherever the diffusion stress does
+    if (_has_energy_equation)
+      addPhaseEnergyDriftFluxTerm();
+  }
   if (_flow_equations_physics && _flow_equations_physics->hasFlowEquations() && _use_advection_slip)
     addAdvectionSlipTerm();
 }
@@ -357,6 +363,37 @@ WCNSLinearFVTwoPhaseMixturePhysics::addPhaseDriftFluxTerm()
     params.set<UserObjectName>("rhie_chow_user_object") = _flow_equations_physics->rhieChowUOName();
     getProblem().addLinearFVKernel(object_type, prefix() + "drift_flux_" + components[dim], params);
   }
+}
+
+void
+WCNSLinearFVTwoPhaseMixturePhysics::addPhaseEnergyDriftFluxTerm()
+{
+  // The term is h_d - h_c = (cp_d - cp_c) T, so it is only assemblable against a temperature
+  // variable. When the energy equation solves for the enthalpy the specific heats are not
+  // available as a difference multiplying the solution variable.
+  if (_fluid_energy_physics->parameters().get<bool>("solve_for_enthalpy"))
+    paramError("add_drift_flux_momentum_terms",
+               "The enthalpy carried by the relative motion of the phases is currently only "
+               "implemented for an energy equation solved for the temperature. Physics '",
+               _fluid_energy_physics->name(),
+               "' is solving for the enthalpy instead.");
+
+  const auto object_type = "LinearWCNSFV2PEnergyDriftFlux";
+  auto params = getFactory().getValidParams(object_type);
+  assignBlocks(params, _blocks);
+  params.set<LinearVariableName>("variable") = _fluid_energy_physics->getFluidTemperatureName();
+  setRelativeVelocityParams(params);
+  params.set<MooseFunctorName>("rho_d") = _phase_2_density;
+  params.set<MooseFunctorName>("rho_c") = _phase_1_density;
+  params.set<MooseFunctorName>("cp_d") = _phase_2_specific_heat;
+  params.set<MooseFunctorName>("cp_c") = _phase_1_specific_heat;
+  params.set<MooseFunctorName>("fraction_dispersed") = _phase_2_fraction_name;
+  params.set<MooseEnum>("advected_interp_method") =
+      _fluid_energy_physics->parameters().get<MooseEnum>("energy_advection_interpolation");
+  // The relative motion carries enthalpy only where the dispersed phase itself may travel, which
+  // is the same set of boundaries the phase transport equation uses
+  params.set<std::vector<BoundaryName>>("slip_boundaries") = slipBoundaries();
+  getProblem().addLinearFVKernel(object_type, prefix() + "energy_drift_flux", params);
 }
 
 void
