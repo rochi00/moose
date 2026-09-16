@@ -9,6 +9,7 @@
 
 #include "LinearWCNSFV2PMomentumDriftFlux.h"
 #include "NS.h"
+#include "NavierStokesMethods.h"
 #include "LinearFVBoundaryCondition.h"
 #include "LinearFVAdvectionDiffusionBC.h"
 
