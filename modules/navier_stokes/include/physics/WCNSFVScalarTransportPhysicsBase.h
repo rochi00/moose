@@ -46,6 +46,12 @@ protected:
   virtual void setSlipVelocityParams(InputParameters & /* params */) const {}
 
   /**
+   * The boundaries a dispersed phase may cross: the inlets and the outlets of the flow Physics,
+   * and never a wall, even one carrying a boundary condition on the transported scalar.
+   */
+  std::vector<BoundaryName> slipBoundaries() const;
+
+  /**
    * Density multiplying every term of the transport equation for a given scalar, so that the
    * equation is assembled in conservative form. An empty name leaves the equation in the form
    * solved for the scalar itself.
