@@ -71,6 +71,27 @@ WCNSLinearFVTwoPhaseMixturePhysics::validParams()
                               "slip_single_particle_friction_pressure_gradient",
                               "Friction model");
 
+  params.addParam<MooseFunctorName>(
+      "phase_1_density_time_derivative",
+      "Time derivative of the continuous phase density. Optional counterpart of "
+      "'phase_2_density_time_derivative'. It is zero for every case reported so far, but the "
+      "formulation does not assume it.");
+  params.addParam<bool>(
+      "add_mass_density_transient",
+      false,
+      "Whether to add the storage term d(rho_m)/dt to the pressure equation. Mixture continuity is "
+      "d(rho_m)/dt + div(rho_m u_m) = 0, and the pressure equation of the segregated algorithm "
+      "realises the second term alone, which is exact in a steady state and not otherwise. Setting "
+      "this lets a cell accumulate mass rather than pass a divergence free mass flux at every "
+      "instant, which is what separates the assembled system from a compressible SIMPLE.");
+  params.addParam<MooseFunctorName>(
+      "phase_2_density_time_derivative",
+      "Time derivative of the dispersed phase density, needed by the mixture density storage term "
+      "of 'add_mass_density_transient' and by nothing else. The phase equation does not need it: "
+      "its LinearFVTimeDerivative is assembled in conservative form and takes the whole of "
+      "d(rho_d alpha)/dt from the multiplier's own state history. Leaving this unset asserts that "
+      "the dispersed phase density does not change in time.");
+
   params.addParam<InterpolationMethodName>(
       "phase_drift_advection_interpolation",
       "Scheme for the drift flux in the phase transport equation. The drift is always interpolated "
@@ -235,6 +256,10 @@ WCNSLinearFVTwoPhaseMixturePhysics::addFVKernels()
   if (_add_phase_equation && isParamSetByUser("alpha_exchange"))
     addPhaseInterfaceTerm();
 
+  if (_flow_equations_physics && _flow_equations_physics->hasFlowEquations() &&
+      getParam<bool>("add_mass_density_transient"))
+    addMassDensityTransientTerm();
+
   if (_fluid_energy_physics && _fluid_energy_physics->hasEnergyEquation() &&
       getParam<bool>("add_phase_change_energy_term"))
     addPhaseChangeEnergySource();
@@ -309,6 +334,92 @@ WCNSLinearFVTwoPhaseMixturePhysics::setRelativeVelocityParams(InputParameters & 
     params.set<MooseFunctorName>("v_slip") = "vel_slip_y";
   if (dimension() >= 3)
     params.set<MooseFunctorName>("w_slip") = "vel_slip_z";
+}
+
+MooseFunctorName
+WCNSLinearFVTwoPhaseMixturePhysics::buildMixtureDensityTimeDerivative()
+{
+  // d(rho_m)/dt = (rho_d - rho_c) d(alpha)/dt + alpha d(rho_d)/dt + (1 - alpha) d(rho_c)/dt,
+  // which assumes nothing about either phase density. The phase fraction derivative comes from the
+  // variable's own dot(), which MooseLinearVariableFV builds from the time integrator's
+  // coefficients: it is therefore the same discrete operator LinearFVTimeDerivative assembles in
+  // the phase equation, so the two cannot disagree. The density derivatives are supplied by the
+  // user and default to zero.
+  //
+  // Several equations need this, so it is built at most once.
+  const auto drho_m_dt = prefix() + "drho_m_dt";
+  if (_built_drho_m_dt)
+    return drho_m_dt;
+
+  const auto alpha_dot = prefix() + "alpha_dot";
+  {
+    auto params = getFactory().getValidParams("GenericFunctorTimeDerivativeMaterial");
+    assignBlocks(params, _blocks);
+    params.set<std::vector<std::string>>("prop_names") = {alpha_dot};
+    params.set<std::vector<MooseFunctorName>>("prop_values") = {_phase_2_fraction_name};
+    getProblem().addMaterial(
+        "GenericFunctorTimeDerivativeMaterial", alpha_dot + "_mat", params);
+  }
+  {
+    auto params = getFactory().getValidParams("ParsedFunctorMaterial");
+    assignBlocks(params, _blocks);
+    params.set<std::string>("expression") =
+        "(rho_d - rho_c) * alpha_dot + alpha * drho_d_dt + (1 - alpha) * drho_c_dt";
+    params.set<std::vector<std::string>>("functor_names") = {
+        _phase_2_density,
+        _phase_1_density,
+        alpha_dot,
+        _phase_2_fraction_name,
+        isParamValid("phase_2_density_time_derivative")
+            ? getParam<MooseFunctorName>("phase_2_density_time_derivative")
+            : MooseFunctorName("0"),
+        isParamValid("phase_1_density_time_derivative")
+            ? getParam<MooseFunctorName>("phase_1_density_time_derivative")
+            : MooseFunctorName("0")};
+    params.set<std::vector<std::string>>("functor_symbols") = {
+        "rho_d", "rho_c", "alpha_dot", "alpha", "drho_d_dt", "drho_c_dt"};
+    params.set<std::string>("property_name") = drho_m_dt;
+    getProblem().addMaterial("ParsedFunctorMaterial", drho_m_dt + "_mat", params);
+  }
+
+  _built_drho_m_dt = true;
+  return drho_m_dt;
+}
+
+void
+WCNSLinearFVTwoPhaseMixturePhysics::addMassDensityTransientTerm()
+{
+  // Mixture continuity is d(rho_m)/dt + div(rho_m u_m) = 0. The pressure equation realises the
+  // divergence alone, so this supplies the storage term. With
+  // rho_m = alpha rho_d + (1-alpha) rho_c,
+  //
+  //   d(rho_m)/dt = (rho_d - rho_c) d(alpha)/dt + alpha d(rho_d)/dt + (1-alpha) d(rho_c)/dt ,
+  //
+  // which assumes nothing about either phase density. The phase fraction derivative comes from the
+  // variable's own dot(), which MooseLinearVariableFV builds from the time integrator's
+  // coefficients: it is therefore the same discrete operator LinearFVTimeDerivative assembles in
+  // the phase equation, so the two cannot disagree. The density derivatives are supplied by the
+  // user, as the nonlinear path does through its 'drho_dt' convention; they default to zero, in
+  // which case the surviving term is the one that dominates in practice.
+  const auto drho_m_dt = buildMixtureDensityTimeDerivative();
+
+  {
+    // Sign. Substituting u_m = HbyA - Ainv grad(p) into continuity gives
+    //   div(rho_m Ainv grad p) = div(rho_m HbyA) + d(rho_m)/dt ,
+    // which suggests the storage term joins the predictor divergence on the right hand side with
+    // the same sign. It does not: LinearFVDivergence and LinearFVSource do not share a sign
+    // convention on that side, and a positive factor makes the mass balance worse rather than
+    // better, doubling the residual instead of closing it. The factor is negative, and it was the
+    // mass balance test that settled it rather than the derivation. See
+    // mass-balance-transient.i, whose whole purpose is that a sign error there is unmissable.
+    auto params = getFactory().getValidParams("LinearFVSource");
+    assignBlocks(params, _blocks);
+    params.set<LinearVariableName>("variable") = _flow_equations_physics->getPressureName();
+    params.set<MooseFunctorName>("source_density") = drho_m_dt;
+    params.set<MooseFunctorName>("scaling_factor") = "-1";
+    getProblem().addLinearFVKernel(
+        "LinearFVSource", prefix() + "mass_density_transient", params);
+  }
 }
 
 void
