@@ -14,7 +14,6 @@
 
 #include <algorithm>
 
-class RhieChowMassFlux;
 class LinearFVBoundaryCondition;
 
 /**
@@ -90,9 +89,6 @@ protected:
 
   /// The dimension of the simulation
   const unsigned int _dim;
-
-  /// The Rhie-Chow user object that provides us with the face velocity
-  const RhieChowMassFlux & _mass_flux_provider;
 
   /// Dispersed phase density
   const Moose::Functor<Real> & _rho_d;
