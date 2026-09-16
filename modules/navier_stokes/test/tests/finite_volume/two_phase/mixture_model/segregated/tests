@@ -100,6 +100,16 @@
     max_threads = 1 # see libmesh issue #3808
   []
 
+  [phase_slip_wall_conservation]
+    type = CSVDiff
+    input = 'phase-slip-wall-conservation.i'
+    csvdiff = 'phase-slip-wall-conservation_out.csv'
+    abs_zero = 1e-6
+    design = 'LinearFVScalarAdvection.md'
+    requirement = 'The system shall conserve the dispersed phase in a closed cavity when a slip velocity is present, by not transporting the phase across impermeable boundaries, even when those boundaries constrain the phase fraction.'
+    max_threads = 1 # see libmesh issue #3808
+  []
+
   [errors]
     requirement = "The system shall return an error if"
     [active_scalar_subcycles_without_reordering]
