@@ -138,6 +138,39 @@ particleReynoldsNumber(const T & rho_c, const T & particle_diameter, const T & s
 }
 
 /**
+ * Assembles the slip velocity vector of a dispersed phase from its component functors. The
+ * components a lower dimensional mesh does not carry are passed as null and read as zero.
+ */
+template <typename T, typename SpaceArg>
+libMesh::VectorValue<T>
+slipVelocityVector(const Moose::Functor<T> & u_slip,
+                   const Moose::Functor<T> * v_slip,
+                   const Moose::Functor<T> * w_slip,
+                   const SpaceArg & arg,
+                   const Moose::StateArg & state)
+{
+  libMesh::VectorValue<T> slip(u_slip(arg, state), 0.0, 0.0);
+  if (v_slip)
+    slip(1) = (*v_slip)(arg, state);
+  if (w_slip)
+    slip(2) = (*w_slip)(arg, state);
+  return slip;
+}
+
+/**
+ * Checks that a slip velocity was given a component for every dimension of the mesh, the
+ * u component being required by the parameters of every object taking one.
+ */
+inline void
+checkSlipVelocityComponents(const MooseObject & object, unsigned int dim, bool has_v, bool has_w)
+{
+  if (dim >= 2 && !has_v)
+    object.paramError("v_slip", "In two or more dimensions, the v_slip velocity must be supplied");
+  if (dim >= 3 && !has_w)
+    object.paramError("w_slip", "In three dimensions, the w_slip velocity must be supplied");
+}
+
+/**
  * Schiller and Naumann's branch of the linear drag function, valid below the transition.
  *
  * Offered separately from dragFunction so that a solver which has already established from its
