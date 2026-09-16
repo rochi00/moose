@@ -55,8 +55,6 @@ NSFVDispersePhaseDragFunctorMaterial::NSFVDispersePhaseDragFunctorMaterial(
 
   const auto f = [this](const auto & r, const auto & t) -> ADReal
   {
-    using std::pow;
-
     ADRealVectorValue velocity(_u_var(r, t));
     if (_dim > 1)
       velocity(1) = (*_v_var)(r, t);
@@ -64,17 +62,12 @@ NSFVDispersePhaseDragFunctorMaterial::NSFVDispersePhaseDragFunctorMaterial(
       velocity(2) = (*_w_var)(r, t);
     const auto speed = NS::computeSpeed<ADReal>(velocity);
 
-    const auto Re_particle =
-        _particle_diameter(r, t) * speed * _rho_mixture(r, t) / _mu_mixture(r, t);
+    const auto Re_particle = NS::particleReynoldsNumber(
+        _rho_mixture(r, t), _particle_diameter(r, t), speed, _mu_mixture(r, t));
 
-    if (Re_particle <= 1000)
-    {
-      if (MetaPhysicL::raw_value(Re_particle) < 0)
-        mooseException("Cannot take a non-integer power of a negative number");
-      return 1.0 + 0.15 * pow(Re_particle, 0.687);
-    }
-    else
-      return 0.0183 * Re_particle;
+    if (MetaPhysicL::raw_value(Re_particle) < 0)
+      mooseException("Cannot take a non-integer power of a negative number");
+    return NS::dragFunction(Re_particle);
   };
   const auto & f_func = addFunctorProperty<ADReal>(getParam<MooseFunctorName>("drag_coef_name"), f);
 
