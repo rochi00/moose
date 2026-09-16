@@ -19,23 +19,20 @@ registerMooseObject("NavierStokesApp", LinearWCNSFV2PMomentumDriftFlux);
 InputParameters
 LinearWCNSFV2PMomentumDriftFlux ::validParams()
 {
-  auto params = LinearFVFluxKernel::validParams();
+  auto params = LinearWCNSFV2PDriftFluxBase::validParams();
   params.addClassDescription(
       "Implements the diffusion (drift) stress of the two-phase mixture model, "
       "div(beta_d beta_c / rho_m * u_slip (x) u_slip), on the left hand side of the mixture "
       "momentum equation.");
+  // The stress is assembled on every face this kernel visits; whether it should be withheld on
+  // impermeable walls, as the phase and energy drift fluxes are, is left as it was.
+  params.suppressParameter<std::vector<BoundaryName>>("slip_boundaries");
   // Nothing in this kernel reads the Rhie-Chow object: the flux it assembles is carried by the
   // slip velocity, not by the mixture mass flux. The parameter is kept so that existing inputs and
   // the Physics, which set it on every momentum flux kernel alike, keep parsing.
   params.addParam<UserObjectName>("rhie_chow_user_object",
                                   "Unused by this kernel, accepted for input compatibility.");
-  params.addRequiredParam<MooseFunctorName>("u_slip", "The slip velocity in the x direction.");
-  params.addParam<MooseFunctorName>("v_slip", "The slip velocity in the y direction.");
-  params.addParam<MooseFunctorName>("w_slip", "The slip velocity in the z direction.");
-  params.addRequiredParam<MooseFunctorName>("rho_d", "Dispersed phase density.");
   params.addRequiredParam<MooseFunctorName>("rho_c", "Continuous phase density.");
-  params.addParam<MooseFunctorName>("fd", 0.0, "Fraction dispersed phase.");
-  params.renameParam("fd", "fraction_dispersed", "");
 
   params.addParam<bool>(
       "force_boundary_execution", true, "This kernel should execute on boundaries by default");
@@ -54,29 +51,15 @@ LinearWCNSFV2PMomentumDriftFlux ::validParams()
 }
 
 LinearWCNSFV2PMomentumDriftFlux ::LinearWCNSFV2PMomentumDriftFlux(const InputParameters & params)
-  : LinearFVFluxKernel(params),
-    _dim(_subproblem.mesh().dimension()),
-    _rho_d(getFunctor<Real>("rho_d")),
+  : LinearWCNSFV2PDriftFluxBase(params),
     _rho_c(getFunctor<Real>("rho_c")),
-    _f_d(getFunctor<Real>("fd")),
-    _u_slip(getFunctor<Real>("u_slip")),
-    _v_slip(isParamValid("v_slip") ? &getFunctor<Real>("v_slip") : nullptr),
-    _w_slip(isParamValid("w_slip") ? &getFunctor<Real>("w_slip") : nullptr),
     _index(getParam<MooseEnum>("momentum_component")),
     _density_interp_method(
         Moose::FV::selectInterpolationMethod(getParam<MooseEnum>("density_interp_method"))),
     _face_flux(0.0),
     _slip_mass_flux(0.0),
-    _gamma(0.0),
-    _boundary_normal_factor(1.0)
+    _gamma(0.0)
 {
-  if (_dim >= 2 && !_v_slip)
-    mooseError("In two or more dimensions, the v_slip velocity must be supplied using the 'v_slip' "
-               "parameter");
-  if (_dim >= 3 && !_w_slip)
-    mooseError(
-        "In three dimensions, the w_slip velocity must be supplied using the 'w_slip' parameter");
-
   // Note that since this is used in a segregated solver at this time, we don't need to declare
   // that this kernel may depend on a phase fraction variable
 }
@@ -94,14 +77,7 @@ LinearWCNSFV2PMomentumDriftFlux::computeFlux()
   else
     face_arg = makeCDFace(*_current_face_info);
 
-  RealVectorValue u_slip_vel_vec;
-  if (_dim == 1)
-    u_slip_vel_vec = RealVectorValue(_u_slip(face_arg, state), 0.0, 0.0);
-  else if (_dim == 2)
-    u_slip_vel_vec = RealVectorValue(_u_slip(face_arg, state), (*_v_slip)(face_arg, state), 0.0);
-  else
-    u_slip_vel_vec = RealVectorValue(
-        _u_slip(face_arg, state), (*_v_slip)(face_arg, state), (*_w_slip)(face_arg, state));
+  const auto u_slip_vel_vec = slipVelocity(face_arg, state);
 
   const auto uslipdotn = normal * u_slip_vel_vec;
 
@@ -196,11 +172,7 @@ LinearWCNSFV2PMomentumDriftFlux::computeBoundaryRHSContribution(
 void
 LinearWCNSFV2PMomentumDriftFlux::setupFaceData(const FaceInfo * face_info)
 {
-  LinearFVFluxKernel::setupFaceData(face_info);
-
-  // Multiplier that ensures the normal of the boundary always points outwards, even in cases
-  // when the boundary is within the mesh
-  _boundary_normal_factor = (_current_face_type == FaceInfo::VarFaceNeighbors::ELEM) ? 1.0 : -1.0;
+  LinearWCNSFV2PDriftFluxBase::setupFaceData(face_info);
 
   // Caching the flux on the face which will be reused in the matrix and right hand side
   // contributions
