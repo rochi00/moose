@@ -9,7 +9,6 @@
 
 #include "LinearWCNSFV2PMomentumDriftFlux.h"
 #include "NS.h"
-#include "RhieChowMassFlux.h"
 #include "LinearFVBoundaryCondition.h"
 #include "LinearFVAdvectionDiffusionBC.h"
 
@@ -25,9 +24,11 @@ LinearWCNSFV2PMomentumDriftFlux ::validParams()
       "Implements the diffusion (drift) stress of the two-phase mixture model, "
       "div(beta_d beta_c / rho_m * u_slip (x) u_slip), on the left hand side of the mixture "
       "momentum equation.");
-  params.addRequiredParam<UserObjectName>(
-      "rhie_chow_user_object",
-      "The rhie-chow user-object which is used to determine the face velocity.");
+  // Nothing in this kernel reads the Rhie-Chow object: the flux it assembles is carried by the
+  // slip velocity, not by the mixture mass flux. The parameter is kept so that existing inputs and
+  // the Physics, which set it on every momentum flux kernel alike, keep parsing.
+  params.addParam<UserObjectName>("rhie_chow_user_object",
+                                  "Unused by this kernel, accepted for input compatibility.");
   params.addRequiredParam<MooseFunctorName>("u_slip", "The slip velocity in the x direction.");
   params.addParam<MooseFunctorName>("v_slip", "The slip velocity in the y direction.");
   params.addParam<MooseFunctorName>("w_slip", "The slip velocity in the z direction.");
@@ -55,7 +56,6 @@ LinearWCNSFV2PMomentumDriftFlux ::validParams()
 LinearWCNSFV2PMomentumDriftFlux ::LinearWCNSFV2PMomentumDriftFlux(const InputParameters & params)
   : LinearFVFluxKernel(params),
     _dim(_subproblem.mesh().dimension()),
-    _mass_flux_provider(getUserObject<RhieChowMassFlux>("rhie_chow_user_object")),
     _rho_d(getFunctor<Real>("rho_d")),
     _rho_c(getFunctor<Real>("rho_c")),
     _f_d(getFunctor<Real>("fd")),
