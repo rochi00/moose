@@ -129,6 +129,8 @@ WCNSLinearFVScalarTransportPhysics::addScalarAdvectionKernels()
   params.set<InterpolationMethodName>("advected_interp_method_name") = method_name;
   setSlipVelocityParams(params);
 
+  params.set<std::vector<BoundaryName>>("slip_boundaries") = slipBoundaries();
+
   for (const auto & vname : _passive_scalar_names)
   {
     params.set<LinearVariableName>("variable") = vname;
