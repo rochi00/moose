@@ -788,44 +788,24 @@ KokkosParticleCloud::compute()
   checkTimestep();
 
   // Velocity Verlet; the forces at the start of the step were computed at the end of the last one
+  _num_migrated = 0;
   for (unsigned int substep = 0; substep < _substeps; ++substep)
   {
     kickDrift();
     _sideset_walls.advance(_dt / _substeps);
     walk();
+    // A particle that has strayed beyond its rank's box, across a partition or a periodic face,
+    // is settled at once: beyond the skin its far-side neighbors are no longer ghosted here
+    if (strayed())
+      settle();
     if (!updateNeighborList())
       startGhostUpdate();
     computeForces(true);
     kick();
   }
 
-  // Particles the walk could not resolve get a second chance from the point locator, and may
-  // turn out to belong to another rank; the walk that follows flags those for migration
-  resolveUnresolved();
-  walk();
-
-  // Remove the exited particles and hand the ones that reached a ghost element to their owner,
-  // who continues the walk (with the same fallback, since the hop budget may not reach from the
-  // element the sender saw), until every particle has settled. Each round moves a particle at
-  // least one partition, or through a periodic face, which it can do once per periodic direction
-  // in a step, so the number of rounds is bounded; the bound is generous because the walk, which
-  // exits through the face the point is furthest in front of, can wander across a partition and
-  // back on an irregular mesh
-  _num_migrated = 0;
-  const unsigned int max_rounds = 4 * n_processors() * (1 + _periodic.size());
-  for (unsigned int round = 0;; ++round)
-  {
-    auto n_sent = migrate();
-    _num_migrated += n_sent;
-    _communicator.sum(n_sent);
-    if (!n_sent)
-      break;
-    if (round == max_rounds)
-      mooseError("Particles were still crossing partitions after ", max_rounds, " rounds");
-    walk();
-    resolveUnresolved();
-    walk();
-  }
+  // Every particle is settled at the end of the step, so it is located and owned where it is
+  settle();
   // Received particles arrive without forces, and the next step's first half-kick needs them;
   // the histories were advanced for this substep already and travelled with the particles
   if (!updateNeighborList())
@@ -850,6 +830,64 @@ KokkosParticleCloud::compute()
     verify();
   if (_verify_pair_states)
     verifyPairStates();
+}
+
+bool
+KokkosParticleCloud::strayed()
+{
+  // Beyond skin / 2 outside the box a particle may, at the next rebuild, be within the cutoff of
+  // a particle that is not ghosted here (ghosts come within the cutoff of the box, not of the
+  // particles); the flag is global so every rank settles together
+  const auto cloud = _cloud;
+  const auto & box = _rank_boxes[processor_id()];
+  const Moose::Kokkos::Real3 lower(box.min()(0) - 0.5 * _skin, box.min()(1) - 0.5 * _skin, box.min()(2) - 0.5 * _skin);
+  const Moose::Kokkos::Real3 upper(box.max()(0) + 0.5 * _skin, box.max()(1) + 0.5 * _skin, box.max()(2) + 0.5 * _skin);
+  constexpr auto exited = DEM::ParticleCloud::exited;
+  unsigned int flag = 0;
+  ::Kokkos::parallel_reduce(
+      "dem_strayed",
+      cloud.size(),
+      KOKKOS_LAMBDA(const std::size_t i, unsigned int & max) {
+        if (cloud.elem(i) == exited)
+          return;
+        for (unsigned int c = 0; c < 3; ++c)
+          if (cloud.x(i, c) < lower(c) || cloud.x(i, c) > upper(c))
+            max = 1;
+      },
+      ::Kokkos::Max<unsigned int>(flag));
+  if (n_processors() > 1)
+    _communicator.max(flag);
+  return flag;
+}
+
+void
+KokkosParticleCloud::settle()
+{
+  // Particles the walk could not resolve get a second chance from the point locator, and may
+  // turn out to belong to another rank; the walk that follows flags those for migration
+  resolveUnresolved();
+  walk();
+
+  // Remove the exited particles and hand the ones that reached a ghost element to their owner,
+  // who continues the walk (with the same fallback, since the hop budget may not reach from the
+  // element the sender saw), until every particle has settled. Each round moves a particle at
+  // least one partition, or through a periodic face, so the number of rounds is bounded; the
+  // bound is generous because the walk, which exits through the face the point is furthest in
+  // front of, can wander across a partition and back on an irregular mesh
+  const unsigned int max_rounds = 4 * n_processors() * (1 + _periodic.size());
+  for (unsigned int round = 0;; ++round)
+  {
+    auto n_sent = migrate();
+    _num_migrated += n_sent;
+    _communicator.sum(n_sent);
+    if (!n_sent)
+      break;
+    if (round == max_rounds)
+      mooseError("Particles were still crossing partitions after ", max_rounds, " rounds");
+    walk();
+    resolveUnresolved();
+    walk();
+  }
 }
 
 template <typename Model>

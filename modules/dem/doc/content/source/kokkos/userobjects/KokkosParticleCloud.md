@@ -83,10 +83,12 @@ The `potential_energy` reported excludes the tangential and rolling springs.
 
 With `periodic`, the domain wraps over the extent of the mesh bounding box in the listed
 directions. A particle that walks out of the mesh is then unresolved rather than exited: it keeps
-its unwrapped position, just outside its rank's box, for the rest of the step, so its neighbors and
-their ghost images see it where it is, and at the end of the step it is wrapped by the period,
-placed by the point locator, and migrated to the rank owning the far side, which need not be
-adjacent (this requires a replicated mesh, since the locator of a distributed mesh only sees the
+its unwrapped position, just outside its rank's box, so its neighbors and their ghost images see
+it where it is, until it is settled: wrapped by the period, placed by the point locator, and
+migrated to the rank owning the far side, which need not be adjacent. Settling happens at the end
+of every step and, within the substep loop, as soon as any particle is more than half the skin
+outside its rank's box (across a periodic face or a partition), since beyond that its far-side
+neighbors may not be ghosted here (this requires a replicated mesh, since the locator of a distributed mesh only sees the
 local and ghost elements). Contact across a periodic face uses the ghost machinery: every rank
 sends, to every rank including itself, the particles whose image under each combination of period
 shifts lies within the cutoff of that rank's box, with the shifted positions, so the neighbor list

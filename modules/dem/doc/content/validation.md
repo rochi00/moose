@@ -58,3 +58,16 @@ microseconds:
   characteristic length $R \sqrt{10}$ (whose full support is 5 diameters), while its half-maximum
   width is 13% narrower than $\cos^4$: the continuum profile's neglected terms are of order
   $(2R/\lambda)^5 = 10\%$, the discrete wave being sharper in its core (Chatterjee 1999).
+
+## Homogeneous cooling: Haff's law
+
+`haff` and `haff_check.py`: 512 frictionless spheres at a solid fraction of 2% in a periodic
+cube, linear spring-dashpot contact set for $e = 0.9$, Gaussian initial velocities, no walls, no
+gravity. Kinetic theory (Haff 1983; Brilliantov and Poeschel 2004) gives
+$T(t) = T_0 / (1 + t/\tau_0)^2$ with $1/\tau_0 = (1 - e^2)\,\nu(T_0)/6$ for the Enskog collision
+frequency $\nu = 4\sqrt{\pi} n \sigma^2 g_2(\phi) \sqrt{T/m}$. Over four cooling times the fitted
+$\tau_0$ is within 3% of the prediction (0.752 s against 0.731 s) and $1/\sqrt{T/T_0}$ stays
+within 2% of a straight line; $T$ falls to 0.040 $T_0$ against Haff's 0.038. Setting this case up
+exposed and fixed a limitation of the periodic and partition handling: a particle straying more
+than the neighbor-list skin beyond its rank's box within one MOOSE step lost its far-side
+neighbors, so such particles are now settled (wrapped, located, migrated) within the substep loop.

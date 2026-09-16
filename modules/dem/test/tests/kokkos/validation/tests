@@ -86,4 +86,23 @@
     requirement = 'The system shall give the solitary wave the speed of Nesterenko\'s solution at its amplitude, v = (6 / (5 pi rho theta))^(2/5) V_m^(1/5), and the width of the cos^4 pulse of characteristic length R sqrt(10).'
     capabilities = 'kokkos'
   []
+  [haff]
+    type = RunApp
+    input = haff.i
+    recover = false
+    restep = false
+    # 512 particles over 6e5 substeps: about 20 s
+    requirement = 'The system shall cool a periodic gas of 512 inelastic spheres by their collisions alone over four cooling times.'
+    capabilities = 'kokkos'
+  []
+  [haff_check]
+    type = RunCommand
+    command = 'python3 haff_check.py'
+    prereq = haff
+    # Haff's law: the cooling time fitted to the kinetic energy history is within 3% of
+    # 6 / ((1 - e^2) nu(T0)) (allowed 6%: the Maxwellian estimate of the collision rate) and
+    # 1 / sqrt(T / T0) stays within 2% of a straight line over the four cooling times
+    requirement = 'The system shall reproduce Haff\'s law for the homogeneous cooling state, T(t) = T0 / (1 + t / tau0)^2 with 1 / tau0 = (1 - e^2) nu(T0) / 6 from the Enskog collision frequency.'
+    capabilities = 'kokkos'
+  []
 []

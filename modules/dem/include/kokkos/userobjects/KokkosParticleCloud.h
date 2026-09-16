@@ -210,6 +210,11 @@ protected:
   /// Locate the unresolved particles with the point locator on host; one found in an element of
   /// another rank, adjacent or not, is flagged for migration there
   void resolveUnresolved();
+  /// Whether, on any rank, a particle is more than skin / 2 outside its rank's box
+  bool strayed();
+  /// Locate every particle and migrate those on another rank's elements, in rounds, until all
+  /// are owned where they are
+  void settle();
   /// Rebuild the ghost and neighbor lists if, on any rank, some particle has moved more than
   /// skin / 2 since the last build or the local particle count changed
   /// @returns Whether the lists were rebuilt
