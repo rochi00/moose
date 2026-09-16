@@ -77,6 +77,11 @@ advected_interp_method = 'average'
   previous_nl_solution_required = true
 []
 
+# 1 when the energy equation carries the pressure work. The discrete term is then assembled from
+# the same functor the Physics builds, and the manufactured value is subtracted, so what is left to
+# balance is the discretisation error of the term itself. 0 leaves the study as it was.
+pw_on = 0
+
 [Mesh]
   [gmg]
     type = GeneratedMeshGenerator
@@ -225,6 +230,25 @@ advected_interp_method = 'average'
     property_name = 'gamma_hlat'
     expression = 'gamma_fn * ${hlat}'
     functor_names = 'gamma_fn'
+  []
+  [pw_velocity_x]
+    type = ParsedFunctorMaterial
+    property_name = 'pw_velocity_x'
+    expression = 'vel_x + (phase_2 - phase_2 * rho_d_t / rho_mixture) * ${a}'
+    functor_names = 'vel_x phase_2 rho_d_t rho_mixture'
+  []
+  [pw_velocity_y]
+    type = ParsedFunctorMaterial
+    property_name = 'pw_velocity_y'
+    expression = 'vel_y + (phase_2 - phase_2 * rho_d_t / rho_mixture) * ${b}'
+    functor_names = 'vel_y phase_2 rho_d_t rho_mixture'
+  []
+  [pressure_work]
+    type = NSFVPressureWorkFunctorMaterial
+    pressure = pressure
+    u = pw_velocity_x
+    v = pw_velocity_y
+    pressure_work_name = 'pressure_work'
   []
 []
 
@@ -426,6 +450,18 @@ advected_interp_method = 'average'
     variable = T_fluid
     source_density = forcing_T
   []
+  [T_pressure_work_mms]
+    type = LinearFVSource
+    variable = T_fluid
+    source_density = mms_pressure_work
+    scaling_factor = ${fparse -pw_on}
+  []
+  [T_pressure_work]
+    type = LinearFVSource
+    variable = T_fluid
+    source_density = pressure_work
+    scaling_factor = ${pw_on}
+  []
 []
 
 [LinearFVBCs]
@@ -525,6 +561,12 @@ advected_interp_method = 'average'
     symbol_names = 'mu_c mu_d rho_c0 rho_d0 cp_c cp_d k_c k_d a b Dphi gx gy hlat G0'
     symbol_values = '${mu_c} ${mu_d} ${rho_c0} ${rho_d0} ${cp_c} ${cp_d} ${k_c} ${k_d} ${a} ${b} ${Dphi} ${gx} ${gy} ${hlat} ${G0}'
   []
+  [mms_pressure_work]
+    type = ParsedFunction
+    expression = '(1 - 2*x)*(a*(-rho_d0*(sin(2*pi*t)*sin(pi*x)*sin(pi*y)/5 + 1/2)*(sin(2*pi*t)/2 + 1)/(rho_c0*(-sin(2*pi*t)*sin(pi*x)*sin(pi*y)/5 + 1/2)*(sin(2*pi*t)/4 + 1) + rho_d0*(sin(2*pi*t)*sin(pi*x)*sin(pi*y)/5 + 1/2)*(sin(2*pi*t)/2 + 1)) + sin(2*pi*t)*sin(pi*x)*sin(pi*y)/5 + 1/2) + x^2*(1 - x)^2*(sin(2*pi*t)/2 + 1)*(4*y^3 - 6*y^2 + 2*y))*(sin(2*pi*t)/2 + 1) + pi*(x*(1 - x) - 1/4)*cos(2*pi*t)'
+    symbol_names = 'mu_c mu_d rho_c0 rho_d0 cp_c cp_d k_c k_d a b Dphi gx gy hlat G0'
+    symbol_values = '${mu_c} ${mu_d} ${rho_c0} ${rho_d0} ${cp_c} ${cp_d} ${k_c} ${k_d} ${a} ${b} ${Dphi} ${gx} ${gy} ${hlat} ${G0}'
+  []
   [forcing_mass]
     type = ParsedFunction
     expression = 'pi*rho_c0*(-sin(2*pi*t)*sin(pi*x)*sin(pi*y)/5 + 1/2)*cos(2*pi*t)/2 - 2*pi*rho_c0*(sin(2*pi*t)/4 + 1)*sin(pi*x)*sin(pi*y)*cos(2*pi*t)/5 + pi*rho_d0*(sin(2*pi*t)*sin(pi*x)*sin(pi*y)/5 + 1/2)*cos(2*pi*t) + 2*pi*rho_d0*(sin(2*pi*t)/2 + 1)*sin(pi*x)*sin(pi*y)*cos(2*pi*t)/5 + x^2*(1 - x)^2*(-pi*rho_c0*(sin(2*pi*t)/4 + 1)*sin(2*pi*t)*sin(pi*y)*cos(pi*x)/5 + pi*rho_d0*(sin(2*pi*t)/2 + 1)*sin(2*pi*t)*sin(pi*y)*cos(pi*x)/5)*(sin(2*pi*t)/2 + 1)*(4*y^3 - 6*y^2 + 2*y) + x^2*(2*x - 2)*(rho_c0*(-sin(2*pi*t)*sin(pi*x)*sin(pi*y)/5 + 1/2)*(sin(2*pi*t)/4 + 1) + rho_d0*(sin(2*pi*t)*sin(pi*x)*sin(pi*y)/5 + 1/2)*(sin(2*pi*t)/2 + 1))*(sin(2*pi*t)/2 + 1)*(4*y^3 - 6*y^2 + 2*y) + 2*x*(1 - x)^2*(rho_c0*(-sin(2*pi*t)*sin(pi*x)*sin(pi*y)/5 + 1/2)*(sin(2*pi*t)/4 + 1) + rho_d0*(sin(2*pi*t)*sin(pi*x)*sin(pi*y)/5 + 1/2)*(sin(2*pi*t)/2 + 1))*(sin(2*pi*t)/2 + 1)*(4*y^3 - 6*y^2 + 2*y) - y^2*(1 - y)^2*(-pi*rho_c0*(sin(2*pi*t)/4 + 1)*sin(2*pi*t)*sin(pi*x)*cos(pi*y)/5 + pi*rho_d0*(sin(2*pi*t)/2 + 1)*sin(2*pi*t)*sin(pi*x)*cos(pi*y)/5)*(sin(2*pi*t)/2 + 1)*(4*x^3 - 6*x^2 + 2*x) - y^2*(2*y - 2)*(rho_c0*(-sin(2*pi*t)*sin(pi*x)*sin(pi*y)/5 + 1/2)*(sin(2*pi*t)/4 + 1) + rho_d0*(sin(2*pi*t)*sin(pi*x)*sin(pi*y)/5 + 1/2)*(sin(2*pi*t)/2 + 1))*(sin(2*pi*t)/2 + 1)*(4*x^3 - 6*x^2 + 2*x) - 2*y*(1 - y)^2*(rho_c0*(-sin(2*pi*t)*sin(pi*x)*sin(pi*y)/5 + 1/2)*(sin(2*pi*t)/4 + 1) + rho_d0*(sin(2*pi*t)*sin(pi*x)*sin(pi*y)/5 + 1/2)*(sin(2*pi*t)/2 + 1))*(sin(2*pi*t)/2 + 1)*(4*x^3 - 6*x^2 + 2*x)'
@@ -596,6 +638,21 @@ advected_interp_method = 'average'
   pin_pressure = false
 []
 
+[AuxVariables]
+  [pw_sampled]
+    type = MooseVariableFVReal
+  []
+[]
+
+[AuxKernels]
+  [sample_pressure_work]
+    type = FunctorAux
+    variable = pw_sampled
+    functor = pressure_work
+    execute_on = 'TIMESTEP_END'
+  []
+[]
+
 [Postprocessors]
   [L2u]
     type = ElementL2FunctorError
@@ -623,6 +680,14 @@ advected_interp_method = 'average'
     type = ElementL2FunctorError
     approximate = pressure
     exact = exact_p
+  []
+  # The error in the assembled pressure work itself, against its manufactured value. This is the
+  # quantity the energy equation consumes, and unlike L2p it is blind to the pressure datum, which
+  # a segregated solve fixes only up to a constant.
+  [L2pw]
+    type = ElementL2FunctorError
+    approximate = pw_sampled
+    exact = mms_pressure_work
   []
 []
 

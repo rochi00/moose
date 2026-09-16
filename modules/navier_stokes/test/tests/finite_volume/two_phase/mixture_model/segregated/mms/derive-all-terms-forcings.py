@@ -65,6 +65,14 @@ S_T = (sp.diff(rho_cp*Te, t) + div(rho_cp*Te*u, rho_cp*Te*v)
        + div(coef*(cp_d-cp_c)*Te*a, coef*(cp_d-cp_c)*Te*b)
        - div(km*sp.diff(Te, x), km*sp.diff(Te, y)) + Gam*hlat)
 
+# The pressure work an energy equation written in enthalpy carries on its right hand side, which a
+# weakly compressible formulation drops. It is emitted on its own rather than folded into S_T, so
+# that the study with the term switched off keeps exactly the forcing it had.
+c_d = bd/rm
+Dp_Dt = (sp.diff(p, t)
+         + (u + (al - c_d)*a)*sp.diff(p, x)
+         + (v + (al - c_d)*b)*sp.diff(p, y))
+
 def emit(e):
     return str(e).replace('**', '^')
 
@@ -73,7 +81,7 @@ out = {
     'rho_d_t': rd, 'rho_c_t': rc, 'drho_d_dt': sp.diff(rd, t), 'drho_c_dt': sp.diff(rc, t),
     'gamma_fn': Gam,
     'forcing_mass': S_mass, 'forcing_u': S_u, 'forcing_v': S_v,
-    'forcing_phi': S_al, 'forcing_T': S_T,
+    'forcing_phi': S_al, 'forcing_T': S_T, 'mms_pressure_work': Dp_Dt,
 }
 import json, sys
 res = {k: emit(val) for k, val in out.items()}
