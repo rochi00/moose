@@ -209,6 +209,35 @@ SidesetWalls::move(const std::vector<Point> & positions, const Real dt)
 }
 
 void
+SidesetWalls::save(std::vector<Real> & positions, std::vector<Real> & velocities_out) const
+{
+  auto vertices_h = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, vertices);
+  auto velocities_h = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, velocities);
+  positions.assign(vertices_h.data(), vertices_h.data() + 9 * n);
+  velocities_out.assign(velocities_h.data(), velocities_h.data() + 9 * n);
+}
+
+void
+SidesetWalls::load(const std::vector<Real> & positions, const std::vector<Real> & velocities_in)
+{
+  mooseAssert(positions.size() == 9 * n && velocities_in.size() == 9 * n,
+              "Checkpoint of a different wall mesh");
+  auto vertices_h = ::Kokkos::create_mirror_view(vertices);
+  auto velocities_h = ::Kokkos::create_mirror_view(velocities);
+  moving = false;
+  for (const auto f : make_range(n))
+    for (const auto k : make_range(3))
+      for (const auto c : make_range(3))
+      {
+        vertices_h(f, k, c) = positions[9 * f + 3 * k + c];
+        velocities_h(f, k, c) = velocities_in[9 * f + 3 * k + c];
+        moving = moving || velocities_h(f, k, c) != 0;
+      }
+  ::Kokkos::deep_copy(vertices, vertices_h);
+  ::Kokkos::deep_copy(velocities, velocities_h);
+}
+
+void
 SidesetWalls::advance(const Real dt)
 {
   if (!moving)

@@ -14,6 +14,39 @@
 
 #include <mpi.h>
 
+class KokkosParticleCloud;
+
+namespace DEM
+{
+/**
+ * What a KokkosParticleCloud saves in a checkpoint: its local particles and contact histories as
+ * flat records, and its cumulative counters. Stored lazily: dataStore() asks the cloud to fill
+ * the records from the device at that moment, and dataLoad() hands them back to the cloud,
+ * which restores its state at once if it is already set up (a restep or backup), or in
+ * initialSetup() otherwise (a restart or recovery).
+ */
+struct CloudCheckpoint
+{
+  KokkosParticleCloud * cloud = nullptr;
+  std::vector<Real> particles;
+  std::vector<Real> histories;
+  /// Sideset wall vertex positions and velocities, which move between steps
+  std::vector<Real> wall_vertices;
+  std::vector<Real> wall_velocities;
+  std::size_t num_exited = 0;
+  std::size_t num_migrated = 0;
+  std::size_t num_neighbor_list_builds = 0;
+  std::size_t num_ghost_forwards = 0;
+  bool timestep_warned = false;
+  /// Whether dataLoad() filled this and the cloud has yet to restore from it
+  bool loaded = false;
+};
+
+// In the namespace of the type so argument-dependent lookup finds them from the restart system
+void dataStore(std::ostream & stream, CloudCheckpoint & checkpoint, void * context);
+void dataLoad(std::istream & stream, CloudCheckpoint & checkpoint, void * context);
+} // namespace DEM
+
 /**
  * A cloud of spherical particles integrated on device with Velocity Verlet over a number of
  * substeps per MOOSE time step (plan decision D4), tracking the local element containing each
@@ -73,6 +106,14 @@ public:
   virtual void compute() override;
   virtual void finalize() override;
   virtual void meshChanged() override;
+
+  /// Fill a checkpoint with the current state (called when a checkpoint or backup is written)
+  void checkpoint(DEM::CloudCheckpoint & checkpoint);
+  /// Restore the state from the loaded checkpoint, rebuilding the neighbor list, ghosts, and
+  /// forces; the mesh, partitioning, and number of ranks must be those of the checkpoint
+  void restore();
+  /// Whether initialSetup() has run
+  bool isSetUp() const { return _set_up; }
 
   /// Device particle state
   const DEM::ParticleCloud & cloud() const { return _cloud; }
@@ -144,6 +185,8 @@ protected:
   DEM::Hertz makeHertz() const;
   /// The sideset walls' vertices displaced by the wall_displacements variables' current values
   std::vector<Point> displacedWallVertices() const;
+  /// Place the particles of initial_positions that start in this rank's elements
+  void placeInitialParticles();
   /// Error on a mesh the tracking or the walls cannot handle: non-planar faces, or elements
   /// thinner than a particle's reach to a sideset wall across the ghost layer
   void checkMesh();
@@ -268,6 +311,12 @@ protected:
   const bool _allow_unresolved;
   /// Whether finalize() is the one of initialSetup(), where nothing can be unresolved yet
   bool _initial_finalize = true;
+  /// The restartable checkpoint of this cloud
+  DEM::CloudCheckpoint & _checkpoint;
+  /// Whether initialSetup() has run, so a loaded checkpoint can be restored at once
+  bool _set_up = false;
+  /// Whether the next neighbor-list update must rebuild regardless of staleness
+  bool _force_rebuild = false;
 
   /// Device particle state
   DEM::ParticleCloud _cloud;

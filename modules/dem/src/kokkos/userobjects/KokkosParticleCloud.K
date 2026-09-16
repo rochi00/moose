@@ -212,6 +212,7 @@ KokkosParticleCloud::KokkosParticleCloud(const InputParameters & parameters)
     _timestep_check(getParam<MooseEnum>("timestep_check")),
     _timestep_fraction(getParam<Real>("timestep_fraction")),
     _allow_unresolved(getParam<bool>("allow_unresolved")),
+    _checkpoint(declareRestartableData<DEM::CloudCheckpoint>("checkpoint")),
     _ghost_tag(_communicator.get_unique_tag()),
     _gpu_aware_mpi(getParam<bool>("gpu_aware_mpi"))
 {
@@ -248,6 +249,8 @@ KokkosParticleCloud::KokkosParticleCloud(const InputParameters & parameters)
 
   // Side centroids and normals are only cached on request
   _fe_problem.mesh().getKokkosMesh()->setNeedsElementSideGeometry();
+
+  _checkpoint.cloud = this;
 }
 
 DEM::Hertz
@@ -301,50 +304,11 @@ KokkosParticleCloud::initialSetup()
   ::Kokkos::deep_copy(_owner, owner_host);
   ::Kokkos::deep_copy(_libmesh_id, id_host);
 
-  // Each rank keeps the particles that start in one of its local elements
   _locator = _fe_problem.mesh().getPointLocator();
   _locator->enable_out_of_mesh_mode();
 
-  std::vector<std::pair<int64_t, ContiguousElementID>> local;
-  for (const auto i : index_range(_initial_positions))
-  {
-    const auto * elem = (*_locator)(_initial_positions[i]);
-    if (elem && elem->processor_id() == processor_id())
-      local.emplace_back(i, mesh.getContiguousElementID(elem));
-  }
-
-  const auto n = local.size();
-  DEM::ParticleCloud::HostMirror host(n);
-  for (const auto j : make_range(n))
-  {
-    const auto [gid, cid] = local[j];
-    const Real radius = _initial_radii.size() ? _initial_radii[gid] : _radius;
-    const Real mass = _density * 4.0 / 3.0 * libMesh::pi * Utility::pow<3>(radius);
-    // Solid sphere
-    const Real inertia = 0.4 * mass * radius * radius;
-    host.gid(j) = gid;
-    for (const auto c : make_range(3))
-    {
-      host.x(j, c) = _initial_positions[gid](c);
-      host.v(j, c) = _initial_velocities.size() ? _initial_velocities[gid](c) : _initial_velocity(c);
-      host.omega(j, c) = _initial_angular_velocity(c);
-      host.f(j, c) = 0;
-      host.tau(j, c) = 0;
-    }
-    // Identity orientation
-    host.q(j, 0) = 1;
-    host.q(j, 1) = host.q(j, 2) = host.q(j, 3) = 0;
-    host.r(j) = radius;
-    host.m(j) = mass;
-    host.inertia(j) = inertia;
-    host.elem(j) = cid;
-    host.target_rank(j) = libMesh::DofObject::invalid_processor_id;
-    host.hops(j) = 0;
-  }
-  _cloud.allocate(n);
-  _cloud.copyFrom(host, 0);
-  _cloud.n = n;
-  allocateScratch(n);
+  if (!_checkpoint.loaded)
+    placeInitialParticles();
 
   // Ghosting is decided against the neighboring ranks' bounding boxes, gathered once since the
   // mesh does not move
@@ -419,12 +383,239 @@ KokkosParticleCloud::initialSetup()
 
   checkMesh();
   checkTimestep();
+  _set_up = true;
 
+  if (_checkpoint.loaded)
+    restore();
+  else
+  {
+    updateNeighborList();
+    computeForces(false);
+    // Reduce so the initial values are global before the first execution
+    count();
+    finalize();
+  }
+}
+
+void
+KokkosParticleCloud::checkpoint(DEM::CloudCheckpoint & checkpoint)
+{
+  constexpr auto record_size = DEM::ParticleCloud::record_size;
+  constexpr auto invalid_id = libMesh::DofObject::invalid_id;
+  const auto cloud = _cloud;
+  const auto n = _cloud.size();
+  const auto num_elems = _libmesh_id.extent(0);
+  const auto libmesh_id = _libmesh_id;
+
+  // Particles as migration records, with the libMesh ID of the element, or none for a particle
+  // that is unresolved (the sentinels are beyond the element count) so it is located on restore
+  ::Kokkos::View<Real *> records("dem_checkpoint_particles", n * record_size);
+  ::Kokkos::parallel_for(
+      "dem_checkpoint_pack", n, KOKKOS_LAMBDA(const std::size_t i) {
+        const auto elem = cloud.elem(i);
+        cloud.pack(i, elem < num_elems ? libmesh_id(elem) : invalid_id, &records(i * record_size));
+      });
+  auto records_host = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, records);
+  checkpoint.particles.assign(records_host.data(), records_host.data() + n * record_size);
+
+  // Contact histories: count, scan, fill over the map's slots
+  const auto states = _pair_states;
+  const auto capacity = states.capacity();
+  ::Kokkos::View<std::size_t *> slot("dem_checkpoint_slot", capacity + 1);
+  std::size_t total = 0;
+  ::Kokkos::parallel_scan(
+      "dem_checkpoint_scan",
+      capacity,
+      KOKKOS_LAMBDA(const std::size_t e, std::size_t & sum, const bool final) {
+        if (final)
+          slot(e) = sum;
+        sum += states.valid_at(e);
+      },
+      total);
+  ::Kokkos::View<Real *> history_records("dem_checkpoint_histories",
+                                          total * pair_state_record_size);
+  ::Kokkos::parallel_for(
+      "dem_checkpoint_histories", capacity, KOKKOS_LAMBDA(const std::size_t e) {
+        if (!states.valid_at(e))
+          return;
+        const auto & key = states.key_at(e);
+        const auto & value = states.value_at(e);
+        Real * record = &history_records(slot(e) * pair_state_record_size);
+        record[0] = key.lower;
+        record[1] = key.upper;
+        for (unsigned int c = 0; c < 3; ++c)
+        {
+          record[2 + c] = value.delta_t[c];
+          record[5 + c] = value.delta_r[c];
+        }
+      });
+  auto histories_host =
+      ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, history_records);
+  checkpoint.histories.assign(histories_host.data(),
+                              histories_host.data() + total * pair_state_record_size);
+
+  if (_sideset_walls.n)
+    _sideset_walls.save(checkpoint.wall_vertices, checkpoint.wall_velocities);
+  else
+  {
+    checkpoint.wall_vertices.clear();
+    checkpoint.wall_velocities.clear();
+  }
+
+  checkpoint.num_exited = _num_exited_local;
+  checkpoint.num_migrated = _num_migrated;
+  checkpoint.num_neighbor_list_builds = _num_neighbor_list_builds;
+  checkpoint.num_ghost_forwards = _num_ghost_forwards;
+  checkpoint.timestep_warned = _timestep_warned;
+}
+
+void
+KokkosParticleCloud::restore()
+{
+  constexpr auto record_size = DEM::ParticleCloud::record_size;
+  constexpr auto invalid_id = libMesh::DofObject::invalid_id;
+  const auto & mesh = kokkosMesh();
+  const auto & libmesh_mesh = _fe_problem.mesh().getMesh();
+  auto & checkpoint = _checkpoint;
+  checkpoint.loaded = false;
+
+  // Particles: each record's element must be one of this rank's, so the checkpoint must come
+  // from the same mesh, partitioning, and number of ranks
+  const auto n = checkpoint.particles.size() / record_size;
+  DEM::ParticleCloud::HostMirror host(n);
+  for (const auto j : make_range(n))
+  {
+    const Real * record = checkpoint.particles.data() + j * record_size;
+    host.unpack(record, j);
+    const auto id = static_cast<dof_id_type>(record[record_size - 1]);
+    const auto * elem = id == invalid_id
+                            ? (*_locator)(Point(host.x(j, 0), host.x(j, 1), host.x(j, 2)))
+                            : libmesh_mesh.query_elem_ptr(id);
+    if (!elem || elem->processor_id() != processor_id())
+      mooseError("Restoring particle ",
+                 host.gid(j),
+                 " from the checkpoint failed: its element is not on this rank. The mesh, its "
+                 "partitioning, and the number of ranks must be those of the checkpoint");
+    host.elem(j) = mesh.getContiguousElementID(elem);
+  }
+  _cloud.allocate(n);
+  _cloud.copyFrom(host, 0);
+  _cloud.n = n;
+  allocateScratch(n);
+  _num_ghosts = 0;
+
+  // Histories
+  _pair_states = DEM::PairStateMap(2 * checkpoint.histories.size() / pair_state_record_size + 128);
+  unpackPairStates(checkpoint.histories);
+
+  // Moving walls resume where they were, with the velocities they had, so the forces below
+  // see the same relative velocities as before the checkpoint
+  if (_sideset_walls.n)
+  {
+    if (checkpoint.wall_vertices.size() != 9 * _sideset_walls.n)
+      mooseError("The checkpoint's sideset walls do not match this rank's");
+    _sideset_walls.load(checkpoint.wall_vertices, checkpoint.wall_velocities);
+  }
+  checkpoint.wall_vertices.clear();
+  checkpoint.wall_velocities.clear();
+
+  _num_exited_local = checkpoint.num_exited;
+  _num_migrated = checkpoint.num_migrated;
+  _num_neighbor_list_builds = checkpoint.num_neighbor_list_builds;
+  _num_ghost_forwards = checkpoint.num_ghost_forwards;
+  _timestep_warned = checkpoint.timestep_warned;
+  checkpoint.particles.clear();
+  checkpoint.histories.clear();
+
+  // Rebuild everything derived: the neighbor list (and with it the ghosts and the pair-state
+  // map, which keeps the restored histories of the listed pairs), the forces, and the counters
+  _force_rebuild = true;
   updateNeighborList();
   computeForces(false);
-  // Reduce so the initial values are global before the first execution
   count();
+  _initial_finalize = true;
   finalize();
+}
+
+void
+DEM::dataStore(std::ostream & stream, DEM::CloudCheckpoint & checkpoint, void * context)
+{
+  mooseAssert(checkpoint.cloud, "Checkpoint without its cloud");
+  checkpoint.cloud->checkpoint(checkpoint);
+  ::dataStore(stream, checkpoint.particles, context);
+  ::dataStore(stream, checkpoint.histories, context);
+  ::dataStore(stream, checkpoint.wall_vertices, context);
+  ::dataStore(stream, checkpoint.wall_velocities, context);
+  ::dataStore(stream, checkpoint.num_exited, context);
+  ::dataStore(stream, checkpoint.num_migrated, context);
+  ::dataStore(stream, checkpoint.num_neighbor_list_builds, context);
+  ::dataStore(stream, checkpoint.num_ghost_forwards, context);
+  ::dataStore(stream, checkpoint.timestep_warned, context);
+}
+
+void
+DEM::dataLoad(std::istream & stream, DEM::CloudCheckpoint & checkpoint, void * context)
+{
+  ::dataLoad(stream, checkpoint.particles, context);
+  ::dataLoad(stream, checkpoint.histories, context);
+  ::dataLoad(stream, checkpoint.wall_vertices, context);
+  ::dataLoad(stream, checkpoint.wall_velocities, context);
+  ::dataLoad(stream, checkpoint.num_exited, context);
+  ::dataLoad(stream, checkpoint.num_migrated, context);
+  ::dataLoad(stream, checkpoint.num_neighbor_list_builds, context);
+  ::dataLoad(stream, checkpoint.num_ghost_forwards, context);
+  ::dataLoad(stream, checkpoint.timestep_warned, context);
+  checkpoint.loaded = true;
+  // After setup (a restep or backup) restore at once; before it, initialSetup() will
+  if (checkpoint.cloud && checkpoint.cloud->isSetUp())
+    checkpoint.cloud->restore();
+}
+
+void
+KokkosParticleCloud::placeInitialParticles()
+{
+  // Each rank keeps the particles that start in one of its local elements
+  const auto & mesh = kokkosMesh();
+  std::vector<std::pair<int64_t, ContiguousElementID>> local;
+  for (const auto i : index_range(_initial_positions))
+  {
+    const auto * elem = (*_locator)(_initial_positions[i]);
+    if (elem && elem->processor_id() == processor_id())
+      local.emplace_back(i, mesh.getContiguousElementID(elem));
+  }
+
+  const auto n = local.size();
+  DEM::ParticleCloud::HostMirror host(n);
+  for (const auto j : make_range(n))
+  {
+    const auto [gid, cid] = local[j];
+    const Real radius = _initial_radii.size() ? _initial_radii[gid] : _radius;
+    const Real mass = _density * 4.0 / 3.0 * libMesh::pi * Utility::pow<3>(radius);
+    // Solid sphere
+    const Real inertia = 0.4 * mass * radius * radius;
+    host.gid(j) = gid;
+    for (const auto c : make_range(3))
+    {
+      host.x(j, c) = _initial_positions[gid](c);
+      host.v(j, c) = _initial_velocities.size() ? _initial_velocities[gid](c) : _initial_velocity(c);
+      host.omega(j, c) = _initial_angular_velocity(c);
+      host.f(j, c) = 0;
+      host.tau(j, c) = 0;
+    }
+    // Identity orientation
+    host.q(j, 0) = 1;
+    host.q(j, 1) = host.q(j, 2) = host.q(j, 3) = 0;
+    host.r(j) = radius;
+    host.m(j) = mass;
+    host.inertia(j) = inertia;
+    host.elem(j) = cid;
+    host.target_rank(j) = libMesh::DofObject::invalid_processor_id;
+    host.hops(j) = 0;
+  }
+  _cloud.allocate(n);
+  _cloud.copyFrom(host, 0);
+  _cloud.n = n;
+  allocateScratch(n);
 }
 
 void
@@ -1053,7 +1244,8 @@ bool
 KokkosParticleCloud::updateNeighborList()
 {
   // Both sides of a cross-rank pair must rebuild together
-  unsigned int stale = _neighbor_list.stale(_cloud, _cloud.size());
+  unsigned int stale = _force_rebuild || _neighbor_list.stale(_cloud, _cloud.size());
+  _force_rebuild = false;
   if (n_processors() > 1)
     _communicator.max(stale);
   if (!stale)

@@ -102,6 +102,12 @@ struct SidesetWalls
   void move(const std::vector<Point> & positions, const Real dt);
   /// Advance the vertices by their velocities over a substep
   void advance(const Real dt);
+  ///@{
+  /// Copy the vertex positions and velocities out to, and back in from, flat host vectors
+  /// (nine per face each), for checkpoints
+  void save(std::vector<Real> & positions, std::vector<Real> & velocities) const;
+  void load(const std::vector<Real> & positions, const std::vector<Real> & velocities);
+  ///@}
 
   /// Closest point of face f to x, and whether it is in the face's interior (not on an edge or
   /// vertex)

@@ -122,6 +122,17 @@ With `verify = true`, each step the device assignment is checked on host against
 Global scalars are exposed through [KokkosParticleCloudValue.md] and per-particle state through
 [KokkosParticleState.md].
 
+## Checkpoints and restart
+
+The cloud is restartable: a checkpoint holds its local particles (as migration records, with the
+libMesh ID of their element), its contact histories, the positions and velocities of moving
+sideset walls, and its cumulative counters, filled from the device when the checkpoint is written.
+On a restart or recovery the particles are placed back in their elements, the histories
+reinserted, and the neighbor list, ghosts, and forces rebuilt, so the run continues as if
+uninterrupted; a restep or backup restores the same way in place. The mesh, its partitioning, and
+the number of ranks must be those of the checkpoint (a particle whose element is not on its rank
+is an error). Particles unresolved at the checkpoint are located by the point locator.
+
 ## Checks
 
 At setup the cloud errors on a mesh it cannot handle: a face that is not planar (a vertex more

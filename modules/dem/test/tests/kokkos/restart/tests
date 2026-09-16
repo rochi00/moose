@@ -1,0 +1,30 @@
+[Tests]
+  design = 'KokkosParticleCloud.md'
+  issues = '#1'
+
+  # The sliding sphere of the friction tests, run to half its steps with a checkpoint, then
+  # restarted from it to the end: the particle, its wall contact history, and the counters come
+  # back from the checkpoint and the result matches the uninterrupted run
+  [half]
+    type = RunApp
+    input = ../friction/sliding_sphere.i
+    cli_args = 'Executioner/num_steps=5 Outputs/checkpoint=true Outputs/file_base=half'
+    recover = false
+    restep = false
+    requirement = 'The system shall write the particle cloud, its contact histories, and its counters to a checkpoint.'
+    capabilities = 'kokkos'
+  []
+  [restart]
+    type = CSVDiff
+    input = ../friction/sliding_sphere.i
+    # num_steps counts from the restart, so five more steps reach the end of the full run
+    cli_args = 'Problem/restart_file_base=../restart/half_cp/0005 Executioner/num_steps=5 Outputs/file_base=restarted'
+    csvdiff = restarted_state_0005.csv
+    rel_err = 1e-6
+    prereq = half
+    recover = false
+    restep = false
+    requirement = 'The system shall restart the particle cloud from a checkpoint, with its contact histories, and continue to the same result as the uninterrupted run, on any number of ranks.'
+    capabilities = 'kokkos'
+  []
+[]
