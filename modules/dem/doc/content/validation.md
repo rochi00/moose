@@ -42,3 +42,19 @@ with the no-slip and partial-slip springs differing only there.
 !media media/dem_oblique_impact_sweep.png
        caption=Rebound spin and tangential restitution against the impact angle for the two
                tangential springs, with the sliding-throughout solution.
+
+## Hertzian chain: Nesterenko's solitary wave
+
+`nesterenko` and `nesterenko_check.py`: sixty 10 mm steel beads (Y = 203 GPa, nu = 0.3,
+7780 kg/m3) barely touching in a line with the elastic Hertz contact; the first bead is set
+moving at 1 m/s and a single solitary wave forms and travels the chain (Nesterenko 1983; Job,
+Melo, Sokolow, and Sen 2008, Eq. 2). Measured from the bead velocities output every 2
+microseconds:
+
+- the wave speed at the amplitude the wave settles to (0.68 m/s) is within 0.8% of the long
+  wavelength solution $v = (6 / (5 \pi \rho \theta))^{2/5} V_m^{1/5}$, $\theta = 3 (1 - \nu^2) /
+  (4 Y)$, and is constant to 1e-5 along the chain, as is the amplitude: a genuine solitary wave;
+- the pulse spans 3.96 bead diameters at 1% of its peak against 3.95 for the $\cos^4$ profile of
+  characteristic length $R \sqrt{10}$ (whose full support is 5 diameters), while its half-maximum
+  width is 13% narrower than $\cos^4$: the continuum profile's neglected terms are of order
+  $(2R/\lambda)^5 = 10\%$, the discrete wave being sharper in its core (Chatterjee 1999).

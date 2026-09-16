@@ -67,4 +67,23 @@
     requirement = 'The system shall give the rebound spin (5/2) mu (1 + e_n) v_n / r and tangential velocity v_t - mu (1 + e_n) v_n of a sphere impacting a plane obliquely above the critical angle, where the contact slides throughout, in the setting of the Kharaz et al. (2001) experiment.'
     capabilities = 'kokkos'
   []
+  [nesterenko]
+    type = RunApp
+    input = nesterenko.i
+    recover = false
+    restep = false
+    requirement = 'The system shall propagate a solitary wave along a chain of sixty barely touching Hertzian beads launched by setting the first bead moving.'
+    capabilities = 'kokkos'
+  []
+  [nesterenko_check]
+    type = RunCommand
+    command = 'python3 nesterenko_check.py'
+    prereq = nesterenko
+    # Against Nesterenko's long wavelength solution (Job et al. 2008, Eq. 2): the wave speed at
+    # the measured amplitude to 0.8% (allowed 3%), constant to 1e-5 along the chain like the
+    # amplitude, the pulse width at 1% of its peak to 0.3% (allowed 10%), and the half-maximum
+    # width to 13% (allowed 15%, the cos^4 profile being the continuum approximation)
+    requirement = 'The system shall give the solitary wave the speed of Nesterenko\'s solution at its amplitude, v = (6 / (5 pi rho theta))^(2/5) V_m^(1/5), and the width of the cos^4 pulse of characteristic length R sqrt(10).'
+    capabilities = 'kokkos'
+  []
 []
