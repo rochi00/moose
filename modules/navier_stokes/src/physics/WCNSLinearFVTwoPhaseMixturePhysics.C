@@ -72,6 +72,21 @@ WCNSLinearFVTwoPhaseMixturePhysics::validParams()
                               "Friction model");
 
   params.addParam<MooseFunctorName>(
+      "interfacial_latent_heat",
+      "Latent heat of the transition the interfacial mass transfer represents, per unit mass. "
+      "Supplied together with 'interfacial_mass_transfer' to place the energy that transfer "
+      "carries into the energy equation. Available from a TwoPhaseFluidProperties object as "
+      "h_lat(p, T), which is why it is taken as a functor rather than a constant.");
+  params.addParam<MooseFunctorName>(
+      "interfacial_mass_transfer",
+      "Rate at which mass is transferred into the dispersed phase per unit mixture volume, the "
+      "Gamma of the dispersed phase mass balance. Positive generates the dispersed phase. It is "
+      "taken as a functor rather than computed here, so that the coupling can be exercised "
+      "independently of any closure for it. Note that no counterpart is needed in the mixture mass "
+      "or momentum equations: mass and momentum are conserved in the exchange, and the volume the "
+      "phase change creates reaches the pressure equation through the phase fraction, by way of "
+      "'add_mass_density_transient'.");
+  params.addParam<MooseFunctorName>(
       "phase_1_density_time_derivative",
       "Time derivative of the continuous phase density. Optional counterpart of "
       "'phase_2_density_time_derivative'. It is zero for every case reported so far, but the "
@@ -276,6 +291,13 @@ WCNSLinearFVTwoPhaseMixturePhysics::addFVKernels()
       getParam<bool>("add_mass_density_transient"))
     addMassDensityTransientTerm();
 
+  if (_add_phase_equation && isParamValid("interfacial_mass_transfer"))
+    addInterfacialMassTransferTerm();
+
+  if (_has_energy_equation && isParamValid("interfacial_mass_transfer") &&
+      isParamValid("interfacial_latent_heat"))
+    addLatentHeatTransferTerm();
+
   if (_fluid_energy_physics && _fluid_energy_physics->hasEnergyEquation() &&
       getParam<bool>("add_phase_change_energy_term"))
     addPhaseChangeEnergySource();
@@ -353,6 +375,49 @@ WCNSLinearFVTwoPhaseMixturePhysics::setRelativeVelocityParams(InputParameters & 
     params.set<MooseFunctorName>("v_slip") = "vel_slip_y";
   if (dimension() >= 3)
     params.set<MooseFunctorName>("w_slip") = "vel_slip_z";
+}
+
+void
+WCNSLinearFVTwoPhaseMixturePhysics::addLatentHeatTransferTerm()
+{
+  // Generating the dispersed phase absorbs its latent heat from the mixture, so the energy equation
+  // takes a sink of Gamma * h_lat, and a source of the same size when the transfer runs the other
+  // way. The reference formulation of Wu et al. carries this as -h'_l Gamma_g in a liquid phase
+  // enthalpy equation; the mixture form here is the same energy crossing the interface, written for
+  // the one energy equation this model solves.
+  //
+  // A caveat worth stating, and it is not about the choice of variable. Whether the equation is
+  // solved in temperature or in enthalpy, it is a single energy equation for the mixture, so the
+  // two phases are not thermally distinct and subcooled liquid cannot coexist with saturated
+  // vapour. What this term supports is a transfer at, or close to, thermal equilibrium. Subcooled
+  // boiling needs the energy equation rewritten for one phase with the other held at saturation,
+  // which is a change of formulation rather than of variable.
+  const auto latent_source = prefix() + "latent_heat_source";
+  {
+    auto params = getFactory().getValidParams("ParsedFunctorMaterial");
+    assignBlocks(params, _blocks);
+    params.set<std::string>("expression") = "gamma * h_lat";
+    params.set<std::vector<std::string>>("functor_names") = {
+        getParam<MooseFunctorName>("interfacial_mass_transfer"),
+        getParam<MooseFunctorName>("interfacial_latent_heat")};
+    params.set<std::vector<std::string>>("functor_symbols") = {"gamma", "h_lat"};
+    params.set<std::string>("property_name") = latent_source;
+    getProblem().addMaterial("ParsedFunctorMaterial", latent_source + "_mat", params);
+  }
+  {
+    auto params = getFactory().getValidParams("LinearFVSource");
+    assignBlocks(params, _blocks);
+    // The solved energy variable, not the temperature: with 'solve_for_enthalpy' the temperature
+    // is not a solver variable, and a source placed on it would target the wrong equation. The
+    // term itself is the same either way, a power per unit volume, because both forms of the
+    // energy equation carry their sources in those units.
+    params.set<LinearVariableName>("variable") =
+        _fluid_energy_physics->getFluidEnergyVariableName();
+    params.set<MooseFunctorName>("source_density") = latent_source;
+    // A sink: the energy leaves the mixture with the phase that is generated
+    params.set<MooseFunctorName>("scaling_factor") = "-1";
+    getProblem().addLinearFVKernel("LinearFVSource", prefix() + "latent_heat", params);
+  }
 }
 
 MooseFunctorName
@@ -459,6 +524,33 @@ WCNSLinearFVTwoPhaseMixturePhysics::buildMixtureDensityPressureDerivative()
 
   _built_drho_m_dp = true;
   return drho_m_dp;
+}
+
+void
+WCNSLinearFVTwoPhaseMixturePhysics::addInterfacialMassTransferTerm()
+{
+  // The dispersed phase mass balance is
+  //
+  //   d(rho_d alpha)/dt + div(rho_d alpha u_d) - div(rho_d D grad(alpha)) = Gamma ,
+  //
+  // so the transfer enters as a source on the right hand side of that equation and nowhere else in
+  // the mass or momentum equations: what leaves one phase enters the other, and the momentum goes
+  // with it. The volume the exchange creates, which is not zero because the phase densities differ,
+  // reaches the pressure equation through d(rho_m)/dt, since rho_m depends on the phase fraction
+  // this term is driving. That is why 'add_mass_density_transient' is a prerequisite for using this
+  // in a flowing case rather than an independent option.
+  //
+  // Gamma is supplied rather than closed here. Separating the coupling from the closure is
+  // deliberate: it lets the four-equation consistency be verified against a prescribed transfer
+  // rate with an analytic answer, before any correlation is written.
+  auto params = getFactory().getValidParams("LinearFVSource");
+  assignBlocks(params, _blocks);
+  params.set<LinearVariableName>("variable") = _phase_2_fraction_name;
+  params.set<MooseFunctorName>("source_density") =
+      getParam<MooseFunctorName>("interfacial_mass_transfer");
+  params.set<MooseFunctorName>("scaling_factor") = "1";
+  getProblem().addLinearFVKernel(
+      "LinearFVSource", prefix() + "interfacial_mass_transfer", params);
 }
 
 void
