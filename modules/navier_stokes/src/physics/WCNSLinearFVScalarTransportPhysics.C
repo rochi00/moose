@@ -129,6 +129,14 @@ WCNSLinearFVScalarTransportPhysics::addScalarAdvectionKernels()
   params.set<InterpolationMethodName>("advected_interp_method_name") = method_name;
   setSlipVelocityParams(params);
 
+  // The dispersed phase may only cross the boundaries the mixture itself crosses. Walls are
+  // excluded even when they carry a boundary condition on the advected variable.
+  auto slip_boundaries = _flow_equations_physics->getInletBoundaries();
+  const auto & outlet_boundaries = _flow_equations_physics->getOutletBoundaries();
+  slip_boundaries.insert(
+      slip_boundaries.end(), outlet_boundaries.begin(), outlet_boundaries.end());
+  params.set<std::vector<BoundaryName>>("slip_boundaries") = slip_boundaries;
+
   for (const auto & vname : _passive_scalar_names)
   {
     params.set<LinearVariableName>("variable") = vname;
