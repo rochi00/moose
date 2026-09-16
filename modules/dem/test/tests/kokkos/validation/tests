@@ -53,4 +53,18 @@
     requirement = 'The system shall give the restitution coefficient of the Kuwabara-Kono viscoelastic collision at a closing speed of 3 m/s, 0.661, so that 1 - e grows with the impact velocity.'
     capabilities = 'kokkos'
   []
+  [oblique_60]
+    type = CSVDiff
+    input = oblique_impact.i
+    cli_args = "UserObjects/cloud/initial_velocity='3.334197804570089 -1.9250000000000005 0' Outputs/file_base=oblique_60"
+    csvdiff = oblique_60_state_0003.csv
+    # 60 degrees is above the critical angle atan((7/2) mu (1 + e_n)) = 32.5 degrees, so the
+    # contact slides throughout and the rebound spin and tangential velocity are analytic; the
+    # Tsuji damping reproduces e_n = 0.98 to 1e-3. The positions depend on the moment of touch
+    # within the substep and are not compared
+    rel_err = 2e-3
+    ignore_columns = 'x y z'
+    requirement = 'The system shall give the rebound spin (5/2) mu (1 + e_n) v_n / r and tangential velocity v_t - mu (1 + e_n) v_n of a sphere impacting a plane obliquely above the critical angle, where the contact slides throughout, in the setting of the Kharaz et al. (2001) experiment.'
+    capabilities = 'kokkos'
+  []
 []
