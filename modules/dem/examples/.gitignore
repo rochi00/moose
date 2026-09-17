@@ -3,4 +3,5 @@
 *.csv
 *.e
 *.log
+*_cp/
 short/

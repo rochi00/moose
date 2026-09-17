@@ -29,4 +29,6 @@ protected:
   /// Force and torque, only with output_forces
   std::vector<VectorPostprocessorValue *> _f;
   std::vector<VectorPostprocessorValue *> _tau;
+  /// Radius, only with output_radius
+  VectorPostprocessorValue * _r = nullptr;
 };

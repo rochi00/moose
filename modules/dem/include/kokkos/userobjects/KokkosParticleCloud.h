@@ -1,5 +1,7 @@
 #pragma once
 
+#include <set>
+
 #include "KokkosGeneralUserObject.h"
 #include "ParticleCloud.h"
 #include "NeighborList.h"
@@ -249,6 +251,8 @@ protected:
   void checkTimestep();
   /// Whether the selected contact model applies any force
   bool contactEnabled() const;
+  /// Mass of a particle of a radius, of a sphere or a disk
+  Real particleMass(Real radius) const;
   /// Whether contacts need a history: friction or rolling resistance is on
   bool historyNeeded() const;
   /// Compute all forces: interior particles first, then the boundary ones once the ghost update
@@ -311,8 +315,12 @@ protected:
   const Real _radius;
   /// Optional per-particle radii
   const std::vector<Real> _initial_radii;
+  /// Indices of the initial particles that are frozen
+  const std::set<unsigned int> _initial_frozen;
   /// Particle density
   const Real _density;
+  /// Whether particles have the mass of disks (2D, LAMMPS) rather than spheres
+  const bool _disk_mass;
   /// Gravitational acceleration
   const RealVectorValue & _gravity;
   /// Normal contact models; the selected one is shared by sphere-sphere and sphere-wall contacts
@@ -386,6 +394,7 @@ protected:
   /// particle carried between steps, and the next global ID
   const std::vector<Point> _insertion_box;
   const Real _insertion_rate;
+  const std::vector<Real> _insertion_radius_range;
   const RealVectorValue & _insertion_velocity;
   const Real _insertion_start_time;
   const Real _insertion_end_time;

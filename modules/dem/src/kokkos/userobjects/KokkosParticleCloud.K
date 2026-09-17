@@ -30,6 +30,11 @@ KokkosParticleCloud::validParams()
   params.addParam<std::vector<Point>>(
       "initial_velocities",
       "Per-particle initial velocities overriding initial_velocity, one per initial position");
+  params.addParam<std::vector<unsigned int>>(
+      "initial_frozen",
+      {},
+      "Indices (into initial_positions) of particles that are frozen in place: never moved, "
+      "immovable obstacles to the others (LAMMPS fix freeze)");
   params.addParam<RealVectorValue>("initial_angular_velocity",
                                    RealVectorValue(0, 0, 0),
                                    "Initial body-frame angular velocity of every particle");
@@ -37,6 +42,11 @@ KokkosParticleCloud::validParams()
   params.addParam<std::vector<Real>>(
       "initial_radii", "Per-particle radii overriding radius, one per initial position");
   params.addRequiredRangeCheckedParam<Real>("density", "density > 0", "Particle density");
+  params.addParam<bool>("disk_mass",
+                        false,
+                        "Give the particles the mass of disks, density times pi r^2, as LAMMPS "
+                        "does in two dimensions (the moment of inertia stays 0.4 m r^2, as "
+                        "there); otherwise the mass of spheres");
   params.addParam<RealVectorValue>(
       "gravity", RealVectorValue(0, 0, 0), "Gravitational acceleration");
   params.addParam<MooseEnum>("contact_model",
@@ -55,7 +65,10 @@ KokkosParticleCloud::validParams()
                                     0,
                                     "tangential_stiffness >= 0",
                                     "Tangential spring stiffness of the linear spring-dashpot "
-                                    "contact; zero for frictionless contact");
+                                    "contact, zero for frictionless contact; with the Hertz "
+                                    "model, when given, the coefficient 8 G* of the Mindlin "
+                                    "stiffness 8 G* sqrt(r_eff overlap) in place of the one "
+                                    "from the elastic constants (LAMMPS's k_t)");
   params.addRangeCheckedParam<Real>("tangential_damping",
                                     0,
                                     "tangential_damping >= 0",
@@ -72,6 +85,11 @@ KokkosParticleCloud::validParams()
                         "Apply the tangential force at the contact plane, r_i - overlap / 2 "
                         "from the center, when computing the torque (LAMMPS pair granular); "
                         "otherwise at the undeformed radius");
+  params.addParam<bool>("mass_scaled_damping",
+                        false,
+                        "Multiply the linear model's normal_damping and tangential_damping by "
+                        "the effective mass of the contact, as LAMMPS's gran/* styles do with "
+                        "their gamma (a rate) rather than a dashpot coefficient");
   params.addParam<bool>("limit_damping",
                         false,
                         "Never let the normal damping make the normal force attractive: the "
@@ -128,6 +146,15 @@ KokkosParticleCloud::validParams()
       "velocity as 1 - e ~ v^(1/5)");
   params.addParam<std::vector<RealVectorValue>>(
       "wall_velocities", {}, "Translation velocity of each fixed planar wall, one per wall");
+  params.addParam<Point>("wall_rotation_center",
+                         Point(0, 0, 0),
+                         "Point on the axis about which the analytic walls rotate rigidly");
+  params.addParam<RealVectorValue>("wall_angular_velocity",
+                                   RealVectorValue(0, 0, 0),
+                                   "Angular velocity (axis times rate, in radians per unit "
+                                   "time) of the rigid rotation of all the analytic walls about "
+                                   "wall_rotation_center; the walls' points and normals turn "
+                                   "with it and their surface velocity includes it");
   params.addParam<std::vector<unsigned int>>(
       "servo_walls", {}, "Planar walls (by index) driven to a target normal force by a servo");
   params.addParam<std::vector<Real>>(
@@ -212,6 +239,12 @@ KokkosParticleCloud::validParams()
       "positions overlapping no particle, with the given radius and density");
   params.addRangeCheckedParam<Real>(
       "insertion_rate", 0, "insertion_rate >= 0", "Particles inserted per unit time");
+  params.addParam<std::vector<Real>>(
+      "insertion_radius_range",
+      {},
+      "Lower and upper radius of the inserted particles, drawn uniformly (LAMMPS fix pour "
+      "diam range); the upper one may not exceed radius. Every inserted particle has radius "
+      "when not given");
   params.addParam<RealVectorValue>(
       "insertion_velocity", RealVectorValue(0, 0, 0), "Velocity of the inserted particles");
   params.addParam<Real>("insertion_start_time", 0, "Time insertion starts");
@@ -255,14 +288,18 @@ KokkosParticleCloud::KokkosParticleCloud(const InputParameters & parameters)
     _radius(getParam<Real>("radius")),
     _initial_radii(isParamValid("initial_radii") ? getParam<std::vector<Real>>("initial_radii")
                                                  : std::vector<Real>()),
+    _initial_frozen(getParam<std::vector<unsigned int>>("initial_frozen").begin(),
+                    getParam<std::vector<unsigned int>>("initial_frozen").end()),
     _density(getParam<Real>("density")),
+    _disk_mass(getParam<bool>("disk_mass")),
     _gravity(getParam<RealVectorValue>("gravity")),
     _contact_model(getParam<MooseEnum>("contact_model").getEnum<ContactModel>()),
     _linear({getParam<Real>("normal_stiffness"),
              getParam<Real>("normal_damping"),
              getParam<Real>("tangential_stiffness"),
              getParam<Real>("tangential_damping"),
-             getParam<bool>("limit_damping")}),
+             getParam<bool>("limit_damping"),
+             getParam<bool>("mass_scaled_damping")}),
     _hertz(makeHertz()),
     _friction({getParam<Real>("friction"),
                getParam<bool>("partial_slip"),
@@ -302,6 +339,7 @@ KokkosParticleCloud::KokkosParticleCloud(const InputParameters & parameters)
     _allow_unresolved(getParam<bool>("allow_unresolved")),
     _insertion_box(getParam<std::vector<Point>>("insertion_box")),
     _insertion_rate(getParam<Real>("insertion_rate")),
+    _insertion_radius_range(getParam<std::vector<Real>>("insertion_radius_range")),
     _insertion_velocity(getParam<RealVectorValue>("insertion_velocity")),
     _insertion_start_time(getParam<Real>("insertion_start_time")),
     _insertion_end_time(getParam<Real>("insertion_end_time")),
@@ -316,6 +354,16 @@ KokkosParticleCloud::KokkosParticleCloud(const InputParameters & parameters)
   for (const auto r : _initial_radii)
     if (r <= 0)
       paramError("initial_radii", "Radii must be positive");
+  for (const auto i : _initial_frozen)
+    if (i >= _initial_positions.size())
+      paramError("initial_frozen", "Index ", i, " beyond the initial positions");
+  if (_insertion_radius_range.size() &&
+      (_insertion_radius_range.size() != 2 || _insertion_radius_range[0] <= 0 ||
+       _insertion_radius_range[1] < _insertion_radius_range[0] ||
+       _insertion_radius_range[1] > _radius))
+    paramError("insertion_radius_range",
+               "Two radii, positive, in order, and no larger than radius (the neighbor list is "
+               "sized by radius)");
   if (_initial_velocities.size() && _initial_velocities.size() != _initial_positions.size())
     paramError("initial_velocities", "Must have one entry per initial position");
   if (getParam<std::vector<Point>>("wall_points").size() !=
@@ -340,6 +388,8 @@ KokkosParticleCloud::KokkosParticleCloud(const InputParameters & parameters)
   if (_servo_walls.size() && (_servo_gain <= 0 || _servo_max_velocity <= 0))
     paramError("servo_gain", "Servo walls need a positive gain and maximum velocity");
   _walls.setVelocities(_wall_velocities);
+  _walls.setRotation(getParam<Point>("wall_rotation_center"),
+                     getParam<RealVectorValue>("wall_angular_velocity"));
   if (_insertion_box.size() && _insertion_box.size() != 2)
     paramError("insertion_box", "Two corners");
   if (_insertion_rate > 0 && _insertion_box.empty())
@@ -379,14 +429,22 @@ KokkosParticleCloud::makeHertz() const
   const Real log_e = std::log(e);
   const Real E = getParam<Real>("youngs_modulus"), nu = getParam<Real>("poissons_ratio");
   // Two bodies of the same material: E* = E / (2 (1 - nu^2)) and G* = G / (2 (2 - nu)) with
-  // G = E / (2 (1 + nu))
+  // G = E / (2 (1 + nu)); a given tangential_stiffness is 8 G* directly (LAMMPS's k_t)
+  const Real k_t = getParam<Real>("tangential_stiffness");
   return {E / (2 * (1 - nu * nu)),
           -log_e / std::sqrt(log_e * log_e + libMesh::pi * libMesh::pi),
-          E / (2 * (1 + nu)) / (2 * (2 - nu)),
+          k_t > 0 ? k_t / 8 : E / (2 * (1 + nu)) / (2 * (2 - nu)),
           getParam<Real>("dissipation_time"),
           getParam<bool>("limit_damping"),
           getParam<Real>("normal_damping"),
           getParam<Real>("tangential_damping")};
+}
+
+Real
+KokkosParticleCloud::particleMass(const Real radius) const
+{
+  return _disk_mass ? _density * libMesh::pi * radius * radius
+                    : _density * 4.0 / 3.0 * libMesh::pi * Utility::pow<3>(radius);
 }
 
 bool
@@ -473,6 +531,17 @@ KokkosParticleCloud::initialSetup()
   // a particle's reach of it
   if (_wall_boundaries.size())
   {
+    // A name the mesh does not know would otherwise be given a fresh, empty ID
+    const auto & boundary_info = _fe_problem.mesh().getMesh().get_boundary_info();
+    const auto known = boundary_info.get_boundary_ids();
+    for (const auto & name : _wall_boundaries)
+    {
+      const auto id = boundary_info.get_id_by_name(name);
+      const bool numeric = !name.empty() && std::all_of(name.begin(), name.end(), ::isdigit);
+      if (id == libMesh::BoundaryInfo::invalid_id &&
+          !(numeric && known.count(static_cast<BoundaryID>(std::stoi(name)))))
+        paramError("wall_boundaries", "The mesh has no boundary named '", name, "'");
+    }
     _sideset_walls.build(_fe_problem.mesh(),
                          _cid_to_elem,
                          mesh.getNumLocalElements(),
@@ -639,7 +708,7 @@ KokkosParticleCloud::restore()
 
   // Moving walls resume where they were, with the velocities they had, so the forces below
   // see the same relative velocities as before the checkpoint
-  if (checkpoint.analytic_wall_points.size() == 3 * _walls.n)
+  if (checkpoint.analytic_wall_points.size() == 6 * _walls.n)
     _walls.loadPoints(checkpoint.analytic_wall_points);
   if (_sideset_walls.n)
   {
@@ -741,7 +810,7 @@ KokkosParticleCloud::placeInitialParticles()
   {
     const auto [gid, cid] = local[j];
     const Real radius = _initial_radii.size() ? _initial_radii[gid] : _radius;
-    const Real mass = _density * 4.0 / 3.0 * libMesh::pi * Utility::pow<3>(radius);
+    const Real mass = particleMass(radius);
     // Solid sphere
     const Real inertia = 0.4 * mass * radius * radius;
     host.gid(j) = gid;
@@ -762,6 +831,7 @@ KokkosParticleCloud::placeInitialParticles()
     host.elem(j) = cid;
     host.target_rank(j) = libMesh::DofObject::invalid_processor_id;
     host.hops(j) = 0;
+    host.frozen(j) = _initial_frozen.count(gid) ? 1 : 0;
   }
   _cloud.allocate(n);
   _cloud.copyFrom(host, 0);
@@ -873,6 +943,7 @@ KokkosParticleCloud::insertParticles()
   };
   const auto dim = _fe_problem.mesh().dimension();
   std::vector<Point> accepted;
+  std::vector<Real> accepted_radii;
   for (unsigned int attempt = 0; attempt < 10 * wanted && accepted.size() < wanted; ++attempt)
   {
     Point p;
@@ -881,38 +952,48 @@ KokkosParticleCloud::insertParticles()
       const Real u = unit();
       p(c) = c < dim ? lower(c) + u * (upper(c) - lower(c)) : lower(c);
     }
+    const Real rp = _insertion_radius_range.size()
+                        ? _insertion_radius_range[0] +
+                              unit() * (_insertion_radius_range[1] - _insertion_radius_range[0])
+                        : radius;
     unsigned int overlaps = 0;
-    for (const auto & q : accepted)
-      overlaps = overlaps || (p - q).norm() < 2 * radius;
+    for (const auto k : index_range(accepted))
+      overlaps = overlaps || (p - accepted[k]).norm() < rp + accepted_radii[k];
     for (const auto e : make_range(near))
       overlaps = overlaps ||
                  (p - Point(existing(e, 0), existing(e, 1), existing(e, 2))).norm() <
-                     radius + existing(e, 3);
+                     rp + existing(e, 3);
     _communicator.max(overlaps);
     if (!overlaps)
+    {
       accepted.push_back(p);
+      accepted_radii.push_back(rp);
+    }
   }
   _insertion_carry -= accepted.size();
 
   // Each rank keeps the accepted particles that lie in its elements
   std::vector<std::pair<Point, ContiguousElementID>> mine;
   std::vector<int64_t> gids;
-  for (const auto & p : accepted)
+  std::vector<Real> radii;
+  for (const auto k : index_range(accepted))
   {
-    const auto * elem = (*_locator)(p);
+    const auto * elem = (*_locator)(accepted[k]);
     if (elem && elem->processor_id() == processor_id())
     {
-      mine.emplace_back(p, mesh.getContiguousElementID(elem));
+      mine.emplace_back(accepted[k], mesh.getContiguousElementID(elem));
       gids.push_back(_next_gid);
+      radii.push_back(accepted_radii[k]);
     }
     ++_next_gid;
   }
   if (mine.empty())
     return;
   DEM::ParticleCloud::HostMirror host(mine.size());
-  const Real mass = _density * 4.0 / 3.0 * libMesh::pi * Utility::pow<3>(radius);
   for (const auto j : index_range(mine))
   {
+    const Real radius = radii[j];
+    const Real mass = particleMass(radius);
     host.gid(j) = gids[j];
     for (const auto c : make_range(3))
     {
@@ -930,6 +1011,7 @@ KokkosParticleCloud::insertParticles()
     host.elem(j) = mine[j].second;
     host.target_rank(j) = libMesh::DofObject::invalid_processor_id;
     host.hops(j) = 0;
+    host.frozen(j) = 0;
   }
   appendParticles(host, mine.size());
 }
@@ -1000,7 +1082,7 @@ KokkosParticleCloud::checkTimestep()
   const Real r_min = _initial_radii.size()
                          ? *std::min_element(_initial_radii.begin(), _initial_radii.end())
                          : _radius;
-  const Real m_min = _density * 4.0 / 3.0 * libMesh::pi * Utility::pow<3>(r_min);
+  const Real m_min = particleMass(r_min);
   // A pair of the smallest particles has the shortest contact time
   const Real m_eff = m_min / 2, r_eff = r_min / 2;
   std::vector<std::pair<std::string, Real>> scales;
@@ -1435,7 +1517,7 @@ KokkosParticleCloud::kickDrift()
 
   ::Kokkos::parallel_for(
       "dem_kick_drift", cloud.size(), KOKKOS_LAMBDA(const std::size_t i) {
-        if (cloud.elem(i) == exited)
+        if (cloud.elem(i) == exited || cloud.frozen(i))
           return;
         const Real half_dt_over_m = 0.5 * dt / cloud.m(i);
         const Real half_dt_over_I = 0.5 * dt / cloud.inertia(i);
@@ -1481,7 +1563,7 @@ KokkosParticleCloud::kick()
 
   ::Kokkos::parallel_for(
       "dem_kick", cloud.size(), KOKKOS_LAMBDA(const std::size_t i) {
-        if (cloud.elem(i) == exited)
+        if (cloud.elem(i) == exited || cloud.frozen(i))
           return;
         auto v = libMesh::Kokkos::make_vector_ref(cloud.v, i);
         auto omega = libMesh::Kokkos::make_vector_ref(cloud.omega, i);

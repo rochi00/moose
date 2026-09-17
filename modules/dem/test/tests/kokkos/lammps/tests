@@ -92,4 +92,27 @@
     requirement = 'The system shall reproduce, to roundoff, the LAMMPS fix wall/gran hooke/history trajectory of a spinning sphere striking a plane obliquely through the loaded phase of the contact.'
     capabilities = 'kokkos'
   []
+  [sync_verlet]
+    type = CSVDiff
+    input = sync_verlet.i
+    csvdiff = 'sync_verlet_out_state_0001.csv sync_verlet_out_state_0002.csv sync_verlet_out_state_0003.csv sync_verlet_out_state_0004.csv sync_verlet_out_state_0005.csv'
+    # LAMMPS examples/granular/in.sync_verlet (plain Verlet, limit_damping): a 0.5 mm sphere
+    # dropped onto two frozen 10 mm spheres, rolling in their crevice for 0.3 s; positions to
+    # 2e-16 m, spins to 1e-10 rad/s
+    rel_err = 1e-8
+    abs_zero = 1e-10
+    requirement = 'The system shall hold frozen particles in place as immovable obstacles and reproduce, to roundoff, the LAMMPS trajectory of a small sphere dropped onto two frozen large ones.'
+    capabilities = 'kokkos'
+  []
+  [wall_rotating]
+    type = CSVDiff
+    input = wall_rotating.i
+    csvdiff = 'wall_rotating_out_state_0001.csv wall_rotating_out_state_0002.csv wall_rotating_out_state_0003.csv wall_rotating_out_state_0004.csv'
+    # LAMMPS fix wall/gran/region with a rotating cubic region (examples/granregion): a sphere
+    # dragged around the floor by the turning container; positions to 4e-14 over 10 time units
+    rel_err = 1e-9
+    abs_zero = 1e-12
+    requirement = 'The system shall rotate its analytic walls rigidly about an axis, their surface velocity included in the contacts, and reproduce, to roundoff, the LAMMPS trajectory of a sphere dragged around by a turning container.'
+    capabilities = 'kokkos'
+  []
 []

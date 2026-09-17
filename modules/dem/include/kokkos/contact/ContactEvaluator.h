@@ -50,7 +50,7 @@ struct ContactEvaluator
                 Moose::Kokkos::Real3(cloud.v(j, 0), cloud.v(j, 1), cloud.v(j, 2)),
                 Moose::Kokkos::Real3(cloud.omega(j, 0), cloud.omega(j, 1), cloud.omega(j, 2)),
                 cloud.r(j),
-                cloud.m(j));
+                cloud.frozen(j) ? 1e30 * cloud.m(j) : cloud.m(j));
     if (deformed_torque_arm)
       c.arm = cloud.r(i) - 0.5 * overlap;
     return true;
@@ -146,7 +146,7 @@ struct ContactEvaluator
                 Moose::Kokkos::Real3(cloud.omega(i, 0), cloud.omega(i, 1), cloud.omega(i, 2)),
                 cloud.r(i),
                 cloud.m(i),
-                walls.velocity(w),
+                walls.velocity(w, xi - (cloud.r(i) - overlap) * walls.normal(w)),
                 Moose::Kokkos::Real3(0),
                 0,
                 0);

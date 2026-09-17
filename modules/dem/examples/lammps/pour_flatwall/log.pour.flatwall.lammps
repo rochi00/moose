@@ -1,0 +1,140 @@
+LAMMPS (22 Jul 2025 - Update 5)
+OMP_NUM_THREADS environment is not set. Defaulting to 1 thread.
+  using 1 OpenMP thread(s) per MPI task
+# LAMMPS examples/granular/in.pour.flatwall reduced to what the module represents: one material
+# everywhere (the original's floor model, hertz/material 1e5 1e3 0.3 with the default
+# viscoelastic damping, Mindlin NULL 1.0 0.5, plus the type-1 rolling sds 500 200 0.5, no
+# twisting) and one block insertion region in place of the two cylinders. Run with
+#   lmp -in in.pour.flatwall
+atom_style      sphere
+units           lj
+variable        boxx equal 20
+variable        boxy equal 20
+variable        boxz equal 30
+variable        dens equal 1.0
+region          boxreg block 0 ${boxx} 0 ${boxy} 0 ${boxz}
+region          boxreg block 0 20 0 ${boxy} 0 ${boxz}
+region          boxreg block 0 20 0 20 0 ${boxz}
+region          boxreg block 0 20 0 20 0 30
+create_box      1 boxreg
+Created orthogonal box = (0 0 0) to (20 20 30)
+  1 by 1 by 1 MPI processor grid
+change_box      all boundary p p f
+Changing box ...
+pair_style      granular
+pair_coeff      * * hertz/material 1e5 1e3 0.3 tangential mindlin NULL 1.0 0.5 rolling sds 500.0 200.0 0.5
+comm_modify     vel yes
+region          insreg block 1 19 5 15 15 30
+fix             1 all nve/sphere
+fix             grav all gravity 10.0 vector 0 0 -1
+fix             ins all pour 3000 1 3123 region insreg diam range 0.5 1.0 dens ${dens} ${dens}
+fix             ins all pour 3000 1 3123 region insreg diam range 0.5 1.0 dens 1 ${dens}
+fix             ins all pour 3000 1 3123 region insreg diam range 0.5 1.0 dens 1 1
+neighbor        0.15 bin
+neigh_modify    delay 0 every 1 check yes
+fix             3 all wall/gran granular hertz/material 1e5 1e3 0.3 tangential mindlin NULL 1.0 0.5 rolling sds 500.0 200.0 0.5 zplane 0 NULL
+compute         kea all ke/atom
+compute         ke all reduce sum c_kea
+compute         erot all erotate/sphere
+variable        zmax equal bound(all,zmax)
+thermo_style    custom step atoms c_ke c_erot v_zmax
+thermo_modify   lost warn norm no
+thermo          100
+timestep        0.001
+run             5000
+Generated 0 of 0 mixed pair_coeff terms from geometric mixing rule
+Particle insertion: 1289 every 1732 steps, 3000 by step 3465
+Neighbor list info ...
+  update: every = 1 steps, delay = 0 steps, check = yes
+  max neighbors/atom: 2000, page size: 100000
+  master list distance cutoff = 1.15
+  ghost atom cutoff = 1.15
+  binsize = 0.575, bins = 35 35 53
+  1 neighbor lists, perpetual/occasional/extra = 1 0 0
+  (1) pair granular, perpetual
+      attributes: half, newton on, size, history
+      pair build: half/size/bin/atomonly/newton
+      stencil: half/bin/3d
+      bin: standard
+Per MPI rank memory allocation (min/avg/max) = 10.7 | 10.7 | 10.7 Mbytes
+   Step        Atoms         c_ke          c_erot         v_zmax    
+         0           0   0              0             -1e+20        
+WARNING: Fewer insertions than requested (src/GRANULAR/fix_pour.cpp:691)
+       100        1111   17122.074      0              29.950441    
+       200        1111   19965.617      0              29.800881    
+       300        1111   23081.499      0              29.551321    
+       400        1111   26469.722      0              29.201762    
+       500        1111   30130.284      0              28.752202    
+       600        1111   34063.187      0              28.202642    
+       700        1111   38264.895      0              27.553082    
+       800        1111   37129.864      86.320082      26.803522    
+       900        1111   35094.086      382.27919      25.953963    
+      1000        1111   33944.187      521.43762      25.004403    
+      1100        1111   32924.224      619.27172      23.954843    
+      1200        1111   30385.261      685.94767      22.805283    
+      1300        1111   29727.509      737.47355      21.555724    
+      1400        1111   28659.075      767.23301      20.206164    
+      1500        1111   27182.328      767.54536      18.756604    
+      1600        1111   25739.986      742.50761      17.207044    
+      1700        1111   23474.617      786.53275      15.557485    
+WARNING: Fewer insertions than requested (src/GRANULAR/fix_pour.cpp:691)
+      1800        2276   37605.587      800.91815      29.976854    
+      1900        2276   38043.949      684.79268      29.858809    
+      2000        2276   38979.075      722.86475      29.640764    
+      2100        2276   39008.716      703.98349      29.32272     
+      2200        2276   39762.498      691.90311      28.904675    
+      2300        2276   39482.113      684.44714      28.38663     
+      2400        2276   38901.683      673.82666      27.768586    
+      2500        2276   37752.287      677.3561       27.050541    
+      2600        2276   37015.897      674.37712      26.232496    
+      2700        2276   36605.093      626.52483      25.314452    
+      2800        2276   35698.402      626.58733      24.296407    
+      2900        2276   34910.09       609.92934      23.178362    
+      3000        2276   33420.64       639.86176      21.960318    
+      3100        2276   30606.742      633.36935      20.642273    
+      3200        2276   27914.611      647.59089      19.224228    
+      3300        2276   24775.237      642.68286      17.706184    
+      3400        2276   22059.495      579.26684      16.088139    
+      3500        3000   28822.423      546.26464      29.989492    
+      3600        3000   27455.281      567.13288      29.893534    
+      3700        3000   26422.152      544.92073      29.697575    
+      3800        3000   24791.247      534.02284      29.401616    
+      3900        3000   23596.783      492.52728      29.005657    
+      4000        3000   22561.025      490.15001      28.509698    
+      4100        3000   21326.107      468.94765      27.91374     
+      4200        3000   21157.64       402.97291      27.217781    
+      4300        3000   21007.418      397.76824      26.421822    
+      4400        3000   20687.258      366.4822       25.525863    
+      4500        3000   19810.909      339.03048      24.529904    
+      4600        3000   19639.182      336.89014      23.433946    
+      4700        3000   19140.276      325.44523      22.237987    
+      4800        3000   18816.271      328.10299      20.942028    
+      4900        3000   18141.592      323.82973      19.546069    
+      5000        3000   16663.672      357.49712      18.05011     
+Loop time of 1.91174 on 1 procs for 5000 steps with 3000 atoms
+
+Performance: 225972.043 tau/day, 2615.417 timesteps/s, 7.846 Matom-step/s
+99.9% CPU use with 1 MPI tasks x 1 OpenMP threads
+
+MPI task timing breakdown:
+Section |  min time  |  avg time  |  max time  |%varavg| %total
+---------------------------------------------------------------
+Pair    | 0.52606    | 0.52606    | 0.52606    |   0.0 | 27.52
+Neigh   | 0.40876    | 0.40876    | 0.40876    |   0.0 | 21.38
+Comm    | 0.02226    | 0.02226    | 0.02226    |   0.0 |  1.16
+Output  | 0.00048425 | 0.00048425 | 0.00048425 |   0.0 |  0.03
+Modify  | 0.93858    | 0.93858    | 0.93858    |   0.0 | 49.10
+Other   |            | 0.0156     |            |       |  0.82
+
+Nlocal:           3000 ave        3000 max        3000 min
+Histogram: 1 0 0 0 0 0 0 0 0 0
+Nghost:            558 ave         558 max         558 min
+Histogram: 1 0 0 0 0 0 0 0 0 0
+Neighs:           9443 ave        9443 max        9443 min
+Histogram: 1 0 0 0 0 0 0 0 0 0
+
+Total # of neighbors = 9443
+Ave neighs/atom = 3.1476667
+Neighbor list builds = 1450
+Dangerous builds = 0
+Total wall time: 0:00:01

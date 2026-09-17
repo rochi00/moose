@@ -14,4 +14,14 @@
     requirement = 'The system shall insert particles at the given rate at random positions that overlap no particle, the same on any number of ranks, and remove those reaching the outflow box.'
     capabilities = 'kokkos'
   []
+  [pour_polydisperse]
+    type = CSVDiff
+    input = pour.i
+    cli_args = 'Executioner/num_steps=30 UserObjects/cloud/insertion_radius_range="0.003 0.005" Outputs/file_base=pour_poly_out'
+    csvdiff = pour_poly_out.csv
+    # As above with radii drawn uniformly between 3 and 5 mm (LAMMPS fix pour diam range)
+    ignore_columns = 'floor num_contacts'
+    requirement = 'The system shall insert particles with radii drawn uniformly from a given range, the same on any number of ranks.'
+    capabilities = 'kokkos'
+  []
 []

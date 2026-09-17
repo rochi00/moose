@@ -1,0 +1,32 @@
+# LAMMPS examples/granular/in.sync_verlet with a dump of the fine particle: a 0.5 mm sphere
+# falls onto two frozen 10 mm spheres (hooke + linear_history, damping coeff_restitution). The
+# variable 'variant' selects the original (synchronized_verlet, no limit_damping) or the plain
+# Verlet with limit_damping that the module's conventions match
+variable        variant index original
+units	        si
+atom_style	sphere
+newton off
+boundary   	p p f
+read_data       3ps.dat
+group           ps type 1
+group           fine type 2
+pair_style granular
+if "${variant} == original" then &
+  "pair_coeff * * hooke 1e4 0.5 tangential linear_history 8235 0 0.5 damping coeff_restitution synchronized_verlet" &
+else &
+  "pair_coeff * * hooke 1e4 0.5 tangential linear_history 8235 0 0.5 damping coeff_restitution limit_damping"
+timestep        1e-6
+fix             frz ps freeze
+fix             g fine gravity 9.81 vector 0 0 -1
+fix             1 fine nve/sphere
+if "${variant} == original" then &
+  "fix 2 all wall/gran granular hooke 1e4 0.5 tangential linear_history 8235 0 0.5 damping coeff_restitution zplane $(zlo) $(zhi)" &
+else &
+  "fix 2 all wall/gran granular hooke 1e4 0.5 tangential linear_history 8235 0 0.5 damping coeff_restitution limit_damping zplane $(zlo) $(zhi)"
+comm_modify     vel yes
+thermo          3000
+thermo_style    custom step ke
+dump 1 fine custom 3000 dump.sync_verlet id x y z vx vy vz omegax omegay omegaz
+dump_modify 1 format float %.17g
+run_style       verlet
+run             300000

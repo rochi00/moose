@@ -117,6 +117,39 @@ depended on how the substeps were grouped into steps at the order of the dashpot
 the substep. The last substep's forces now travel with the particles (and into checkpoints),
 and the end-of-step recompute serves the outputs only (`friction/oblique_impact_regroup`).
 
+## LAMMPS examples (`examples/lammps/`)
+
+The LAMMPS granular examples that pour spheres with `fix pour` are statistical (their
+insertion is random), so they are compared as bulk quantities against LAMMPS logs rather than
+as trajectories. Each directory holds the LAMMPS input as run (the shipped one, or a variant
+reduced to what the module represents, run locally with LAMMPS 22 Jul 2025), its log, and a
+`run.py` that generates the module's inputs, runs them (8 ranks, seconds to minutes), and
+compares. LAMMPS drops spheres in batches; the module inserts the same number at the
+equivalent steady rate, so the pouring transients differ in shape while the counts, the
+energies once the beds settle, and the flows afterwards are compared.
+
+| example | what is compared | result |
+|---|---|---|
+| `pour` (examples/pour/in.pour): 3000 spheres poured onto a floor, then gravity tilted to a 26-degree chute; `gran/hooke/history`, `mass_scaled_damping`; stage 2 restarts from stage 1's checkpoint | the bed's acceleration down the chute (its friction 0.5 barely holds tan 26 = 0.49, so the bed creeps by rolling), from the kinetic energy over the last 15 time units | 0.185-0.200 in the module's realizations against LAMMPS's 0.198; kinetic energy at the end 18,900 vs 19,144; the module's bed spins more (rotational energy 250 vs 67) |
+| `pour_2d` (examples/pour/in.pour.2d): 1000 disks of diameter 0.5-1 (`disk_mass`, `insertion_radius_range`) poured into a 2D box, `gran/hertz/history` with `tangential_stiffness` as LAMMPS's k_t | count and energies over the pour and the settling | both beds settled by t = 25 (kinetic energy 7 vs 10 against a peak of thousands) |
+| `pour_flatwall` (examples/granular/in.pour.flatwall, reduced to its floor material everywhere: `hertz/material`, viscoelastic damping, `mindlin`, `rolling sds`; the JKR type, twisting, and the cylindrical insertion regions are not represented) | count, energies, and bed height over 5 time units | same peak kinetic energy (39,000 vs 35,000) and rotational energy; the module's bed settles earlier |
+| `granregion_box` (examples/granregion/in.granregion.box): 100 spheres in a cubic container that turns twice about z, rests, turns twice about (1, 1, 1), rests; six analytic walls with `wall_angular_velocity`, five restarted stages | mean kinetic energy while the container turns | 193 vs 197 about z; 298 vs 284 about the diagonal. LAMMPS's `region ... rotate` scales the wall velocity by the axis vector as given (region.cpp, `set_velocity`) while it rotates the geometry about the unit axis, so its walls push sqrt(3) times too fast for the axis `1 1 1`: the reference was run with the unit axis, and a sphere in the turning cube then follows LAMMPS to roundoff until the first attractive contact (the Coulomb-cap convention) |
+| `granregion_funnel` (examples/granregion/in.granregion.funnel): 2000 spheres of radius 0.25-0.5 dropped into a cone over a closed tube, settled, then drained; the funnel is a cylinder mesh whose radius follows the cone (`ParsedNodeTransformGenerator`), with three stages handing the bed over through the particle state | the discharge once the initial burst has passed | 36 spheres per unit time against LAMMPS's 35 (LAMMPS counts a sphere 20 units below the orifice, the module at it) |
+| `sync_verlet` (examples/granular/in.sync_verlet), a test under `kokkos/lammps` | the trajectory of a 0.5 mm sphere dropped onto two frozen 10 mm spheres (`initial_frozen`) | roundoff (2e-16 m) against LAMMPS's plain Verlet; LAMMPS's `synchronized_verlet` variant differs in its second history projection, and the trajectory is sensitive enough that the shipped log and a current LAMMPS run part too |
+
+The reductions needed for `pour_flatwall` (one material, no JKR or twisting) and the tube walls
+given the pair style in `granregion_box` are the module's single material per cloud; the
+examples with heat conduction (`in.pour.heat`), the MDR plastic model (`in.tableting`,
+`in.triaxial.compaction`), rigid molecules (`in.pour.2d.molecule`), rotating sideset walls
+(`in.pour.drum`, `in.granregion.mixer`, the `gransurf` screw feeder), and the bonded-particle
+examples are not covered.
+
+!media media/dem_lammps_pour.png style=width:80% caption=examples/pour: kinetic energy and count of spheres against LAMMPS.
+
+!media media/dem_lammps_granregion_box.png style=width:60% caption=examples/granregion/in.granregion.box: kinetic energy through the five stages.
+
+!media media/dem_lammps_granregion_funnel.png style=width:80% caption=examples/granregion/in.granregion.funnel: kinetic energy, and the discharge from the first departure.
+
 ## Dense-flow benchmarks (`examples/`)
 
 The Tier 2 cases below are run by scripts under `modules/dem/examples/` that generate the

@@ -38,8 +38,8 @@
   [wall_contact_overflow]
     type = RunException
     input = ../walls/floor.i
-    cli_args = 'Mesh/gen/nx=40000 Executioner/num_steps=2 Outputs/csv=false'
-    expect_err = 'more than 16 candidate sideset wall contacts'
+    cli_args = 'Mesh/gen/nx=80000 Executioner/num_steps=2 Outputs/csv=false'
+    expect_err = 'more than 32 candidate sideset wall contacts'
     max_parallel = 1
     requirement = 'The system shall report a particle touching more sideset wall faces at once than it can evaluate, rather than dropping contacts.'
     capabilities = 'kokkos'

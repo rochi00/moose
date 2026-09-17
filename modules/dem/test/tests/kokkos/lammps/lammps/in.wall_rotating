@@ -1,0 +1,21 @@
+# fix wall/gran/region with a rotating block region: a sphere resting on the floor of a cube
+# turning about the vertical axis is dragged around by friction (gran/hooke/history)
+units		lj
+atom_style      sphere
+boundary        f f f
+comm_modify     vel yes
+region          box block -11 11 -11 11 -11 11 units box
+create_box      1 box
+create_atoms    1 single 3.0 0.0 -5.5
+set             atom 1 diameter 1.0 density 1.0
+pair_style	gran/hooke/history 4000.0 NULL 100.0 NULL 0.5 1
+pair_coeff	* *
+variable        theta equal step*(4.0*PI/5000)
+region          container block -6 6 -6 6 -6 6 units box rotate v_theta 0 0 0 0 0 1
+fix		container all wall/gran/region hooke/history 4000.0 NULL 100.0 NULL 0.5 1 region container
+fix             2 all nve/sphere
+fix		3 all gravity 1.0 vector 0 0 -1
+timestep	0.005
+dump 1 all custom 100 dump.wall_rotating id x y z vx vy vz omegax omegay omegaz
+dump_modify 1 format float %.17g
+run	        2000

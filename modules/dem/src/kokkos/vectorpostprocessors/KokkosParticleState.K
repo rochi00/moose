@@ -12,6 +12,7 @@ KokkosParticleState::validParams()
   params.addRequiredParam<UserObjectName>("cloud", "The KokkosParticleCloud to output");
   params.addParam<bool>(
       "output_forces", false, "Also output the force and body-frame torque on every particle");
+  params.addParam<bool>("output_radius", false, "Also output the radius of every particle");
   return params;
 }
 
@@ -28,6 +29,8 @@ KokkosParticleState::KokkosParticleState(const InputParameters & parameters)
     _f = {&declareVector("fx"), &declareVector("fy"), &declareVector("fz")};
     _tau = {&declareVector("taux"), &declareVector("tauy"), &declareVector("tauz")};
   }
+  if (getParam<bool>("output_radius"))
+    _r = &declareVector("r");
 }
 
 void
@@ -41,6 +44,9 @@ KokkosParticleState::compute()
   auto omega = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, cloud.omega);
   auto f = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, cloud.f_out);
   auto tau = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, cloud.tau_out);
+  auto r = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, cloud.r);
+  if (_r)
+    _r->resize(n);
 
   _gid.resize(n);
   for (const auto c : make_range(3))
@@ -57,6 +63,8 @@ KokkosParticleState::compute()
   for (const auto i : make_range(n))
   {
     _gid[i] = gid(i);
+    if (_r)
+      (*_r)[i] = r(i);
     for (const auto c : make_range(3))
     {
       (*_x[c])[i] = x(i, c);
@@ -75,6 +83,8 @@ void
 KokkosParticleState::finalize()
 {
   _communicator.gather(0, _gid);
+  if (_r)
+    _communicator.gather(0, *_r);
   for (const auto c : make_range(3))
   {
     _communicator.gather(0, *_x[c]);
@@ -99,6 +109,8 @@ KokkosParticleState::finalize()
     values.swap(sorted);
   };
   permute(_gid);
+  if (_r)
+    permute(*_r);
   for (const auto c : make_range(3))
   {
     permute(*_x[c]);

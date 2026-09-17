@@ -96,3 +96,23 @@ with open(os.path.join(here, "gold", f"restitution_limit_out_state_{num_steps:04
     f.write("gid,vx,vy,vz,wx,wy,wz,x,y,z\n")
     for gid, sign in ((0, 1), (1, -1)):
         f.write(f"{gid},{-sign * e_limit * v0:.17g},0,0,0,0,0,{sign * xA:.17g},0.5,0\n")
+
+# restitution_disk.i: the same collision with disk masses (density times pi r^2, LAMMPS's 2D
+# convention): the damping ratio and contact time follow the lighter effective mass
+m_disk = rho * math.pi * r**2
+omega0 = math.sqrt(k / (m_disk / 2))
+zeta = gamma / (2 * math.sqrt(k * m_disk / 2))
+omega_d = omega0 * math.sqrt(1 - zeta**2)
+e_disk = math.exp(-zeta * math.pi / math.sqrt(1 - zeta**2))
+t_touch = (x0 - r) / v0
+t_contact = math.pi / omega_d
+print(f"disk masses: m = {m_disk:.6f}, restitution e = {e_disk:.9f}, contact duration = {t_contact:.6e} s")
+# The heavier disks (7.85 kg against the spheres' 0.52) touch for 19.7 ms, past the 20 ms of
+# the other cases, so this one runs 8 steps
+T_disk = 8 * dt
+assert T_disk > t_touch + t_contact
+xA = -r - e_disk * v0 * (T_disk - t_touch - t_contact)
+with open(os.path.join(here, "gold", "restitution_disk_out_state_0008.csv"), "w") as f:
+    f.write("gid,vx,vy,vz,wx,wy,wz,x,y,z\n")
+    for gid, sign in ((0, 1), (1, -1)):
+        f.write(f"{gid},{-sign * e_disk * v0:.17g},0,0,0,0,0,{sign * xA:.17g},0.5,0\n")

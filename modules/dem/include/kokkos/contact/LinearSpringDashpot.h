@@ -30,6 +30,9 @@ struct LinearSpringDashpot
   /// Whether the dashpot may only reduce the repulsion, never make the normal force attractive
   /// (LAMMPS's limit_damping)
   bool limit_damping = false;
+  /// Whether the dashpot coefficients multiply the effective mass of the pair (LAMMPS gran/*
+  /// styles, whose gamma has units of 1/time)
+  bool mass_scaled = false;
 
   /// Whether the model applies any force
   bool enabled() const { return stiffness > 0; }
@@ -46,9 +49,10 @@ struct LinearSpringDashpot
   KOKKOS_INLINE_FUNCTION Real normalForce(const Real overlap,
                                           const Real normal_velocity,
                                           const Real /*r_eff*/,
-                                          const Real /*m_eff*/) const
+                                          const Real m_eff) const
   {
-    const Real f_n = stiffness * overlap - damping * normal_velocity;
+    const Real f_n =
+        stiffness * overlap - damping * (mass_scaled ? m_eff : 1) * normal_velocity;
     return limit_damping && f_n < 0 ? 0 : f_n;
   }
 
@@ -67,9 +71,9 @@ struct LinearSpringDashpot
   }
   KOKKOS_INLINE_FUNCTION Real tangentialDamping(const Real /*overlap*/,
                                                 const Real /*r_eff*/,
-                                                const Real /*m_eff*/) const
+                                                const Real m_eff) const
   {
-    return tangential_damping;
+    return tangential_damping * (mass_scaled ? m_eff : 1);
   }
   ///@}
 };

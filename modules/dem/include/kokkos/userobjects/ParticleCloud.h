@@ -65,6 +65,8 @@ struct ParticleCloud
   ::Kokkos::View<processor_id_type *> target_rank;
   /// Number of face-neighbor hops the tracker took for this particle in the current step
   ::Kokkos::View<unsigned int *> hops;
+  /// Nonzero for a frozen particle: never integrated, an immovable obstacle to the others
+  ::Kokkos::View<unsigned char *> frozen;
 
   /// Number of live particles; entries [n, capacity()) are unused
   std::size_t n = 0;
@@ -92,6 +94,7 @@ struct ParticleCloud
     elem = ::Kokkos::View<ContiguousElementID *>("dem_elem", capacity);
     target_rank = ::Kokkos::View<processor_id_type *>("dem_target_rank", capacity);
     hops = ::Kokkos::View<unsigned int *>("dem_hops", capacity);
+    frozen = ::Kokkos::View<unsigned char *>("dem_frozen", capacity);
     n = 0;
   }
 
@@ -117,11 +120,12 @@ struct ParticleCloud
     elem(j) = other.elem(i);
     target_rank(j) = other.target_rank(i);
     hops(j) = other.hops(i);
+    frozen(j) = other.frozen(i);
   }
 
   /// Number of Reals a particle is packed into for migration: gid, x, v, omega, q, r, m, inertia,
-  /// hops, f, tau, and the libMesh ID of its element
-  static constexpr std::size_t record_size = 25;
+  /// hops, f, tau, the frozen flag, and the libMesh ID of its element
+  static constexpr std::size_t record_size = 26;
 
   /// Pack particle i into a migration record, with its element given as a libMesh ID
   KOKKOS_INLINE_FUNCTION void pack(const std::size_t i,
@@ -146,7 +150,8 @@ struct ParticleCloud
       record[18 + c] = f(i, c);
       record[21 + c] = tau(i, c);
     }
-    record[24] = libmesh_elem_id;
+    record[24] = frozen(i);
+    record[25] = libmesh_elem_id;
   }
 
   /// Host-side copy of the particle views, used to stage received particles
@@ -159,6 +164,7 @@ struct ParticleCloud
     ::Kokkos::View<ContiguousElementID *>::HostMirror elem;
     ::Kokkos::View<processor_id_type *>::HostMirror target_rank;
     ::Kokkos::View<unsigned int *>::HostMirror hops;
+    ::Kokkos::View<unsigned char *>::HostMirror frozen;
 
     HostMirror(const std::size_t n)
       : gid("dem_host_gid", n),
@@ -173,7 +179,8 @@ struct ParticleCloud
         inertia("dem_host_inertia", n),
         elem("dem_host_elem", n),
         target_rank("dem_host_target_rank", n),
-        hops("dem_host_hops", n)
+        hops("dem_host_hops", n),
+        frozen("dem_host_frozen", n)
     {
     }
 
@@ -195,6 +202,7 @@ struct ParticleCloud
       m(j) = record[15];
       inertia(j) = record[16];
       hops(j) = record[17];
+      frozen(j) = record[24];
       target_rank(j) = libMesh::DofObject::invalid_processor_id;
     }
   };
@@ -216,6 +224,7 @@ struct ParticleCloud
     ::Kokkos::deep_copy(::Kokkos::subview(elem, range), host.elem);
     ::Kokkos::deep_copy(::Kokkos::subview(target_rank, range), host.target_rank);
     ::Kokkos::deep_copy(::Kokkos::subview(hops, range), host.hops);
+    ::Kokkos::deep_copy(::Kokkos::subview(frozen, range), host.frozen);
   }
 
   /// Copy the first n particles of another cloud into the first n slots of this one
@@ -243,6 +252,7 @@ struct ParticleCloud
     ::Kokkos::deep_copy(::Kokkos::subview(target_rank, range),
                         ::Kokkos::subview(other.target_rank, range));
     ::Kokkos::deep_copy(::Kokkos::subview(hops, range), ::Kokkos::subview(other.hops, range));
+    ::Kokkos::deep_copy(::Kokkos::subview(frozen, range), ::Kokkos::subview(other.frozen, range));
   }
 };
 

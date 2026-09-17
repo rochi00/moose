@@ -1,0 +1,218 @@
+#!/usr/bin/env python3
+"""LAMMPS examples/granregion/in.granregion.funnel (in.granregion.funnel here, run with LAMMPS
+for log.granregion.funnel.lammps): 2000 spheres of radius 0.25-0.5 (density 1, si units with
+gravity 1) dropped into a funnel, a cone of radius 2 at z = 10 to 20 at z = 50 over a closed
+cylinder of radius 2 from z = 0 to 10; settled to t = 17.9; then the cylinder's bottom opens
+and the funnel drains. gran/hertz/history with k_n = 4/3 E*, k_t = 8 G* from E = 1e5 and
+nu = 2/7, gamma_n = 1761 and gamma_t = 880 on m_eff sqrt(r_eff delta) (from a restitution of
+0.1 for the smallest sphere), mu = 0.5, and a substep of 1/20 of the collision time. The
+funnel is a cylinder mesh whose radius follows the cone (ParsedNodeTransformGenerator), its
+lateral sideset and, until the discharge, its bottom being the walls; the discharge stage
+restarts the bed from the settled state (spins dropped). LAMMPS drops all 2000 at t = 0 into
+the cylinder r < 10, 30 < z < 50 and loses them at z = -20, 6.3 time units of free fall below
+the orifice; here they are inserted over 0.5 time units into the inscribed box and leave at the
+orifice, so the LAMMPS count is shifted by the fall time in the comparison.
+Usage: run.py [-n ranks] [dem-opt]"""
+import csv, glob, math, os, subprocess, sys
+
+here = os.path.dirname(os.path.abspath(__file__))
+args = sys.argv[1:]
+ranks = 8
+if args[:1] == ["-n"]:
+    ranks = int(args[1])
+    args = args[2:]
+exe = args[0] if args else os.path.join(here, "../../../dem-opt")
+
+E, nu, rlo, rhi, res, mu = 1e5, 2.0 / 7.0, 0.25, 0.5, 0.1, 0.5
+G = E / (2 * (1 + nu))
+kn = 4 * G / (3 * (1 - nu))
+min_mass = 4 / 3 * math.pi * rlo**3
+a = (-2 * math.log(res) / math.pi) ** 2
+gamma_n = math.sqrt(a * 2 * kn / min_mass / (1 + 0.25 * a))
+gamma_t = gamma_n / 2
+tcol = math.pi / math.sqrt(2 * kn / min_mass - gamma_n / 4)
+dt = tcol * 0.05
+sub = 200
+step = sub * dt
+
+mesh = """[Mesh]
+  [disk]
+    type = ConcentricCircleMeshGenerator
+    num_sectors = 4
+    radii = '1'
+    rings = '2'
+    has_outer_square = false
+    preserve_volumes = true
+    smoothing_max_it = 0
+  []
+  [tube]
+    type = AdvancedExtruderGenerator
+    input = disk
+    direction = '0 0 1'
+    heights = '50'
+    num_layers = 50
+    bottom_boundary = 100
+    top_boundary = 101
+  []
+  [funnel]
+    type = ParsedNodeTransformGenerator
+    input = tube
+    x_function = 'x * (2 + 18 * max(z - 10, 0) / 40)'
+    y_function = 'y * (2 + 18 * max(z - 10, 0) / 40)'
+  []
+[]
+[Problem]
+  solve = false
+[]
+"""
+
+
+def cloud(positions, radii, velocities, walls, extra):
+    return f"""[UserObjects]
+  [cloud]
+    type = KokkosParticleCloud
+    initial_positions = '{chr(10).join(f"{p[0]:.17g} {p[1]:.17g} {p[2]:.17g}" for p in positions)}'
+{"    initial_radii = '" + " ".join(f"{q:.17g}" for q in radii) + "'" + chr(10) if radii else ""}{"    initial_velocities = '" + chr(10).join(f"{v[0]:.17g} {v[1]:.17g} {v[2]:.17g}" for v in velocities) + "'" + chr(10) if velocities else ""}    radius = {rhi}
+    density = 1
+    gravity = '0 0 -1'
+    contact_model = hertz
+    youngs_modulus = {E}
+    poissons_ratio = {nu:.17g}
+    normal_damping = {gamma_n:.17g}
+    tangential_damping = {gamma_t:.17g}
+    friction = {mu}
+    rescale_histories = false
+    wall_boundaries = '{walls}'
+{extra}    skin = 0.25
+    substeps = {sub}
+    timestep_check = none
+    execute_on = TIMESTEP_END
+  []
+[]
+[VectorPostprocessors]
+  [state]
+    type = KokkosParticleState
+    cloud = cloud
+    output_radius = true
+    execute_on = TIMESTEP_END
+  []
+[]
+[Postprocessors]
+  [num]
+    type = KokkosParticleCloudValue
+    cloud = cloud
+    value = num_particles
+  []
+  [exited]
+    type = KokkosParticleCloudValue
+    cloud = cloud
+    value = num_exited
+  []
+  [ke]
+    type = KokkosParticleCloudValue
+    cloud = cloud
+    value = kinetic_energy
+  []
+[]
+[Outputs]
+  [csv]
+    type = CSV
+    execute_postprocessors_on = TIMESTEP_END
+    execute_vector_postprocessors_on = FINAL
+  []
+[]
+"""
+
+
+def run(base, num_steps):
+    with open(os.path.join(here, base + ".i"), "a") as f:
+        f.write(f"""[Executioner]
+  type = Transient
+  dt = {step:.17g}
+  num_steps = {num_steps}
+[]
+""")
+    cmd = ["mpiexec", "-n", str(ranks), exe, "-i", base + ".i"] if ranks > 1 else [exe, "-i", base + ".i"]
+    out = subprocess.run(cmd, cwd=here, capture_output=True, text=True)
+    if out.returncode:
+        print(out.stdout[-3000:], out.stderr[-2000:])
+        sys.exit(1)
+    state = sorted(glob.glob(os.path.join(here, base + "_csv_state_*.csv")))[-1]
+    rows = list(csv.DictReader(open(state)))
+    return ([(float(q["x"]), float(q["y"]), float(q["z"])) for q in rows], [float(q["r"]) for q in rows],
+            [(float(q["vx"]), float(q["vy"]), float(q["vz"])) for q in rows])
+
+
+# Stage 1: fill, 20000 substeps as LAMMPS's first run (all 2000 inserted within 0.5)
+s = 10 / math.sqrt(2) - 1.1 * rhi
+with open(os.path.join(here, "fill.i"), "w") as f:
+    f.write("# LAMMPS examples/granregion/in.granregion.funnel, filling; generated by run.py\n" + mesh +
+            cloud([(0, 0, 40)], [], [], "outer 100", f"""    insertion_box = '{-s:.5f} {-s:.5f} 30
+                     {s:.5f} {s:.5f} 50'
+    insertion_rate = 4000
+    insertion_radius_range = '{rlo} {rhi}'
+    insertion_end_time = {2000 / 4000 + 0.02:.6f}
+    insertion_seed = 42424
+"""))
+pos, rad, vel = run("fill", 100)
+# Stage 2: settle for 150000 substeps
+with open(os.path.join(here, "settle.i"), "w") as f:
+    f.write("# LAMMPS examples/granregion/in.granregion.funnel, settling; generated by run.py\n" + mesh +
+            cloud(pos, rad, vel, "outer 100", ""))
+pos, rad, vel = run("settle", 750)
+# Stage 3: the bottom opens, 100000 substeps; spheres leave the mesh at the orifice
+with open(os.path.join(here, "drain.i"), "w") as f:
+    f.write("# LAMMPS examples/granregion/in.granregion.funnel, draining; generated by run.py\n" + mesh +
+            cloud(pos, rad, vel, "outer", ""))
+run("drain", 500)
+
+lammps = []
+for line in open(os.path.join(here, "log.granregion.funnel.lammps")):
+    p = line.split()
+    if len(p) == 4 and p[0].isdigit() and p[1].isdigit():
+        lammps.append((int(p[0]) * dt, int(p[1]), float(p[2])))
+ours = []
+for k, base in enumerate(("fill", "settle", "drain")):
+    offset = (0, 100, 850)[k] * step
+    for q in csv.DictReader(open(os.path.join(here, base + "_csv.csv"))):
+        if float(q["time"]) > 0:
+            ours.append((offset + float(q["time"]), int(float(q["num"])), float(q["ke"]), int(float(q["exited"]))))
+t_open = 850 * step
+print(f"{'t':>6} {'N LAMMPS':>9} {'N MOOSE':>8} {'KE LAMMPS':>10} {'KE MOOSE':>10}")
+for t in (2.1, 4, 6, 8, 12, 17.9):
+    l = min(lammps, key=lambda q: abs(q[0] - t)); m = min(ours, key=lambda q: abs(q[0] - t))
+    print(f"{t:6.1f} {l[1]:9d} {m[1]:8d} {l[2]:10.1f} {m[2]:10.1f}")
+# Discharge: LAMMPS loses a sphere 20 units below the orifice, so its count lags the module's
+# (which counts at the orifice) by the fall; both are aligned at the first departure
+lam_gone = [(q[0], 2000 - q[1]) for q in lammps if q[0] > t_open]
+t0_l = next(t for t, g in lam_gone if g > 0)
+our_gone = [(q[0], q[3]) for q in ours if q[0] > t_open]
+t0_m = next(t for t, g in our_gone if g > 0)
+print(f"discharge from the first departure (LAMMPS {t0_l - t_open:.1f}, MOOSE {t0_m - t_open:.1f} after the opening; "
+      "LAMMPS counts 20 units below the orifice):")
+print(f"{'since first':>12} {'gone LAMMPS':>12} {'gone MOOSE':>11}")
+for t in (1, 2, 3, 4):
+    l = min(lam_gone, key=lambda q: abs(q[0] - (t0_l + t))); m = min(our_gone, key=lambda q: abs(q[0] - (t0_m + t)))
+    print(f"{t:12.1f} {l[1]:12d} {m[1]:11d}")
+rl = (min(lam_gone, key=lambda q: abs(q[0] - (t0_l + 4)))[1] - min(lam_gone, key=lambda q: abs(q[0] - (t0_l + 3)))[1])
+rm = (min(our_gone, key=lambda q: abs(q[0] - (t0_m + 8)))[1] - min(our_gone, key=lambda q: abs(q[0] - (t0_m + 5)))[1]) / 3
+print(f"rate after the initial burst: LAMMPS {rl:.0f} spheres per unit time (3-4 after its first loss, the end of its log), "
+      f"MOOSE {rm:.0f} (5-8 after its first exit)")
+try:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    fig, axs = plt.subplots(1, 2, figsize=(9, 3.8))
+    axs[0].plot([q[0] for q in lammps], [q[2] for q in lammps], "k-", label="LAMMPS")
+    axs[0].plot([q[0] for q in ours], [q[2] for q in ours], "r--", label="MOOSE")
+    axs[0].set_xlabel("time"); axs[0].set_ylabel("kinetic energy"); axs[0].set_yscale("log")
+    axs[1].plot([t - t0_l for t, g in lam_gone], [g for t, g in lam_gone], "k-", label="LAMMPS (lost 20 units below)")
+    axs[1].plot([t - t0_m for t, g in our_gone], [g for t, g in our_gone], "r--", label="MOOSE (through the orifice)")
+    axs[1].set_xlabel("time since the first departure"); axs[1].set_ylabel("spheres discharged")
+    for ax in axs:
+        ax.grid(alpha=0.3); ax.legend(fontsize=8)
+    fig.tight_layout()
+    fig.savefig(os.path.join(here, "granregion_funnel.png"), dpi=130)
+    print("plot: granregion_funnel.png")
+except ImportError:
+    pass

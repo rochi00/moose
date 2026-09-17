@@ -24,6 +24,18 @@
     requirement = 'The system shall, when asked to limit the damping, clamp the normal force of the linear spring-dashpot contact at zero rather than let the dashpot pull the spheres together, so that a head-on collision rebounds at the velocity at which the spring stops pushing, as computed from the damped-oscillator solution.'
     capabilities = 'kokkos'
   []
+  [restitution_disk]
+    type = CSVDiff
+    input = restitution.i
+    cli_args = 'UserObjects/cloud/disk_mass=true Executioner/num_steps=8 Outputs/file_base=restitution_disk_out'
+    csvdiff = restitution_disk_out_state_0008.csv
+    # Disk masses (density pi r^2, LAMMPS's 2D convention): here 7.85 kg against the spheres'
+    # 0.52, a damping ratio of 0.052, e = 0.8501 and a 19.7 ms contact (generate.py); first
+    # order in the substep as above
+    rel_err = 2e-4
+    requirement = 'The system shall give particles the mass of disks when asked, the collision of two of them following the damped-oscillator solution with that mass.'
+    capabilities = 'kokkos'
+  []
   [restitution_3d]
     type = CSVDiff
     input = restitution_3d.i

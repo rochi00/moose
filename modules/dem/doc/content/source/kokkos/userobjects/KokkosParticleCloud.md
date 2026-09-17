@@ -27,7 +27,17 @@ $\gamma\, m_\text{eff} \sqrt{r_\text{eff}\delta}\, v$. `rescale_histories` (defa
 the length of a tangential or rolling spring rotated into the current tangent plane of a
 turning contact, as LAMMPS's `pair granular` does, instead of only projecting it; and
 `deformed_torque_arm` takes the torque of the tangential force at the contact plane,
-$r_i - \delta/2$ from the center, as that style does, instead of at the radius.
+$r_i - \delta/2$ from the center, as that style does, instead of at the radius. With
+`mass_scaled_damping` the linear model's dashpot coefficients multiply the effective mass of the
+contact, as the LAMMPS `gran/*` styles' $\gamma$ (a rate) does.
+
+Particles listed in `initial_frozen` are never moved and act as immovable obstacles to the
+others (LAMMPS `fix freeze`). With `disk_mass` the particles have the mass of disks, density
+times $\pi r^2$, as LAMMPS gives them in two dimensions. Inserted particles take radii drawn
+uniformly from `insertion_radius_range` when given (LAMMPS `fix pour diam range`). The
+analytic walls can rotate rigidly about an axis (`wall_rotation_center`,
+`wall_angular_velocity`): their points and normals turn with it and the surface velocity at
+the contact point, which enters the contact, includes it.
 
 The forces of the last substep stay with the particles between steps, migrating and restarting
 with them, and drive the next step's first half-kick as they do between substeps; the forces

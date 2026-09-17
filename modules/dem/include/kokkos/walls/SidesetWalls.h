@@ -93,7 +93,7 @@ struct SidesetWalls
   ::Kokkos::View<std::size_t *> elem_faces;
   ///@}
   /// Most contacts a sphere is evaluated against at once
-  static constexpr unsigned int max_contacts = 16;
+  static constexpr unsigned int max_contacts = 32;
   /// Set by contacts() when a sphere had more candidate contacts than max_contacts; checked
   /// after the kernels so the truncation is an error rather than a silent loss of contacts
   ::Kokkos::View<int> overflow;
