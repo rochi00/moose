@@ -21,7 +21,13 @@ decision D5). Friction and rolling resistance are described in [Friction.md]; pa
 contacts take `wall_friction` and `wall_rolling_friction` when given, and the particle values
 otherwise. With `limit_damping = true` the normal force is clamped at zero once the dashpot's
 pull exceeds the spring's push (LAMMPS's option of the same name), so the contact never
-attracts.
+attracts. With the Hertz model, `normal_damping` and `tangential_damping`, when given, replace
+the Tsuji or Kuwabara-Kono damping by LAMMPS's `gran/hertz/history` dashpots
+$\gamma\, m_\text{eff} \sqrt{r_\text{eff}\delta}\, v$. `rescale_histories` (default on) keeps
+the length of a tangential or rolling spring rotated into the current tangent plane of a
+turning contact, as LAMMPS's `pair granular` does, instead of only projecting it; and
+`deformed_torque_arm` takes the torque of the tangential force at the contact plane,
+$r_i - \delta/2$ from the center, as that style does, instead of at the radius.
 
 The forces of the last substep stay with the particles between steps, migrating and restarting
 with them, and drive the next step's first half-kick as they do between substeps; the forces

@@ -28,6 +28,9 @@ struct ContactEvaluator
   PairStateMap states;
   /// Substep, by which the tangential springs are stretched
   Real dt;
+  /// Whether the tangential force acts at the contact plane, r_i - overlap / 2 from the center,
+  /// for the torque (LAMMPS pair granular) rather than at the undeformed radius
+  bool deformed_torque_arm = false;
 
   /// The contact of particle i with particle j as seen from i, if they overlap
   KOKKOS_INLINE_FUNCTION bool sphere(const std::size_t i, const std::size_t j, Contact & c) const
@@ -48,6 +51,8 @@ struct ContactEvaluator
                 Moose::Kokkos::Real3(cloud.omega(j, 0), cloud.omega(j, 1), cloud.omega(j, 2)),
                 cloud.r(j),
                 cloud.m(j));
+    if (deformed_torque_arm)
+      c.arm = cloud.r(i) - 0.5 * overlap;
     return true;
   }
 
@@ -69,16 +74,19 @@ struct ContactEvaluator
   /// The contact of particle i with a sideset wall face found by sidesetContacts()
   KOKKOS_INLINE_FUNCTION Contact sideset(const std::size_t i, const WallContact & wc) const
   {
-    return Contact(wc.normal,
-                   wc.overlap,
-                   Moose::Kokkos::Real3(cloud.v(i, 0), cloud.v(i, 1), cloud.v(i, 2)),
-                   Moose::Kokkos::Real3(cloud.omega(i, 0), cloud.omega(i, 1), cloud.omega(i, 2)),
-                   cloud.r(i),
-                   cloud.m(i),
-                   wc.velocity,
-                   Moose::Kokkos::Real3(0),
-                   0,
-                   0);
+    Contact c(wc.normal,
+              wc.overlap,
+              Moose::Kokkos::Real3(cloud.v(i, 0), cloud.v(i, 1), cloud.v(i, 2)),
+              Moose::Kokkos::Real3(cloud.omega(i, 0), cloud.omega(i, 1), cloud.omega(i, 2)),
+              cloud.r(i),
+              cloud.m(i),
+              wc.velocity,
+              Moose::Kokkos::Real3(0),
+              0,
+              0);
+    if (deformed_torque_arm)
+      c.arm = cloud.r(i) - 0.5 * wc.overlap;
+    return c;
   }
 
   /// History key of particle i's contact with a sideset wall face, numbered after the analytic
@@ -142,6 +150,8 @@ struct ContactEvaluator
                 Moose::Kokkos::Real3(0),
                 0,
                 0);
+    if (deformed_torque_arm)
+      c.arm = cloud.r(i) - 0.5 * overlap;
     return true;
   }
 

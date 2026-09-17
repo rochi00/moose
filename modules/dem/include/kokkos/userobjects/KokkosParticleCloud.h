@@ -328,6 +328,8 @@ protected:
   /// against walls
   const DEM::Friction _friction;
   const DEM::Friction _wall_friction;
+  /// Whether the tangential force's torque arm is r_i - overlap / 2 rather than r_i
+  const bool _deformed_torque_arm;
   /// Contact histories of the listed pairs and wall contacts
   DEM::PairStateMap _pair_states;
   /// Planar walls, with the prescribed velocities and the servo settings moving them

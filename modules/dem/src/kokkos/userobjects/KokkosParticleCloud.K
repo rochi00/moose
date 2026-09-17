@@ -61,6 +61,17 @@ KokkosParticleCloud::validParams()
                                     "tangential_damping >= 0",
                                     "Tangential dashpot coefficient of the linear spring-dashpot "
                                     "contact");
+  params.addParam<bool>("rescale_histories",
+                        true,
+                        "Keep the length of the tangential and rolling springs when they are "
+                        "rotated into the current tangent plane of a turning contact (LAMMPS "
+                        "pair granular); otherwise only project them (LAMMPS gran/* styles, "
+                        "LIGGGHTS)");
+  params.addParam<bool>("deformed_torque_arm",
+                        false,
+                        "Apply the tangential force at the contact plane, r_i - overlap / 2 "
+                        "from the center, when computing the torque (LAMMPS pair granular); "
+                        "otherwise at the undeformed radius");
   params.addParam<bool>("limit_damping",
                         false,
                         "Never let the normal damping make the normal force attractive: the "
@@ -257,14 +268,17 @@ KokkosParticleCloud::KokkosParticleCloud(const InputParameters & parameters)
                getParam<bool>("partial_slip"),
                getParam<Real>("rolling_friction"),
                getParam<Real>("rolling_stiffness"),
-               getParam<Real>("rolling_damping")}),
+               getParam<Real>("rolling_damping"),
+               getParam<bool>("rescale_histories")}),
     _wall_friction({isParamValid("wall_friction") ? getParam<Real>("wall_friction")
                                                   : getParam<Real>("friction"),
                     getParam<bool>("partial_slip"),
                     isParamValid("wall_rolling_friction") ? getParam<Real>("wall_rolling_friction")
                                                           : getParam<Real>("rolling_friction"),
                     getParam<Real>("rolling_stiffness"),
-                    getParam<Real>("rolling_damping")}),
+                    getParam<Real>("rolling_damping"),
+                    getParam<bool>("rescale_histories")}),
+    _deformed_torque_arm(getParam<bool>("deformed_torque_arm")),
     _walls(getParam<std::vector<Point>>("wall_points"),
            getParam<std::vector<RealVectorValue>>("wall_normals")),
     _wall_velocities(getParam<std::vector<RealVectorValue>>("wall_velocities")),
@@ -370,7 +384,9 @@ KokkosParticleCloud::makeHertz() const
           -log_e / std::sqrt(log_e * log_e + libMesh::pi * libMesh::pi),
           E / (2 * (1 + nu)) / (2 * (2 - nu)),
           getParam<Real>("dissipation_time"),
-          getParam<bool>("limit_damping")};
+          getParam<bool>("limit_damping"),
+          getParam<Real>("normal_damping"),
+          getParam<Real>("tangential_damping")};
 }
 
 bool
@@ -1210,7 +1226,15 @@ template <typename Model>
 DEM::ContactEvaluator<Model>
 KokkosParticleCloud::evaluator(const Model & contact) const
 {
-  return {_cloud, _walls, _sideset_walls, contact, _friction, _wall_friction, _pair_states, _dt / _substeps};
+  return {_cloud,
+          _walls,
+          _sideset_walls,
+          contact,
+          _friction,
+          _wall_friction,
+          _pair_states,
+          _dt / _substeps,
+          _deformed_torque_arm};
 }
 
 template <typename Model>
@@ -1255,7 +1279,7 @@ KokkosParticleCloud::computeForces(const Model & contact,
               eval.forces(
                   c, DEM::PairKey::pair(cloud.gid(i), cloud.gid(j)), sign, false, f_n, f_t, tau_r);
               f += f_n * c.normal + f_t;
-              tau += tau_r - cloud.r(i) * c.normal.cross_product(f_t);
+              tau += tau_r - c.arm * c.normal.cross_product(f_t);
             }
 
             // Sphere-plane narrow phase against every wall
@@ -1265,7 +1289,7 @@ KokkosParticleCloud::computeForces(const Model & contact,
                 continue;
               eval.forces(c, DEM::PairKey::wall(cloud.gid(i), w), 1, false, f_n, f_t, tau_r);
               f += f_n * c.normal + f_t;
-              tau += tau_r - cloud.r(i) * c.normal.cross_product(f_t);
+              tau += tau_r - c.arm * c.normal.cross_product(f_t);
             }
 
             // Sphere-face narrow phase against the sideset walls near the particle's element
@@ -1276,7 +1300,7 @@ KokkosParticleCloud::computeForces(const Model & contact,
               c = eval.sideset(i, wc[k]);
               eval.forces(c, eval.sidesetKey(i, wc[k]), 1, false, f_n, f_t, tau_r);
               f += f_n * c.normal + f_t;
-              tau += tau_r - cloud.r(i) * c.normal.cross_product(f_t);
+              tau += tau_r - c.arm * c.normal.cross_product(f_t);
             }
           }
         }

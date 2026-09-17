@@ -24,6 +24,64 @@
     requirement = 'The system shall reproduce, to roundoff, the LAMMPS gran/hooke/history trajectory of 32 frictional spheres relaxing from a compressed lattice with their contacts sliding at the Coulomb limit, on any number of ranks.'
     capabilities = 'kokkos'
   []
+  [hooke_nohistory]
+    type = CSVDiff
+    input = hooke_nohistory.i
+    csvdiff = 'hooke_nohistory_out_state_0001.csv hooke_nohistory_out_state_0002.csv'
+    # LAMMPS gran/hooke: the tangential dashpot alone under the Coulomb cap
+    rel_err = 1e-9
+    abs_zero = 1e-12
+    requirement = 'The system shall reproduce, to roundoff, the LAMMPS gran/hooke trajectory of 32 spheres whose tangential contact force is a dashpot alone under the Coulomb limit.'
+    capabilities = 'kokkos'
+  []
+  [hertz_history]
+    type = CSVDiff
+    input = hertz_history.i
+    csvdiff = 'hertz_history_out_state_0001.csv hertz_history_out_state_0002.csv'
+    # LAMMPS gran/hertz/history with limit_damping: the Hertz spring with LAMMPS's damping
+    # form gamma m_eff sqrt(r_eff overlap) v on the normal and tangential dashpots
+    rel_err = 1e-9
+    abs_zero = 1e-12
+    requirement = 'The system shall reproduce, to roundoff, the LAMMPS gran/hertz/history trajectory of 32 spheres relaxing from a compressed lattice, with the Hertz-Mindlin springs, LAMMPS-form damping, the damping limited to the repulsion, and the contacts sliding at the Coulomb limit.'
+    capabilities = 'kokkos'
+  []
+  [granular_hooke]
+    type = CSVDiff
+    input = granular_hooke.i
+    csvdiff = 'granular_hooke_out_state_0001.csv granular_hooke_out_state_0002.csv'
+    # LAMMPS pair granular (the current style): hooke + linear_history + velocity damping with
+    # limit_damping; the springs are rescaled on rotation and the torque arm is the contact
+    # plane, as in that style
+    rel_err = 1e-9
+    abs_zero = 1e-12
+    requirement = 'The system shall reproduce, to roundoff, the LAMMPS pair granular hooke/linear_history trajectory of 32 spheres relaxing from a compressed lattice with their contacts sliding, with the tangential springs rescaled when rotated and the torque taken at the contact plane.'
+    capabilities = 'kokkos'
+  []
+  [granular_hertz]
+    type = CSVDiff
+    input = granular_hertz.i
+    csvdiff = 'granular_hertz_out_state_0001.csv granular_hertz_out_state_0002.csv'
+    # LAMMPS pair granular hertz/material + mindlin + rolling sds + coeff_restitution damping
+    # with limit_damping: the Hertz-Mindlin model with Tsuji damping and EPSD rolling
+    # resistance; positions to 5e-14, velocities to 1e-13, spins to 1e-14
+    rel_err = 1e-9
+    abs_zero = 1e-12
+    requirement = 'The system shall reproduce, to roundoff, the LAMMPS pair granular hertz/material trajectory of 32 spheres relaxing from a compressed lattice with the Mindlin tangential spring, restitution-based damping, and spring-dashpot-slider rolling resistance.'
+    capabilities = 'kokkos'
+  []
+  [wall_gran_shear]
+    type = CSVDiff
+    input = wall_gran_shear.i
+    csvdiff = 'wall_gran_shear_out_state_0001.csv wall_gran_shear_out_state_0002.csv wall_gran_shear_out_state_0003.csv wall_gran_shear_out_state_0004.csv'
+    # LAMMPS fix wall/gran with shearing walls, the setting of its fix-timestep-wall_gran unit
+    # test: 32 thermal spheres between two floors moving tangentially. Positions agree to 1e-11
+    # and velocities to 1e-10 over 200 steps (the residual is the 1e-9 wall damping LAMMPS
+    # needs to avoid NaN, which the module applies at half its value)
+    rel_err = 1e-8
+    abs_zero = 1e-8
+    requirement = 'The system shall reproduce, to roundoff, the LAMMPS fix wall/gran trajectory of 32 thermal spheres bouncing with friction between two planar walls that move tangentially, on any number of ranks.'
+    capabilities = 'kokkos'
+  []
   [wall_gran]
     type = CSVDiff
     input = wall_gran.i

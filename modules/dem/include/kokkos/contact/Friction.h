@@ -21,6 +21,9 @@ struct Contact
   /// Relative spin omega_i - omega_j, for rolling resistance
   Moose::Kokkos::Real3 omega_rel;
   Real r_eff = 0;
+  /// Lever arm of the tangential force about the center of i: the radius, or the distance to
+  /// the contact plane r_i - overlap / 2 when the evaluator uses deformed arms
+  Real arm = 0;
   Real m_eff = 0;
 
   KOKKOS_INLINE_FUNCTION Contact() = default;
@@ -47,6 +50,7 @@ struct Contact
     v_n = v_rel.dot_product(normal);
     v_t = v_rel - v_n * normal;
     omega_rel = omega_i - omega_j;
+    arm = r_i;
     if (r_j > 0)
     {
       r_eff = r_i * r_j / (r_i + r_j);
@@ -88,6 +92,25 @@ struct Friction
   /// Rolling spring stiffness and dashpot coefficient, on the rolling displacement
   Real k_r = 0;
   Real gamma_r = 0;
+  /// Whether a spring rotated into the current tangent plane keeps its length (LAMMPS pair
+  /// granular, Luding 2008) or is only projected (LAMMPS gran/* styles, LIGGGHTS)
+  bool rescale_histories = true;
+
+  /// Rotate a spring displacement into the tangent plane of the normal
+  KOKKOS_INLINE_FUNCTION void rotate(Moose::Kokkos::Real3 & delta,
+                                     const Moose::Kokkos::Real3 & normal) const
+  {
+    const Real out_of_plane = delta.dot_product(normal);
+    if (out_of_plane == 0)
+      return;
+    const Real length = rescale_histories ? delta.norm() : 0;
+    delta -= out_of_plane * normal;
+    if (length > 0)
+    {
+      const Real projected = delta.norm();
+      delta *= projected > 0 ? length / projected : 0;
+    }
+  }
 
   /**
    * Tangential force on particle i of a contact
@@ -109,16 +132,25 @@ struct Friction
                                                               const bool update) const
   {
     const Real k_t = model.tangentialStiffness(contact.overlap, contact.r_eff);
-    if (k_t <= 0 || mu <= 0)
-      return Moose::Kokkos::Real3(0);
     const Real gamma_t = model.tangentialDamping(contact.overlap, contact.r_eff, contact.m_eff);
-    if (update)
-    {
-      delta_t -= delta_t.dot_product(contact.normal) * contact.normal;
-      delta_t += dt * contact.v_t;
-    }
+    if (mu <= 0 || (k_t <= 0 && gamma_t <= 0))
+      return Moose::Kokkos::Real3(0);
     const Real f_t_max = mu * (f_n > 0 ? f_n : 0);
     Moose::Kokkos::Real3 f_t;
+    // Without a spring the dashpot alone resists, under the Coulomb limit (LAMMPS gran/hooke)
+    if (k_t <= 0)
+    {
+      f_t = -gamma_t * contact.v_t;
+      const Real f_t_norm = f_t.norm();
+      if (f_t_norm > f_t_max)
+        f_t *= f_t_norm > 0 ? f_t_max / f_t_norm : 0;
+      return f_t;
+    }
+    if (update)
+    {
+      rotate(delta_t, contact.normal);
+      delta_t += dt * contact.v_t;
+    }
     if (partial_slip)
     {
       // The spring saturates at delta_max: beyond it the contact slides and the spring is held
@@ -171,7 +203,7 @@ struct Friction
     const Moose::Kokkos::Real3 u = contact.r_eff * contact.omega_rel.cross_product(contact.normal);
     if (update)
     {
-      delta_r -= delta_r.dot_product(contact.normal) * contact.normal;
+      rotate(delta_r, contact.normal);
       delta_r += dt * u;
     }
     Moose::Kokkos::Real3 f_r = -k_r * delta_r - gamma_r * u;

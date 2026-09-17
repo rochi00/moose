@@ -17,7 +17,9 @@ namespace DEM
  *   Kuwabara and Kono (1987), Brilliantov et al. (1996):  A d(F_el)/d(overlap) d(overlap)/dt
  *     = -(3/2) A (4/3) E* sqrt(r_eff overlap) v_n, the viscoelastic damping with a dissipative
  *     constant A (a time), whose restitution coefficient falls with the impact velocity as
- *     1 - e ~ v^(1/5).
+ *     1 - e ~ v^(1/5);
+ *   LAMMPS gran/hertz/history:  -gamma_n m_eff sqrt(r_eff overlap) v_n, with the tangential
+ *     dashpot -gamma_t m_eff sqrt(r_eff overlap) v_t built the same way, when gamma_n is given.
  */
 struct Hertz
 {
@@ -33,6 +35,10 @@ struct Hertz
   /// Whether the damping may only reduce the repulsion, never make the normal force attractive
   /// (LAMMPS's limit_damping)
   bool limit_damping = false;
+  /// LAMMPS gran/hertz/history damping coefficients, used instead of Tsuji's or Kuwabara-Kono's
+  /// when gamma_n is positive
+  Real gamma_n = 0;
+  Real gamma_t = 0;
 
   /// Whether the model applies any force
   bool enabled() const { return effective_modulus > 0; }
@@ -47,7 +53,10 @@ struct Hertz
     const Real s_n = 2 * effective_modulus * ::Kokkos::sqrt(r_eff * overlap);
     // 2 sqrt(5/6) = 1.8257418583505538
     const Real f_n =
-        dissipation_time > 0
+        gamma_n > 0
+            ? 2.0 / 3.0 * s_n * overlap -
+                  gamma_n * m_eff * ::Kokkos::sqrt(r_eff * overlap) * normal_velocity
+        : dissipation_time > 0
             ? 2.0 / 3.0 * s_n * overlap - dissipation_time * s_n * normal_velocity
             : 2.0 / 3.0 * s_n * overlap -
                   1.8257418583505538 * beta * ::Kokkos::sqrt(s_n * m_eff) * normal_velocity;
@@ -65,6 +74,8 @@ struct Hertz
                                                 const Real r_eff,
                                                 const Real m_eff) const
   {
+    if (gamma_n > 0)
+      return gamma_t * m_eff * ::Kokkos::sqrt(r_eff * overlap);
     return 1.8257418583505538 * beta * ::Kokkos::sqrt(tangentialStiffness(overlap, r_eff) * m_eff);
   }
   ///@}

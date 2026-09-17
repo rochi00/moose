@@ -76,22 +76,39 @@ neighbors, so such particles are now settled (wrapped, located, migrated) within
 
 `kokkos/lammps` (with `generate.py` and the LAMMPS inputs and dumps under `lammps/`): the
 32-sphere configuration of LAMMPS's own granular unit tests (a jittered fcc lattice of spheres
-of diameter 1.25 in a fully periodic box of side 3.36, every sphere overlapping its neighbours)
-run for 100 steps in LAMMPS (22 Jul 2025) with `pair gran/hooke/history 1000 500 50 50 mu 1`
-and in this module with the `LinearSpringDashpot` model, the LAMMPS damping coefficients times
-$m_\text{eff}$; and a spinning sphere striking a `fix wall/gran` floor obliquely against an
-analytic wall. Both codes integrate with velocity Verlet and the same contact conventions, and
-the LAMMPS dumps are the gold of the tests: positions agree to $5 \times 10^{-14}$ and velocities
-and spins to $10^{-14}$ over the 100 steps, frictionless and with the contacts sliding at the
-Coulomb limit (the LAMMPS-style spring reset), and through the loaded phase of the wall bounce.
-Two conventions differ and are kept out of the reference windows: LAMMPS caps the tangential
-force at $\mu |F_n|$ where this module uses $\mu \max(F_n, 0)$ (no friction without contact
-pressure), which matters only when the dashpot makes the net normal force attractive; and
-LAMMPS's setup-step force evaluation does not advance the histories, so a contact whose
-dashpot alone exceeds the Coulomb limit at step 0 gets no tangential force on that step. A
-`limit_damping` option (LAMMPS's, clamping the normal force at zero) is provided for
-comparisons with `pair granular`. The same collision as `examples/granular/in.restitution`
-(Hertz, `damping coeff_restitution`) rebounds at 0.79999999 m/s in both codes.
+of diameter 1.25 in a periodic box of side 3.36, every sphere overlapping its neighbours) run
+for 100 steps in LAMMPS (22 Jul 2025) and in this module from the same positions and
+velocities, the LAMMPS dumps being the gold of the tests. Both codes integrate with velocity
+Verlet and share the contact conventions, so identical models give identical trajectories:
+positions agree to $5 \times 10^{-14}$ and velocities and spins to $10^{-14}$ over the 100 steps
+for every LAMMPS granular pair style and its wall fix:
+
+| LAMMPS | module | test |
+|---|---|---|
+| `gran/hooke` (tangential dashpot, no spring) | `LinearSpringDashpot`, `tangential_stiffness = 0` | `hooke_nohistory` |
+| `gran/hooke/history`, frictionless and sliding at the Coulomb limit | `LinearSpringDashpot` with the LAMMPS-style spring reset, `rescale_histories = false` | `hooke_history_nofric`, `hooke_history_rest` |
+| `gran/hertz/history` with `limit_damping` | `Hertz` with `normal_damping`/`tangential_damping` as LAMMPS's $\gamma\, m_\text{eff} \sqrt{r_\text{eff}\delta}$ dashpots | `hertz_history` |
+| `pair granular hooke` + `linear_history` + `damping velocity` + `limit_damping` | `LinearSpringDashpot`, `deformed_torque_arm = true` | `granular_hooke` |
+| `pair granular hertz/material` + `mindlin` + `rolling sds` + `damping coeff_restitution` + `limit_damping` | `Hertz` (Tsuji damping, $x_t = \sqrt{S_t/S_n}$), EPSD rolling, `deformed_torque_arm = true` | `granular_hertz` |
+| `fix wall/gran hooke/history zplane ... shear x 0.5` (its unit-test setting) | two analytic walls with `wall_velocities` | `wall_gran_shear` |
+| `fix wall/gran`, a spinning sphere's oblique bounce (loaded phase) | one analytic wall | `wall_gran` |
+
+The LAMMPS damping coefficients are given times $m_\text{eff}$ where LAMMPS multiplies by it
+internally. Three conventions of LAMMPS are options here: `limit_damping` (the normal force
+clamped at zero once the dashpot's pull exceeds the spring's push), `rescale_histories` (the
+tangential and rolling springs keep their length when rotated into the new tangent plane, as in
+`pair granular` and Luding 2008; the `gran/*` styles and LIGGGHTS only project, so those tests
+turn it off), and `deformed_torque_arm` (`pair granular` applies the tangential force at
+$r_i - \delta/2$ for the torque while the `gran/*` styles use $r_i$). Two more differ and are
+kept out of the reference windows: LAMMPS caps the tangential force at $\mu |F_n|$ where this
+module uses $\mu \max(F_n, 0)$ (no friction without contact pressure), which matters only when
+the dashpot makes the net normal force attractive (so the runs use `limit_damping` or stay
+repulsive); and LAMMPS's setup-step force evaluation does not advance the histories, so a
+contact whose dashpot alone exceeds the Coulomb limit at step 0 gets no tangential force on
+that step (so the frictional runs start from rest). The one unit test not reproduced is
+`gran_hooke_tri`, a triclinic periodic box, which the module's orthogonal meshes cannot
+represent. The same collision as `examples/granular/in.restitution` (Hertz, `damping
+coeff_restitution`) rebounds at 0.79999999 m/s in both codes.
 
 The comparison found and fixed one defect: the forces used for the first half-kick of a MOOSE
 step were recomputed at the end of the previous step with the full-step velocities, while every

@@ -31,6 +31,7 @@
     tangential_stiffness = 500
     tangential_damping = 50
     friction = 0.4
+    rescale_histories = false
     wall_points = '0 0 0'
     wall_normals = '0 0 1'
     skin = 0.3

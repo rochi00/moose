@@ -89,6 +89,7 @@
     tangential_stiffness = 500
     tangential_damping = 25
     friction = 0
+    rescale_histories = false
     periodic = 'x y z'
     skin = 0.3
     substeps = 50
