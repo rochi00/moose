@@ -91,7 +91,7 @@ for every LAMMPS granular pair style and its wall fix:
 | `pair granular hooke` + `linear_history` + `damping velocity` + `limit_damping` | `LinearSpringDashpot`, `deformed_torque_arm = true` | `granular_hooke` |
 | `pair granular hertz/material` + `mindlin` + `rolling sds` + `damping coeff_restitution` + `limit_damping` | `Hertz` (Tsuji damping, $x_t = \sqrt{S_t/S_n}$), EPSD rolling, `deformed_torque_arm = true` | `granular_hertz` |
 | `fix wall/gran hooke/history zplane ... shear x 0.5` (its unit-test setting) | two analytic walls with `wall_velocities` | `wall_gran_shear` |
-| `fix wall/gran`, a spinning sphere's oblique bounce (loaded phase) | one analytic wall | `wall_gran` |
+| `fix wall/gran`, a spinning sphere's oblique bounce, through its separation | one analytic wall | `wall_gran` |
 
 The LAMMPS damping coefficients are given times $m_\text{eff}$ where LAMMPS multiplies by it
 internally. Three conventions of LAMMPS are options here: `limit_damping` (the normal force
@@ -99,13 +99,14 @@ clamped at zero once the dashpot's pull exceeds the spring's push), `rescale_his
 tangential and rolling springs keep their length when rotated into the new tangent plane, as in
 `pair granular` and Luding 2008; the `gran/*` styles and LIGGGHTS only project, so those tests
 turn it off), and `deformed_torque_arm` (`pair granular` applies the tangential force at
-$r_i - \delta/2$ for the torque while the `gran/*` styles use $r_i$). Two more differ and are
-kept out of the reference windows: LAMMPS caps the tangential force at $\mu |F_n|$ where this
-module uses $\mu \max(F_n, 0)$ (no friction without contact pressure), which matters only when
-the dashpot makes the net normal force attractive (so the runs use `limit_damping` or stay
-repulsive); and LAMMPS's setup-step force evaluation does not advance the histories, so a
-contact whose dashpot alone exceeds the Coulomb limit at step 0 gets no tangential force on
-that step (so the frictional runs start from rest). The one unit test not reproduced is
+$r_i - \delta/2$ for the torque while the `gran/*` styles use $r_i$). The Coulomb limit is
+LAMMPS's and LIGGGHTS's $\mu |F_n|$ (`friction_limit = absolute_normal_force`, the default;
+the module first used $\mu \max(F_n, 0)$, no friction without contact pressure, which is kept
+as `repulsive_normal_force`), so the spinning bounce on the wall is matched through its
+separating phase, where the dashpot makes the net normal force attractive. One convention of
+LAMMPS is kept out of the reference windows: its setup-step force evaluation does not advance
+the histories, so a contact whose dashpot alone exceeds the Coulomb limit at step 0 gets no
+tangential force on that step (so the frictional runs start from rest). The one unit test not reproduced is
 `gran_hooke_tri`, a triclinic periodic box, which the module's orthogonal meshes cannot
 represent. The same collision as `examples/granular/in.restitution` (Hertz, `damping
 coeff_restitution`) rebounds at 0.79999999 m/s in both codes.
@@ -130,7 +131,7 @@ energies once the beds settle, and the flows afterwards are compared.
 
 | example | what is compared | result |
 |---|---|---|
-| `pour` (examples/pour/in.pour): 3000 spheres poured onto a floor, then gravity tilted to a 26-degree chute; `gran/hooke/history`, `mass_scaled_damping`; stage 2 restarts from stage 1's checkpoint | the bed's acceleration down the chute (its friction 0.5 barely holds tan 26 = 0.49, so the bed creeps by rolling), from the kinetic energy over the last 15 time units | 0.185-0.200 in the module's realizations against LAMMPS's 0.198; kinetic energy at the end 18,900 vs 19,144. The module's bed spins more (rotational energy 250 vs 67) because `gran/hooke/history` caps friction at $\mu \lvert F_n \rvert$ and so keeps damping spin through the attractive tail of every damped collision; with `limit_damping` on both sides the rotational energies agree (233 vs 227) |
+| `pour` (examples/pour/in.pour): 3000 spheres poured onto a floor, then gravity tilted to a 26-degree chute; `gran/hooke/history`, `mass_scaled_damping`; stage 2 restarts from stage 1's checkpoint | the bed's acceleration down the chute (its friction 0.5 barely holds tan 26 = 0.49, so the bed creeps by rolling), from the kinetic energy over the last 15 time units | 0.178-0.200 in the module's realizations against LAMMPS's 0.198. The bed's rotational energy grows to 200-250 here while the shipped log holds at 50-70; this is not a model difference: from the same settled bed (LAMMPS's, written out without contact histories) LAMMPS `gran/hooke/history`, LAMMPS `pair granular` and the module all spin up alike (223, 293 and 201 at the end), and LAMMPS's own `pair granular` continued through the run boundary spins up too (233-279). The bed sits at the sliding threshold, and only `gran/hooke/history` continued with its stage-1 histories stays locked |
 | `pour_2d` (examples/pour/in.pour.2d): 1000 disks of diameter 0.5-1 (`disk_mass`, `insertion_radius_range`) poured into a 2D box, `gran/hertz/history` with `tangential_stiffness` as LAMMPS's k_t | count and energies over the pour and the settling | both beds settled by t = 25 (kinetic energy 7 vs 10 against a peak of thousands) |
 | `pour_flatwall` (examples/granular/in.pour.flatwall, reduced to its floor material everywhere: `hertz/material`, viscoelastic damping, `mindlin`, `rolling sds`; the JKR type, twisting, and the cylindrical insertion regions are not represented) | count, energies, and bed height over 5 time units | same peak kinetic energy (39,000 vs 35,000) and rotational energy; the module's bed settles earlier |
 | `granregion_box` (examples/granregion/in.granregion.box): 100 spheres in a cubic container that turns twice about z, rests, turns twice about (1, 1, 1), rests; six analytic walls with `wall_angular_velocity`, five restarted stages | mean kinetic energy while the container turns | 193 vs 197 about z; 298 vs 284 about the diagonal. LAMMPS's `region ... rotate` scales the wall velocity by the axis vector as given (region.cpp, `set_velocity`) while it rotates the geometry about the unit axis, so its walls push sqrt(3) times too fast for the axis `1 1 1`: the reference was run with the unit axis, and a sphere in the turning cube then follows LAMMPS to roundoff until the first attractive contact (the Coulomb-cap convention) |

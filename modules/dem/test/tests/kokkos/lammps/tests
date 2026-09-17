@@ -85,11 +85,13 @@
   [wall_gran]
     type = CSVDiff
     input = wall_gran.i
-    csvdiff = 'wall_gran_out_state_0001.csv wall_gran_out_state_0002.csv'
-    # The loaded phase of an oblique, spinning bounce on a LAMMPS fix wall/gran floor
+    csvdiff = 'wall_gran_out_state_0001.csv wall_gran_out_state_0002.csv wall_gran_out_state_0003.csv wall_gran_out_state_0004.csv wall_gran_out_state_0005.csv wall_gran_out_state_0006.csv wall_gran_out_state_0007.csv wall_gran_out_state_0008.csv'
+    # An oblique, spinning bounce on a LAMMPS fix wall/gran floor through the whole contact,
+    # the separating phase (attractive net normal force, friction still capped at mu |F_n|)
+    # included: 3e-15 in position, 5e-14 in velocity and spin
     rel_err = 1e-9
     abs_zero = 1e-12
-    requirement = 'The system shall reproduce, to roundoff, the LAMMPS fix wall/gran hooke/history trajectory of a spinning sphere striking a plane obliquely through the loaded phase of the contact.'
+    requirement = 'The system shall reproduce, to roundoff, the LAMMPS fix wall/gran hooke/history trajectory of a spinning sphere striking a plane obliquely, through the loaded and the separating phases of the contact.'
     capabilities = 'kokkos'
   []
   [sync_verlet]

@@ -50,7 +50,7 @@
 [Executioner]
   type = Transient
   dt = 0.025
-  num_steps = 2
+  num_steps = 8
 []
 [Outputs]
   csv = true

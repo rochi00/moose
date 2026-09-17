@@ -14,13 +14,19 @@ current tangent plane and stretched by $v_t \, \Delta t$ every substep, and the 
 on $i$ is
 
 !equation
-F_t = -k_t \delta_t - \gamma_t v_t, \qquad |F_t| \le \mu \max(F_n, 0),
+F_t = -k_t \delta_t - \gamma_t v_t, \qquad |F_t| \le \mu |F_n|,
 
 with $k_t$ and $\gamma_t$ from the model ([LinearSpringDashpot.md]: `tangential_stiffness` and
 `tangential_damping`; [Hertz.md]: the Mindlin no-slip stiffness $S_t = 8 G^* \sqrt{r_\text{eff}
 \delta}$ and the Tsuji damping on it). When the limit is reached, the contact slides: the force
 is scaled to the limit and the spring reset so that spring and dashpot together give exactly it,
-as in LAMMPS's granular pair styles. The force acts at the contact point, so it exerts the torque
+as in LAMMPS's granular pair styles. The limit is proportional to the magnitude of the net
+normal force, as in LAMMPS and LIGGGHTS, so friction keeps acting while the dashpot makes the
+net normal force attractive at the end of a damped collision (`friction_limit =
+absolute_normal_force`, the default); `repulsive_normal_force` limits it to the repulsive part
+instead, so that a contact without pressure has no friction, which is the physically stricter
+choice but not the one the DEM literature is calibrated against (`limit_damping` removes the
+attraction altogether and makes the two coincide). The force acts at the contact point, so it exerts the torque
 $-r_i n \times F_t$ on $i$; the partner gets the opposite force and, the arm being $r_j n$, the
 torque $-r_j n \times F_t$.
 
@@ -55,7 +61,7 @@ rolling velocity $u = r_\text{eff} (\omega_i - \omega_j) \times n$ kept in the c
 and projected on the tangent plane every substep. The resistance
 
 !equation
-F_r = -k_r \delta_r - \gamma_r u, \qquad |F_r| \le \mu_r \max(F_n, 0),
+F_r = -k_r \delta_r - \gamma_r u, \qquad |F_r| \le \mu_r |F_n|,
 
 with the same reset on reaching the limit as the friction, acts as the torque
 $r_\text{eff} \, n \times F_r$ on $i$ and its opposite on the partner, so the torque is limited

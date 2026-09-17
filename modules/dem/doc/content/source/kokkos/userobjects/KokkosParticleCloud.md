@@ -19,7 +19,7 @@ sidesets listed in `wall_boundaries` ([SidesetWalls.md]). The model is a compile
 force kernel is instantiated once per model and the selection is made once at setup (plan
 decision D5). Friction and rolling resistance are described in [Friction.md]; particle-wall
 contacts take `wall_friction` and `wall_rolling_friction` when given, and the particle values
-otherwise. With `limit_damping = true` the normal force is clamped at zero once the dashpot's
+otherwise. The Coulomb limits of friction and rolling resistance are proportional to the magnitude of the net normal force (`friction_limit`, see [Friction.md]). With `limit_damping = true` the normal force is clamped at zero once the dashpot's
 pull exceeds the spring's push (LAMMPS's option of the same name), so the contact never
 attracts. With the Hertz model, `normal_damping` and `tangential_damping`, when given, replace
 the Tsuji or Kuwabara-Kono damping by LAMMPS's `gran/hertz/history` dashpots

@@ -74,6 +74,13 @@ KokkosParticleCloud::validParams()
                                     "tangential_damping >= 0",
                                     "Tangential dashpot coefficient of the linear spring-dashpot "
                                     "contact");
+  params.addParam<MooseEnum>("friction_limit",
+                             MooseEnum("absolute_normal_force repulsive_normal_force",
+                                       "absolute_normal_force"),
+                             "The normal force the Coulomb limits of the tangential force and "
+                             "the rolling torque are proportional to: its magnitude, so friction "
+                             "keeps acting while the dashpot makes the net normal force "
+                             "attractive (LAMMPS, LIGGGHTS), or its repulsive part only");
   params.addParam<bool>("rescale_histories",
                         true,
                         "Keep the length of the tangential and rolling springs when they are "
@@ -306,7 +313,8 @@ KokkosParticleCloud::KokkosParticleCloud(const InputParameters & parameters)
                getParam<Real>("rolling_friction"),
                getParam<Real>("rolling_stiffness"),
                getParam<Real>("rolling_damping"),
-               getParam<bool>("rescale_histories")}),
+               getParam<bool>("rescale_histories"),
+               getParam<MooseEnum>("friction_limit") == "absolute_normal_force"}),
     _wall_friction({isParamValid("wall_friction") ? getParam<Real>("wall_friction")
                                                   : getParam<Real>("friction"),
                     getParam<bool>("partial_slip"),
@@ -314,7 +322,8 @@ KokkosParticleCloud::KokkosParticleCloud(const InputParameters & parameters)
                                                           : getParam<Real>("rolling_friction"),
                     getParam<Real>("rolling_stiffness"),
                     getParam<Real>("rolling_damping"),
-                    getParam<bool>("rescale_histories")}),
+                    getParam<bool>("rescale_histories"),
+                    getParam<MooseEnum>("friction_limit") == "absolute_normal_force"}),
     _deformed_torque_arm(getParam<bool>("deformed_torque_arm")),
     _walls(getParam<std::vector<Point>>("wall_points"),
            getParam<std::vector<RealVectorValue>>("wall_normals")),

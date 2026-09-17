@@ -8,11 +8,12 @@ time units; here the same 3000 are inserted at the equivalent steady rate over t
 22.1 time units. The comparison is statistical: the number of spheres, the translational and
 rotational kinetic energies, and the bed height against LAMMPS's log (log.pour.lammps, shipped
 with LAMMPS). Stage 2 restarts from stage 1's checkpoint with the tilted gravity. The bed's
-rotational energy stays at 50-70 in LAMMPS while it grows to 250 here: gran/hooke/history caps
-the friction at mu |F_n|, so it keeps acting, and damping spin, through the attractive phase of
-every damped collision, where this module (and LAMMPS's own limit_damping) applies none. With
-pair granular ... limit_damping in LAMMPS and limit_damping = true here the two agree (233 vs
-227 at t = 50, accelerations 0.1951 vs 0.1946).
+rotational energy grows to 200-250 here while LAMMPS's shipped log holds at 50-70; this is not
+a model difference: started from the same settled bed (LAMMPS's, written out without contact
+histories) LAMMPS gran/hooke/history, LAMMPS pair granular, and the module all spin up alike
+(223, 293, 201 at the end), and LAMMPS's own pair granular continued through the run boundary
+spins up too (233-279). The bed sits at the sliding threshold (mu = 0.5 against tan 26 =
+0.49), and only gran/hooke/history continued with its stage-1 histories stays locked.
 Usage: run.py [-n ranks] [dem-opt]"""
 import csv, math, os, subprocess, sys
 

@@ -10,12 +10,9 @@ LAMMPS gran/hooke/history <-> LinearSpringDashpot with normal_damping = m_eff ga
 rescale_histories = false (the gran/* styles only project a rotated spring),
 tangential_damping = m_eff gamma_t (all masses 1, so m_eff = 1/2 between particles and 1
 against the wall), friction = xmu, and fix wall/gran hooke/history <-> an analytic wall.
-Two conventions differ and are kept out of the reference windows: LAMMPS caps the tangential
-force at mu |F_n| where this module uses mu max(F_n, 0), which matters only when the dashpot
-makes the normal force attractive (fast separation); and LAMMPS's setup-step force evaluation
+One convention is kept out of the reference windows: LAMMPS's setup-step force evaluation
 does not advance the histories, so a contact whose dashpot alone exceeds the Coulomb limit at
-step 0 gets no tangential force on that step (the cases therefore start from rest or without
-friction)."""
+step 0 gets no tangential force on that step (the frictional cases therefore start from rest)."""
 import math, os
 
 here = os.path.dirname(os.path.abspath(__file__))
@@ -457,9 +454,9 @@ with open(os.path.join(here, "wall_gran_shear.i"), "w") as f:
 for step in (50, 100, 150, 200):
     gold(frames, step, f"wall_gran_shear_out_state_{step // 50:04d}.csv", True)
 
-# A spinning sphere hitting the floor obliquely (fix wall/gran hooke/history zplane); the
-# reference stops at step 50, before the separating phase where the normal force turns
-# attractive and the Coulomb cap conventions part
+# A spinning sphere hitting the floor obliquely (fix wall/gran hooke/history zplane), through
+# the whole bounce: its separating phase, where the normal force turns attractive, is matched
+# by the module's mu |F_n| Coulomb cap (friction_limit = absolute_normal_force, LAMMPS's)
 frames = read_dump(os.path.join(here, "lammps", "dump.wall_gran"))
 with open(os.path.join(here, "wall_gran.i"), "w") as f:
     f.write(f"""# LAMMPS fix wall/gran hooke/history 1000 500 50 50 0.4 1 zplane (lammps/in.wall_gran): a
@@ -514,14 +511,14 @@ with open(os.path.join(here, "wall_gran.i"), "w") as f:
 [Executioner]
   type = Transient
   dt = 0.025
-  num_steps = 2
+  num_steps = 8
 []
 [Outputs]
   csv = true
 []
 """)
-gold(frames, 25, "wall_gran_out_state_0001.csv", False)
-gold(frames, 50, "wall_gran_out_state_0002.csv", False)
+for n in range(1, 9):
+    gold(frames, 25 * n, f"wall_gran_out_state_{n:04d}.csv", False)
 
 # examples/granular/in.sync_verlet: the fine sphere on two frozen ones; sync_verlet.i is written
 # by hand (three particles), the gold comes from the plain-Verlet LAMMPS dump every 60000 steps

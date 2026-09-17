@@ -67,7 +67,8 @@ struct Contact
 /**
  * Coulomb friction on the tangential spring-dashpot of a contact model, and elastic-plastic
  * spring-dashpot rolling resistance (plan layer L4). The tangential force is
- * -k_t delta_t - gamma_t v_t, limited to mu times the (repulsive part of the) normal force; when
+ * -k_t delta_t - gamma_t v_t, limited to mu times the magnitude of the normal force (or its
+ * repulsive part, see absolute_normal_cap); when
  * it is, the spring is reset so that the spring and dashpot together give exactly the limit, as
  * in LAMMPS's granular pair styles. With partial slip, the spring instead follows the
  * Mindlin-Deresiewicz loading curve mu F_n (1 - (1 - |delta_t| / delta_max)^(3/2)) with
@@ -95,6 +96,15 @@ struct Friction
   /// Whether a spring rotated into the current tangent plane keeps its length (LAMMPS pair
   /// granular, Luding 2008) or is only projected (LAMMPS gran/* styles, LIGGGHTS)
   bool rescale_histories = true;
+  /// Whether the Coulomb limits are mu |F_n| (LAMMPS, LIGGGHTS: friction keeps acting while
+  /// the dashpot makes the net normal force attractive) or mu max(F_n, 0)
+  bool absolute_normal_cap = true;
+
+  /// The normal force the Coulomb limits are proportional to
+  KOKKOS_INLINE_FUNCTION Real capForce(const Real f_n) const
+  {
+    return absolute_normal_cap ? (f_n < 0 ? -f_n : f_n) : (f_n > 0 ? f_n : 0);
+  }
 
   /// Rotate a spring displacement into the tangent plane of the normal
   KOKKOS_INLINE_FUNCTION void rotate(Moose::Kokkos::Real3 & delta,
@@ -135,7 +145,7 @@ struct Friction
     const Real gamma_t = model.tangentialDamping(contact.overlap, contact.r_eff, contact.m_eff);
     if (mu <= 0 || (k_t <= 0 && gamma_t <= 0))
       return Moose::Kokkos::Real3(0);
-    const Real f_t_max = mu * (f_n > 0 ? f_n : 0);
+    const Real f_t_max = mu * capForce(f_n);
     Moose::Kokkos::Real3 f_t;
     // Without a spring the dashpot alone resists, under the Coulomb limit (LAMMPS gran/hooke)
     if (k_t <= 0)
@@ -207,7 +217,7 @@ struct Friction
       delta_r += dt * u;
     }
     Moose::Kokkos::Real3 f_r = -k_r * delta_r - gamma_r * u;
-    const Real f_r_max = mu_r * (f_n > 0 ? f_n : 0);
+    const Real f_r_max = mu_r * capForce(f_n);
     const Real f_r_norm = f_r.norm();
     if (f_r_norm > f_r_max)
     {
