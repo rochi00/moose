@@ -84,6 +84,14 @@ KokkosParticleCloud::validParams()
                                     "Rolling spring stiffness, on the rolling displacement");
   params.addRangeCheckedParam<Real>(
       "rolling_damping", 0, "rolling_damping >= 0", "Rolling dashpot coefficient");
+  params.addRangeCheckedParam<Real>("wall_friction",
+                                    "wall_friction >= 0",
+                                    "Coefficient of friction of the particle-wall contacts; "
+                                    "defaults to friction");
+  params.addRangeCheckedParam<Real>("wall_rolling_friction",
+                                    "wall_rolling_friction >= 0",
+                                    "Coefficient of rolling friction of the particle-wall "
+                                    "contacts; defaults to rolling_friction");
   params.addRangeCheckedParam<Real>(
       "youngs_modulus", "youngs_modulus > 0", "Young's modulus of the Hertz normal contact");
   params.addRangeCheckedParam<Real>("poissons_ratio",
@@ -244,6 +252,13 @@ KokkosParticleCloud::KokkosParticleCloud(const InputParameters & parameters)
                getParam<Real>("rolling_friction"),
                getParam<Real>("rolling_stiffness"),
                getParam<Real>("rolling_damping")}),
+    _wall_friction({isParamValid("wall_friction") ? getParam<Real>("wall_friction")
+                                                  : getParam<Real>("friction"),
+                    getParam<bool>("partial_slip"),
+                    isParamValid("wall_rolling_friction") ? getParam<Real>("wall_rolling_friction")
+                                                          : getParam<Real>("rolling_friction"),
+                    getParam<Real>("rolling_stiffness"),
+                    getParam<Real>("rolling_damping")}),
     _walls(getParam<std::vector<Point>>("wall_points"),
            getParam<std::vector<RealVectorValue>>("wall_normals")),
     _wall_velocities(getParam<std::vector<RealVectorValue>>("wall_velocities")),
@@ -1173,7 +1188,7 @@ template <typename Model>
 DEM::ContactEvaluator<Model>
 KokkosParticleCloud::evaluator(const Model & contact) const
 {
-  return {_cloud, _walls, _sideset_walls, contact, _friction, _pair_states, _dt / _substeps};
+  return {_cloud, _walls, _sideset_walls, contact, _friction, _wall_friction, _pair_states, _dt / _substeps};
 }
 
 template <typename Model>
@@ -1594,7 +1609,7 @@ KokkosParticleCloud::updateNeighborList()
 bool
 KokkosParticleCloud::historyNeeded() const
 {
-  return _friction.mu > 0 || _friction.mu_r > 0;
+  return _friction.mu > 0 || _friction.mu_r > 0 || _wall_friction.mu > 0 || _wall_friction.mu_r > 0;
 }
 
 void

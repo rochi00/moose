@@ -36,6 +36,28 @@
     requirement = 'The system shall slide a sphere without rolling down an inclined plane steeper than the critical angle atan(mu) when the rolling resistance locks its rotation, at the acceleration g (sin - mu cos).'
     capabilities = 'kokkos'
   []
+  [incline_wall_slide]
+    type = CSVDiff
+    input = incline.i
+    cli_args = 'UserObjects/cloud/wall_friction=0.15 Outputs/file_base=incline_wall_slide_out'
+    csvdiff = incline_wall_slide_out_state_0010.csv
+    # The wall's own coefficient governs the contact: the same slide as incline_slide although
+    # friction stays at 0.5
+    rel_err = 5e-3
+    requirement = 'The system shall apply the particle-wall coefficient of friction, when given, to wall contacts in place of the particle-particle one.'
+    capabilities = 'kokkos'
+  []
+  [incline_wall_roll]
+    type = CSVDiff
+    input = incline.i
+    cli_args = 'UserObjects/cloud/wall_rolling_friction=0.1 Outputs/file_base=incline_wall_roll_out'
+    csvdiff = incline_wall_roll_out_state_0010.csv
+    # The wall's own rolling coefficient governs the contact: the same roll as incline_roll
+    # although rolling_friction stays at 0.25
+    rel_err = 5e-3
+    requirement = 'The system shall apply the particle-wall coefficient of rolling friction, when given, to wall contacts in place of the particle-particle one.'
+    capabilities = 'kokkos'
+  []
   [rolling_stop]
     type = CSVDiff
     input = rolling_stop.i

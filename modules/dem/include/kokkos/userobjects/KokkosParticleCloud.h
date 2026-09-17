@@ -324,8 +324,10 @@ protected:
   const ContactModel _contact_model;
   const DEM::LinearSpringDashpot _linear;
   const DEM::Hertz _hertz;
-  /// Coulomb friction on the tangential springs and rolling resistance
+  /// Coulomb friction on the tangential springs and rolling resistance, between particles and
+  /// against walls
   const DEM::Friction _friction;
+  const DEM::Friction _wall_friction;
   /// Contact histories of the listed pairs and wall contacts
   DEM::PairStateMap _pair_states;
   /// Planar walls, with the prescribed velocities and the servo settings moving them

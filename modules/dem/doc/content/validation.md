@@ -71,3 +71,84 @@ within 2% of a straight line; $T$ falls to 0.040 $T_0$ against Haff's 0.038. Set
 exposed and fixed a limitation of the periodic and partition handling: a particle straying more
 than the neighbor-list skin beyond its rank's box within one MOOSE step lost its far-side
 neighbors, so such particles are now settled (wrapped, located, migrated) within the substep loop.
+
+## Dense-flow benchmarks (`examples/`)
+
+The Tier 2 cases below are run by scripts under `modules/dem/examples/` that generate the
+inputs, run them (8 MPI ranks on a laptop, 30 s to 6 min per case), and analyze the CSV output.
+They are not regression tests: each is a few 10^4 spheres with linear spring-dashpot contacts
+(overlaps below 1% of the radius, restitution 0.45, substep a 26th of the contact time) and the
+result depends on the friction coefficients, which are the calibration parameters of DEM.
+
+### Silo discharge: Beverloo's law
+
+`silo_discharge_3d/run.py`: a cylindrical silo 30 $d$ wide filled to 40 $d$ with 30,314 beads
+($d$ = 6 mm, radii spread by 5%) drains through a circular floor orifice of diameter $D$ = 6, 7, 8
+and 10 $d$ (the inner circle of a `ConcentricCircleMeshGenerator` disk extruded along $z$, so the
+orifice area is exact); beads through the orifice leave the mesh and are counted by `num_exited`.
+Beverloo's law $W = C \rho_b \sqrt{g} (D - k d)^{5/2}$ with $C = 0.58$ and $k = 1.4$ (Beverloo et
+al. 1961; Nedderman et al. 1982) is tested by fitting $W^{2/5}$ against $D$, a straight line whose
+intercept is $k d$:
+
+| friction | $C$ | $k$ | exponent |
+|---|---|---|---|
+| $\mu = 0.5$, $\mu_r = 0.1$ | 0.49 | 1.68 | 2.47 |
+| $\mu = 0.3$, $\mu_r = 0$ (glass-bead-like) | 0.548 | 1.57 | 2.49 |
+
+Every rate is steady to better than 1% over its window (free surface above one silo diameter) and
+independent of the fill height; the measured packing fraction is 0.606. The functional form is
+exact; the prefactor is within 6% of Beverloo's with glass-bead-like friction and 15% low with
+rolling resistance, the direction and size reported for rolling resistance in the literature.
+
+!media media/dem_silo_discharge_3d.png style=width:60% caption=Discharge rate against orifice diameter, glass-bead-like friction.
+
+### Axisymmetric column collapse
+
+`column_collapse_3d/run.py`: 22,801 beads rained into a cylinder of radius $R_0 = 12 d$ and
+settled (packing 0.58), sliced at $H_0 = a R_0$ and released on a flat floor for $a$ = 0.5, 1, 2, 3
+($\mu = 0.5$, $\mu_r = 0.1$). The deposit edge (outermost annulus of width $d$ still covered by
+30% of a monolayer) against Lube et al. 2004, $(R_\infty - R_0)/R_0 = 1.24 a$ for $a < 1.7$ and
+$1.6 a^{1/2}$ above, and Lajeunesse et al. 2004, $1.0 a$ / $2.0 a^{1/2}$ about $a = 0.74$:
+
+| $a$ | DEM | Lube | Lajeunesse |
+|---|---|---|---|
+| 0.5 | 0.50 | 0.62 | 0.50 |
+| 1 | 1.25 | 1.24 | 2.0 |
+| 2 | 2.42 | 2.26 | 2.83 |
+| 3 | 3.42 | 2.77 | 3.46 |
+
+The runouts lie within the band spanned by the two experiments (rough grains for Lube, glass
+beads for Lajeunesse), with the deposits at rest (kinetic energy at $10^{-4}$ of its peak by
+$2 t_\infty$). The deposit heights for $a \ge 1$, 0.63 to 0.71 $R_0$, are below Lube's ~1 $R_0$:
+smooth spheres with $\mu_r = 0.1$ leave a shallow cone where rough grains keep a steep core.
+
+!media media/dem_column_collapse_3d.png style=width:80% caption=Runout and deposit height against aspect ratio.
+
+### Angle of repose
+
+`angle_of_repose/run.py` reproduces the setup of Zhou, Xu, Yu and Zulli 2002 (Powder Technol.
+125): 10 mm spheres settled on a 30 $d$ plate in a container 40 $d$ wide and $w$ thick are
+discharged over both edges of the plate; the angle is the slope of the heap's surface profile
+between 15% and 85% of the plate half-width, averaged over both flanks. Sliding friction as
+their base condition ($\mu_{pp} = 0.4$, $\mu_{pw} = 0.6$, using `wall_friction`). Their rolling
+model is a constant torque against each particle's own spin, so their rolling coefficient does
+not carry over to the spring-dashpot model on relative rolling used here (mapped as if it did,
+their base $\mu_r$ gives 18.7 degrees against their 28.5); the test is therefore against their
+glass-bead experiments, $\theta_0 = 29.6 d^{-0.206}$ degrees without front and rear walls (18.4
+for 10 mm) times $1 + e^{-0.18 w/d}$ with them (27.4 at $w = 4 d$, 22.8 at $8 d$):
+
+| $\mu_r$ | $w = 4 d$ | $w = 8 d$ | periodic ($w \to \infty$) |
+|---|---|---|---|
+| 0.02 | 18.7 | | |
+| 0.05 | 29.2 | 27.2 | 19.4 |
+| 0.1 | 37.2 | 33.3 | 27.2 |
+| 0.2 | 47.0 | | |
+| experiment | 27.4 | 22.8 | 18.4 |
+
+With a single rolling coefficient of 0.05 the heap angle matches the experiment within 2 degrees
+(the paper's own measurement error) at $w = 4 d$ and without walls, and the wall-effect ratio
+$\theta(4d)/\theta_0$ is 1.51 against 1.49 measured; the $8 d$ case is 4 degrees high. Every heap
+comes to rest (kinetic energy below $10^{-14}$ J), and the angle rises monotonically with
+$\mu_r$, both flanks agreeing to 1-4 degrees on heaps of 300-1200 spheres.
+
+!media media/dem_angle_of_repose.png style=width:80% caption=Angle of repose against rolling friction coefficient at w = 4 d, and against container thickness.

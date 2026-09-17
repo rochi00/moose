@@ -22,7 +22,9 @@ struct ContactEvaluator
   AnalyticWalls walls;
   SidesetWalls sidesets;
   Model model;
+  /// Friction of particle-particle and of particle-wall contacts
   Friction friction;
+  Friction wall_friction;
   PairStateMap states;
   /// Substep, by which the tangential springs are stretched
   Real dt;
@@ -172,8 +174,10 @@ struct ContactEvaluator
         delta_t(k) = sign * states.value_at(entry).delta_t[k];
         delta_r(k) = states.value_at(entry).delta_r[k];
       }
-    f_t = friction.tangentialForce(model, c, f_n, dt, delta_t, update);
-    tau_r = friction.rollingTorque(c, f_n, dt, delta_r, update);
+    // Wall keys carry the negated wall index as their upper entry
+    const Friction & fr = key.upper < 0 ? wall_friction : friction;
+    f_t = fr.tangentialForce(model, c, f_n, dt, delta_t, update);
+    tau_r = fr.rollingTorque(c, f_n, dt, delta_r, update);
     if (update && found)
       for (unsigned int k = 0; k < 3; ++k)
       {
