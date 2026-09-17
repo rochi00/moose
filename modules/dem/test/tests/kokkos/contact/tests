@@ -12,6 +12,18 @@
     requirement = 'The system shall compute the head-on collision of two spheres with the linear spring-dashpot contact model such that the coefficient of restitution and final positions match the damped-oscillator solution to the first-order accuracy of the substep size, on any number of ranks.'
     capabilities = 'kokkos'
   []
+  [restitution_limit]
+    type = CSVDiff
+    input = restitution.i
+    cli_args = 'UserObjects/cloud/limit_damping=true Outputs/file_base=restitution_limit_out'
+    csvdiff = restitution_limit_out_state_0004.csv
+    # With the normal force clamped at zero once the dashpot's pull exceeds the spring's push on
+    # the way out, the spheres coast apart at the velocity of that moment: e = 0.5718 instead of
+    # 0.5266 (generate.py); first order in the substep as above
+    rel_err = 1e-4
+    requirement = 'The system shall, when asked to limit the damping, clamp the normal force of the linear spring-dashpot contact at zero rather than let the dashpot pull the spheres together, so that a head-on collision rebounds at the velocity at which the spring stops pushing, as computed from the damped-oscillator solution.'
+    capabilities = 'kokkos'
+  []
   [restitution_3d]
     type = CSVDiff
     input = restitution_3d.i

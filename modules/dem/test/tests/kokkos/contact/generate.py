@@ -63,3 +63,36 @@ vt, y0 = 0.5, 0.3
 with open(os.path.join(here, "gold", f"wall_restitution_out_state_{num_steps:04d}.csv"), "w") as f:
     f.write("gid,vx,vy,vz,wx,wy,wz,x,y,z\n")
     f.write(f"0,{-e * v0:.17g},{vt:.17g},0,0,0,0,{xA:.17g},{y0 + vt * T:.17g},0\n")
+
+# restitution_limit.i: the same collision with limit_damping. The relative coordinate follows
+# the damped oscillator only until the dashpot's pull exceeds the spring's push on the way out,
+# k delta = gamma |delta_dot| (delta the overlap, delta_dot < 0); from there the force is clamped
+# at zero and the spheres coast apart at that velocity, which they keep after separating. So the
+# restitution is higher than the free oscillator's, and the separation comes at t_touch + t* +
+# delta(t*) / |delta_dot(t*)| instead of t_touch + pi / omega_d.
+m_eff = m / 2
+omega0 = math.sqrt(k / m_eff)
+zeta = gamma / (2 * math.sqrt(k * m_eff))
+omega_d = omega0 * math.sqrt(1 - zeta**2)
+v_rel = 2 * v0                                  # closing speed of the relative coordinate
+delta = lambda t: v_rel / omega_d * math.exp(-zeta * omega0 * t) * math.sin(omega_d * t)
+delta_dot = lambda t: v_rel * math.exp(-zeta * omega0 * t) * (math.cos(omega_d * t) - zeta * omega0 / omega_d * math.sin(omega_d * t))
+# Bisect k delta + gamma delta_dot = 0 on the rebound, between the turning point and separation
+lo, hi = math.pi / (2 * omega_d), math.pi / omega_d
+for _ in range(200):
+    mid = 0.5 * (lo + hi)
+    if k * delta(mid) + gamma * delta_dot(mid) > 0:
+        lo = mid
+    else:
+        hi = mid
+t_star = 0.5 * (lo + hi)
+e_limit = -delta_dot(t_star) / v_rel
+t_touch = (x0 - r) / v0
+t_end = t_touch + t_star + delta(t_star) / -delta_dot(t_star)
+print(f"limit_damping: force clamped from t* = {t_star:.6e} s after touch, restitution {e_limit:.9f} "
+      f"(free oscillator {math.exp(-zeta * math.pi / math.sqrt(1 - zeta**2)):.9f}), separation at t = {t_end:.6f}")
+xA = -r - e_limit * v0 * (T - t_end)
+with open(os.path.join(here, "gold", f"restitution_limit_out_state_{num_steps:04d}.csv"), "w") as f:
+    f.write("gid,vx,vy,vz,wx,wy,wz,x,y,z\n")
+    for gid, sign in ((0, 1), (1, -1)):
+        f.write(f"{gid},{-sign * e_limit * v0:.17g},0,0,0,0,0,{sign * xA:.17g},0.5,0\n")

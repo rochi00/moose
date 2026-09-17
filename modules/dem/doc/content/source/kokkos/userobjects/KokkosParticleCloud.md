@@ -17,7 +17,17 @@ or [Hertz.md], between overlapping spheres found through the neighbor list, agai
 planar walls given by `wall_points` and `wall_normals` ([AnalyticWalls.md]), and against the
 sidesets listed in `wall_boundaries` ([SidesetWalls.md]). The model is a compile-time policy: the
 force kernel is instantiated once per model and the selection is made once at setup (plan
-decision D5). Friction and rolling resistance are described in [Friction.md].
+decision D5). Friction and rolling resistance are described in [Friction.md]; particle-wall
+contacts take `wall_friction` and `wall_rolling_friction` when given, and the particle values
+otherwise. With `limit_damping = true` the normal force is clamped at zero once the dashpot's
+pull exceeds the spring's push (LAMMPS's option of the same name), so the contact never
+attracts.
+
+The forces of the last substep stay with the particles between steps, migrating and restarting
+with them, and drive the next step's first half-kick as they do between substeps; the forces
+reported at the end of a step (by [KokkosParticleState.md] and the wall-force postprocessors)
+are recomputed from the settled positions and the full-step velocities, so the trajectory does
+not depend on how the substeps are grouped into steps.
 
 ## Neighbor list
 

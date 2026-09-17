@@ -72,6 +72,34 @@ exposed and fixed a limitation of the periodic and partition handling: a particl
 than the neighbor-list skin beyond its rank's box within one MOOSE step lost its far-side
 neighbors, so such particles are now settled (wrapped, located, migrated) within the substep loop.
 
+## Cross-code check against LAMMPS
+
+`kokkos/lammps` (with `generate.py` and the LAMMPS inputs and dumps under `lammps/`): the
+32-sphere configuration of LAMMPS's own granular unit tests (a jittered fcc lattice of spheres
+of diameter 1.25 in a fully periodic box of side 3.36, every sphere overlapping its neighbours)
+run for 100 steps in LAMMPS (22 Jul 2025) with `pair gran/hooke/history 1000 500 50 50 mu 1`
+and in this module with the `LinearSpringDashpot` model, the LAMMPS damping coefficients times
+$m_\text{eff}$; and a spinning sphere striking a `fix wall/gran` floor obliquely against an
+analytic wall. Both codes integrate with velocity Verlet and the same contact conventions, and
+the LAMMPS dumps are the gold of the tests: positions agree to $5 \times 10^{-14}$ and velocities
+and spins to $10^{-14}$ over the 100 steps, frictionless and with the contacts sliding at the
+Coulomb limit (the LAMMPS-style spring reset), and through the loaded phase of the wall bounce.
+Two conventions differ and are kept out of the reference windows: LAMMPS caps the tangential
+force at $\mu |F_n|$ where this module uses $\mu \max(F_n, 0)$ (no friction without contact
+pressure), which matters only when the dashpot makes the net normal force attractive; and
+LAMMPS's setup-step force evaluation does not advance the histories, so a contact whose
+dashpot alone exceeds the Coulomb limit at step 0 gets no tangential force on that step. A
+`limit_damping` option (LAMMPS's, clamping the normal force at zero) is provided for
+comparisons with `pair granular`. The same collision as `examples/granular/in.restitution`
+(Hertz, `damping coeff_restitution`) rebounds at 0.79999999 m/s in both codes.
+
+The comparison found and fixed one defect: the forces used for the first half-kick of a MOOSE
+step were recomputed at the end of the previous step with the full-step velocities, while every
+substep, like LAMMPS, uses forces computed with the half-step velocities, so the trajectory
+depended on how the substeps were grouped into steps at the order of the dashpot force times
+the substep. The last substep's forces now travel with the particles (and into checkpoints),
+and the end-of-step recompute serves the outputs only (`friction/oblique_impact_regroup`).
+
 ## Dense-flow benchmarks (`examples/`)
 
 The Tier 2 cases below are run by scripts under `modules/dem/examples/` that generate the

@@ -39,8 +39,8 @@ KokkosParticleState::compute()
   auto x = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, cloud.x);
   auto v = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, cloud.v);
   auto omega = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, cloud.omega);
-  auto f = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, cloud.f);
-  auto tau = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, cloud.tau);
+  auto f = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, cloud.f_out);
+  auto tau = ::Kokkos::create_mirror_view_and_copy(::Kokkos::HostSpace{}, cloud.tau_out);
 
   _gid.resize(n);
   for (const auto c : make_range(3))

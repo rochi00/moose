@@ -1,0 +1,37 @@
+[Tests]
+  design = 'KokkosParticleCloud.md validation.md'
+  issues = '#0'
+  [hooke_history_nofric]
+    type = CSVDiff
+    input = hooke_history_nofric.i
+    csvdiff = 'hooke_history_nofric_out_state_0001.csv hooke_history_nofric_out_state_0002.csv'
+    # Cross-code check: the gold is the LAMMPS dump (see generate.py); the trajectories agree to
+    # 5e-14 in position and 1e-14 in velocity over 100 steps of overlapping, colliding spheres
+    # (1e-9 relative covers the velocities that have decayed to 1e-4)
+    rel_err = 1e-9
+    abs_zero = 1e-12
+    requirement = 'The system shall reproduce, to roundoff, the LAMMPS gran/hooke/history trajectory of 32 frictionless spheres in a periodic box, on any number of ranks and however the substeps are grouped into steps.'
+    capabilities = 'kokkos'
+  []
+  [hooke_history_rest]
+    type = CSVDiff
+    input = hooke_history_rest.i
+    csvdiff = 'hooke_history_rest_out_state_0001.csv hooke_history_rest_out_state_0002.csv'
+    # As above with friction (mu = 0.02) from rest: the compressed lattice relaxes with most
+    # contacts sliding at the Coulomb limit, with the LAMMPS-style spring reset
+    rel_err = 1e-9
+    abs_zero = 1e-12
+    requirement = 'The system shall reproduce, to roundoff, the LAMMPS gran/hooke/history trajectory of 32 frictional spheres relaxing from a compressed lattice with their contacts sliding at the Coulomb limit, on any number of ranks.'
+    capabilities = 'kokkos'
+  []
+  [wall_gran]
+    type = CSVDiff
+    input = wall_gran.i
+    csvdiff = 'wall_gran_out_state_0001.csv wall_gran_out_state_0002.csv'
+    # The loaded phase of an oblique, spinning bounce on a LAMMPS fix wall/gran floor
+    rel_err = 1e-9
+    abs_zero = 1e-12
+    requirement = 'The system shall reproduce, to roundoff, the LAMMPS fix wall/gran hooke/history trajectory of a spinning sphere striking a plane obliquely through the loaded phase of the contact.'
+    capabilities = 'kokkos'
+  []
+[]

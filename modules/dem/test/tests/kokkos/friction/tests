@@ -32,6 +32,18 @@
     requirement = 'The system shall give the same result for an oblique collision with friction when a smaller neighbor-list skin makes the list, and the contact histories with it, rebuild five times as often.'
     capabilities = 'kokkos'
   []
+  [oblique_impact_regroup]
+    type = CSVDiff
+    input = oblique_impact.i
+    cli_args = 'UserObjects/cloud/substeps=250 Executioner/dt=0.0025 Executioner/num_steps=12 Outputs/file_base=oblique_impact_regroup_out'
+    csvdiff = oblique_impact_regroup_out_state_0012.csv
+    # The same substeps grouped into twice as many steps give the identical result: the forces
+    # of the last substep, computed with the half-step velocities like every other, carry over
+    # the step boundary (gold identical to oblique_impact's)
+    rel_err = 1e-8
+    requirement = 'The system shall give the identical trajectory when the same substeps are grouped into steps of a different size, the contact forces carrying over the step boundary as they do between substeps.'
+    capabilities = 'kokkos'
+  []
   [mindlin_loading]
     type = CSVDiff
     input = mindlin_loading.i

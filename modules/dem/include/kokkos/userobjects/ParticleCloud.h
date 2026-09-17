@@ -41,10 +41,17 @@ struct ParticleCloud
   ::Kokkos::View<Real *> m;
   /// Moment of inertia (scalar; spheres only)
   ::Kokkos::View<Real *> inertia;
-  /// Force accumulator, zeroed every substep
+  /// Force accumulator, zeroed every substep; between steps it holds the force of the last
+  /// substep, which the next step's first half-kick uses
   VectorView f;
   /// Torque accumulator in the body frame, zeroed every substep
   VectorView tau;
+  /// Force and torque recomputed at the end of the step from the settled positions and the
+  /// full-step velocities, for output; the half-kick uses f and tau, computed with the
+  /// half-step velocities like every substep's, so the trajectory does not depend on how the
+  /// substeps are grouped into steps
+  VectorView f_out;
+  VectorView tau_out;
   /// Contiguous local element containing the particle, or one of the sentinels below
   ::Kokkos::View<ContiguousElementID *> elem;
   /// elem value of a particle whose element could not be resolved by the face walk; retried by a
@@ -80,6 +87,8 @@ struct ParticleCloud
     inertia = ::Kokkos::View<Real *>("dem_inertia", capacity);
     f = libMesh::Kokkos::make_vector_storage<StoragePolicy>("dem_f", capacity);
     tau = libMesh::Kokkos::make_vector_storage<StoragePolicy>("dem_tau", capacity);
+    f_out = libMesh::Kokkos::make_vector_storage<StoragePolicy>("dem_f_out", capacity);
+    tau_out = libMesh::Kokkos::make_vector_storage<StoragePolicy>("dem_tau_out", capacity);
     elem = ::Kokkos::View<ContiguousElementID *>("dem_elem", capacity);
     target_rank = ::Kokkos::View<processor_id_type *>("dem_target_rank", capacity);
     hops = ::Kokkos::View<unsigned int *>("dem_hops", capacity);
@@ -111,8 +120,8 @@ struct ParticleCloud
   }
 
   /// Number of Reals a particle is packed into for migration: gid, x, v, omega, q, r, m, inertia,
-  /// hops, and the libMesh ID of its element
-  static constexpr std::size_t record_size = 19;
+  /// hops, f, tau, and the libMesh ID of its element
+  static constexpr std::size_t record_size = 25;
 
   /// Pack particle i into a migration record, with its element given as a libMesh ID
   KOKKOS_INLINE_FUNCTION void pack(const std::size_t i,
@@ -132,7 +141,12 @@ struct ParticleCloud
     record[15] = m(i);
     record[16] = inertia(i);
     record[17] = hops(i);
-    record[18] = libmesh_elem_id;
+    for (unsigned int c = 0; c < 3; ++c)
+    {
+      record[18 + c] = f(i, c);
+      record[21 + c] = tau(i, c);
+    }
+    record[24] = libmesh_elem_id;
   }
 
   /// Host-side copy of the particle views, used to stage received particles
@@ -172,8 +186,8 @@ struct ParticleCloud
         x(j, c) = record[1 + c];
         v(j, c) = record[4 + c];
         omega(j, c) = record[7 + c];
-        f(j, c) = 0;
-        tau(j, c) = 0;
+        f(j, c) = record[18 + c];
+        tau(j, c) = record[21 + c];
       }
       for (unsigned int c = 0; c < 4; ++c)
         q(j, c) = record[10 + c];

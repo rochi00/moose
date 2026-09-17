@@ -61,6 +61,11 @@ KokkosParticleCloud::validParams()
                                     "tangential_damping >= 0",
                                     "Tangential dashpot coefficient of the linear spring-dashpot "
                                     "contact");
+  params.addParam<bool>("limit_damping",
+                        false,
+                        "Never let the normal damping make the normal force attractive: the "
+                        "force is clamped at zero while the spring's repulsion is smaller than "
+                        "the dashpot's pull, as in LAMMPS's granular styles with limit_damping");
   params.addRangeCheckedParam<Real>(
       "friction",
       0,
@@ -245,7 +250,8 @@ KokkosParticleCloud::KokkosParticleCloud(const InputParameters & parameters)
     _linear({getParam<Real>("normal_stiffness"),
              getParam<Real>("normal_damping"),
              getParam<Real>("tangential_stiffness"),
-             getParam<Real>("tangential_damping")}),
+             getParam<Real>("tangential_damping"),
+             getParam<bool>("limit_damping")}),
     _hertz(makeHertz()),
     _friction({getParam<Real>("friction"),
                getParam<bool>("partial_slip"),
@@ -363,7 +369,8 @@ KokkosParticleCloud::makeHertz() const
   return {E / (2 * (1 - nu * nu)),
           -log_e / std::sqrt(log_e * log_e + libMesh::pi * libMesh::pi),
           E / (2 * (1 + nu)) / (2 * (2 - nu)),
-          getParam<Real>("dissipation_time")};
+          getParam<Real>("dissipation_time"),
+          getParam<bool>("limit_damping")};
 }
 
 bool
@@ -491,6 +498,8 @@ KokkosParticleCloud::initialSetup()
   {
     updateNeighborList();
     computeForces(false);
+    ::Kokkos::deep_copy(_cloud.f_out, _cloud.f);
+    ::Kokkos::deep_copy(_cloud.tau_out, _cloud.tau);
     // Reduce so the initial values are global before the first execution
     count();
     finalize();
@@ -640,10 +649,16 @@ KokkosParticleCloud::restore()
   checkpoint.histories.clear();
 
   // Rebuild everything derived: the neighbor list (and with it the ghosts and the pair-state
-  // map, which keeps the restored histories of the listed pairs), the forces, and the counters
+  // map, which keeps the restored histories of the listed pairs), the output forces, and the
+  // counters; the restored forces are the last substep's and feed the next half-kick as they
+  // would have without the restart
   _force_rebuild = true;
   updateNeighborList();
+  std::swap(_cloud.f, _cloud.f_out);
+  std::swap(_cloud.tau, _cloud.tau_out);
   computeForces(false);
+  std::swap(_cloud.f, _cloud.f_out);
+  std::swap(_cloud.tau, _cloud.tau_out);
   count();
   _initial_finalize = true;
   finalize();
@@ -1096,15 +1111,22 @@ KokkosParticleCloud::compute()
   }
 
   // Every particle is settled at the end of the step, so it is located and owned where it is;
-  // those in the outflow box leave with the exited
+  // those in the outflow box leave with the exited. The forces of the last substep travel with
+  // the particles for the next step's first half-kick
   if (_outflow_box.size())
     applyOutflow();
   settle();
-  // Received particles arrive without forces, and the next step's first half-kick needs them;
-  // the histories were advanced for this substep already and travelled with the particles
+  // The forces for output, contact counts, and wall forces are recomputed from the settled
+  // positions and the full-step velocities into the output views, leaving the half-kick's
+  // forces (computed with the half-step velocities, as in every substep) untouched; the
+  // histories were advanced for this substep already and travelled with the particles
   if (!updateNeighborList())
     startGhostUpdate();
+  std::swap(_cloud.f, _cloud.f_out);
+  std::swap(_cloud.tau, _cloud.tau_out);
   computeForces(false);
+  std::swap(_cloud.f, _cloud.f_out);
+  std::swap(_cloud.tau, _cloud.tau_out);
 
   count();
   // Every rank takes part in the reduction, whether or not it holds wall faces

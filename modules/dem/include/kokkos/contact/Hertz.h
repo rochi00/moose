@@ -30,6 +30,9 @@ struct Hertz
   Real effective_shear_modulus = 0;
   /// Dissipative constant A of the Kuwabara-Kono damping, used instead of Tsuji's when positive
   Real dissipation_time = 0;
+  /// Whether the damping may only reduce the repulsion, never make the normal force attractive
+  /// (LAMMPS's limit_damping)
+  bool limit_damping = false;
 
   /// Whether the model applies any force
   bool enabled() const { return effective_modulus > 0; }
@@ -42,11 +45,13 @@ struct Hertz
   {
     // S_n = 2 E* sqrt(r_eff overlap) is the tangent stiffness dF/d(overlap)
     const Real s_n = 2 * effective_modulus * ::Kokkos::sqrt(r_eff * overlap);
-    if (dissipation_time > 0)
-      return 2.0 / 3.0 * s_n * overlap - dissipation_time * s_n * normal_velocity;
     // 2 sqrt(5/6) = 1.8257418583505538
-    return 2.0 / 3.0 * s_n * overlap -
-           1.8257418583505538 * beta * ::Kokkos::sqrt(s_n * m_eff) * normal_velocity;
+    const Real f_n =
+        dissipation_time > 0
+            ? 2.0 / 3.0 * s_n * overlap - dissipation_time * s_n * normal_velocity
+            : 2.0 / 3.0 * s_n * overlap -
+                  1.8257418583505538 * beta * ::Kokkos::sqrt(s_n * m_eff) * normal_velocity;
+    return limit_damping && f_n < 0 ? 0 : f_n;
   }
 
   ///@{

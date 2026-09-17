@@ -27,6 +27,9 @@ struct LinearSpringDashpot
   Real tangential_stiffness = 0;
   /// Tangential dashpot coefficient
   Real tangential_damping = 0;
+  /// Whether the dashpot may only reduce the repulsion, never make the normal force attractive
+  /// (LAMMPS's limit_damping)
+  bool limit_damping = false;
 
   /// Whether the model applies any force
   bool enabled() const { return stiffness > 0; }
@@ -45,7 +48,8 @@ struct LinearSpringDashpot
                                           const Real /*r_eff*/,
                                           const Real /*m_eff*/) const
   {
-    return stiffness * overlap - damping * normal_velocity;
+    const Real f_n = stiffness * overlap - damping * normal_velocity;
+    return limit_damping && f_n < 0 ? 0 : f_n;
   }
 
   /// Elastic energy stored in the spring at an overlap
