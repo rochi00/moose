@@ -12,6 +12,8 @@
 #include "MooseLinearVariableFV.h"
 #include "Function.h"
 #include "NS.h"
+#include "NavierStokesMethods.h"
+#include "NavierStokesMethods.h"
 #include "FVKernel.h"
 
 registerMooseObject("NavierStokesApp", WCNSFV2PSlipVelocityFunctorMaterial);
@@ -24,9 +26,22 @@ WCNSFV2PSlipVelocityFunctorMaterial::validParams()
   params.addRequiredCoupledVar("u", "The velocity in the x direction.");
   params.addCoupledVar("v", "The velocity in the y direction.");
   params.addCoupledVar("w", "The velocity in the z direction.");
-  params.addRequiredParam<MooseFunctorName>(NS::density, "Continuous phase density.");
+  params.addRequiredParam<MooseFunctorName>(
+      NS::density,
+      "Mixture density, which carries the buoyancy factor (rho_d - rho_m) / rho_d of the closure.");
   params.addRequiredParam<MooseFunctorName>("rho_d", "Dispersed phase density.");
-  params.addRequiredParam<MooseFunctorName>(NS::mu, "Mixture Density");
+  params.addRequiredParam<MooseFunctorName>(
+      NS::mu,
+      "Continuous phase dynamic viscosity, which carries the particle relaxation time; Stokes "
+      "drag is exerted by the fluid the particle moves through.");
+  params.addParam<bool>(
+      "use_dispersed_phase_drag_model",
+      false,
+      "Whether to close the drag with the Schiller and Naumann correlation, solved together with "
+      "the force balance so that its particle Reynolds number is formed from the slip velocity. "
+      "Replaces 'linear_coef_name'.");
+  params.addParam<MooseFunctorName>(
+      "rho_c", "Continuous phase density, needed by the drag model for its Reynolds number.");
   params.addParam<RealVectorValue>(
       "gravity", RealVectorValue(0, 0, 0), "Gravity acceleration vector");
   params.addParam<Real>("force_value", 0.0, "Coefficient to multiply by the body force term");
@@ -79,9 +94,18 @@ WCNSFV2PSlipVelocityFunctorMaterial::WCNSFV2PSlipVelocityFunctorMaterial(
     _force_postprocessor(getPostprocessorValue("force_postprocessor")),
     _force_direction(getParam<RealVectorValue>("force_direction")),
     _linear_friction(getFunctor<ADReal>("linear_coef_name")),
+    _use_drag_model(getParam<bool>("use_dispersed_phase_drag_model")),
+    _rho_c(_use_drag_model ? &getFunctor<ADReal>("rho_c") : nullptr),
     _particle_diameter(getFunctor<ADReal>("particle_diameter")),
     _index(getParam<MooseEnum>("momentum_component"))
 {
+  if (_use_drag_model && !isParamValid("rho_c"))
+    paramError("rho_c", "The drag model needs the continuous phase density.");
+  if (_use_drag_model && isParamSetByUser("linear_coef_name"))
+    paramError("linear_coef_name",
+               "A prescribed friction factor cannot be combined with the drag model, which is "
+               "solved inside this closure rather than supplied to it.");
+
   if (!dynamic_cast<const INSFVVelocityVariable *>(_u_var) &&
       !dynamic_cast<const MooseLinearVariableFV<Real> *>(_u_var))
     paramError("u",
@@ -155,14 +179,29 @@ WCNSFV2PSlipVelocityFunctorMaterial::WCNSFV2PSlipVelocityFunctorMaterial(
         }
 
         const ADReal density_scaling = (_rho_d(r, t) - _rho_mixture(r, t)) / _rho_d(r, t);
-        const ADReal flux_residual =
-            density_scaling * (-term_transient - term_advection + _gravity + term_force)(_index);
+        const ADRealVectorValue acceleration_vec =
+            -term_transient - term_advection + _gravity + term_force;
 
         const ADReal relaxation_time =
             _rho_d(r, t) * Utility::pow<2>(_particle_diameter(r, t)) / (18.0 * _mu_mixture(r, t));
 
-        const ADReal linear_friction_factor = _linear_friction(r, t) + offset;
+        // The slip in the Stokes limit, f_drag = 1, which is also the whole answer when the drag
+        // function is prescribed rather than computed
+        const ADReal stokes_prefactor = relaxation_time * density_scaling;
 
-        return relaxation_time / linear_friction_factor * flux_residual;
+        if (!_use_drag_model)
+          return stokes_prefactor / (_linear_friction(r, t) + offset) * acceleration_vec(_index);
+
+        // Otherwise solve the force balance and the drag correlation together, so that the
+        // particle Reynolds number is formed from the slip velocity as its definition requires.
+        // The magnitude comes from the solve, the direction from the acceleration.
+        using std::abs;
+        const ADReal stokes_speed = abs(stokes_prefactor) * acceleration_vec.norm();
+        const ADReal reynolds_per_speed = NS::particleReynoldsNumber(
+            (*_rho_c)(r, t), _particle_diameter(r, t), ADReal(1.0), _mu_mixture(r, t));
+        const ADReal slip_speed = NS::solveSlipSpeed(stokes_speed, reynolds_per_speed);
+        const ADReal f_drag =
+            (MetaPhysicL::raw_value(slip_speed) > 0.0) ? stokes_speed / slip_speed : ADReal(1.0);
+        return stokes_prefactor / f_drag * acceleration_vec(_index);
       });
 }
