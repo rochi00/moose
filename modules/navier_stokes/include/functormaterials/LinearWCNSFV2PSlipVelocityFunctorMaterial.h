@@ -70,32 +70,6 @@ protected:
   /// Retrieve a velocity variable and check that it is a linear finite volume variable
   MooseLinearVariableFVReal & getVelocityVariable(const std::string & param_name);
 
-  /**
-   * The magnitude of the slip velocity, obtained from the force balance with the drag evaluated
-   * at the correct particle Reynolds number.
-   *
-   * The closure is \f$ u_s = \tau_d / f(Re_p) \cdot K \cdot a \f$ with
-   * \f$ Re_p = \rho_c d_d |u_s| / \mu_c \f$, so the drag depends on the very quantity it
-   * determines. Writing \f$ s = |u_s| \f$, \f$ R = \rho_c d_d / \mu_c \f$ and
-   * \f$ s_0 = \tau_d |K| |a| \f$ for the slip the Stokes limit \f$ f \equiv 1 \f$ would give, the
-   * balance is the scalar equation
-   *
-   * \f[
-   *   s \, f(R s) = s_0 .
-   * \f]
-   *
-   * The left hand side is zero at \f$ s = 0 \f$ and strictly increasing, so the root is unique,
-   * and since \f$ f \ge 1 \f$ it is bracketed by \f$ [0, s_0] \f$. This is solved by a Newton
-   * iteration safeguarded by that bracket.
-   *
-   * Solving here rather than reading a drag functor is what keeps the functor dependency graph
-   * acyclic: a drag material formed from the slip velocity, which is the correct definition,
-   * cannot also be an input to the slip velocity.
-   *
-   * @param stokes_speed the slip magnitude in the Stokes limit, \f$ s_0 \f$
-   * @param reynolds_per_speed the factor \f$ R \f$ converting a speed into a Reynolds number
-   */
-  static Real solveSlipSpeed(Real stokes_speed, Real reynolds_per_speed);
 
   /**
    * The factor converting the slip velocity into the diffusion velocity, \f$ 1 - c_d \f$.
@@ -164,7 +138,7 @@ protected:
   const RealVectorValue _force_direction;
 
   /// Prescribed linear drag function. Null when the drag is computed internally from the
-  /// Schiller and Naumann correlation, see solveSlipSpeed
+  /// Schiller and Naumann correlation, see NS::solveSlipSpeed
   const Moose::Functor<Real> * const _linear_friction;
 
   /// Continuous phase density, used to form the particle Reynolds number
