@@ -367,7 +367,7 @@ LinearWCNSFV2PSlipVelocityFunctorMaterial::LinearWCNSFV2PSlipVelocityFunctorMate
         {
           const Real reynolds_per_speed =
               NS::particleReynoldsNumber(rho_c, _particle_diameter(r, t), 1.0, mu_c);
-          slip_speed = solveSlipSpeed(stokes_speed, reynolds_per_speed);
+          slip_speed = NS::solveSlipSpeed(stokes_speed, reynolds_per_speed);
         }
 
         // Distorted particle branch. Its drag function is linear in the slip speed, so the force
@@ -418,72 +418,6 @@ LinearWCNSFV2PSlipVelocityFunctorMaterial::LinearWCNSFV2PSlipVelocityFunctorMate
                              { return volumetricDriftFactor(r, t) * slip_velocity(r, t); });
 }
 
-
-Real
-LinearWCNSFV2PSlipVelocityFunctorMaterial::solveSlipSpeed(const Real stokes_speed,
-                                                          const Real reynolds_per_speed)
-{
-  // f(0) = 1, so a vanishing acceleration gives a vanishing slip and the drag never enters
-  if (stokes_speed <= 0.0 || reynolds_per_speed <= 0.0)
-    return stokes_speed;
-
-  // Solve in Reynolds number rather than in speed. Multiplying s f(R s) = s0 through by R turns it
-  // into Re f(Re) = B, with B = R s0 a dimensionless group formed entirely from inputs. The root is
-  // unchanged; what is gained is that the branch of f can be chosen before iterating, from a
-  // quantity that does not move as the iteration proceeds. The loop below therefore only ever
-  // evaluates the Schiller and Naumann branch, and cannot step across the 0.2% seam dragFunction
-  // takes at Re = 1000 the way an iteration re-testing its own iterate could.
-  const Real driving_group = reynolds_per_speed * stokes_speed;
-
-  // Below this the drag correction 0.15 Re^0.687 is 3e-13, smaller than the relative tolerance the
-  // loop would converge to, so the Stokes answer is already the converged one.
-  constexpr Real negligible_driving_group = 1e-17;
-  if (driving_group < negligible_driving_group)
-    return stokes_speed;
-
-  // In Newton's regime f = 0.0183 Re, so the balance becomes 0.0183 Re^2 = B and is exact. The
-  // branches of dragFunction change over at Re = 1000, which is this value of B.
-  constexpr Real newton_regime_driving_group = 0.0183 * 1000.0 * 1000.0;
-  if (driving_group >= newton_regime_driving_group)
-    return std::sqrt(driving_group / 0.0183) / reynolds_per_speed;
-
-  // g(Re) = Re f(Re) is zero at the origin and strictly increasing, and f >= 1 puts the root in
-  // [0, B]. Newton is safeguarded by that bracket so that it cannot leave it.
-  Real lower = 0.0;
-  Real upper = driving_group;
-
-  // One Picard step off the Stokes guess Re = B. It is exact in the Stokes limit and loosens
-  // towards the transition, where the bracket absorbs the resulting overshoot in one pass.
-  Real reynolds = driving_group / NS::schillerNaumannDragFunction(driving_group);
-
-  // The residual falls below this relative tolerance in a handful of iterations; the cap is a
-  // backstop, not the expected exit
-  constexpr Real rel_tol = 1e-12;
-  constexpr unsigned int max_its = 50;
-
-  for ([[maybe_unused]] const auto it : make_range(max_its))
-  {
-    const Real drag = NS::schillerNaumannDragFunction(reynolds);
-    const Real residual = reynolds * drag - driving_group;
-
-    if (std::abs(residual) <= rel_tol * driving_group)
-      break;
-
-    if (residual > 0.0)
-      upper = reynolds;
-    else
-      lower = reynolds;
-
-    // d/dRe [Re f(Re)] = f(Re) + Re f'(Re), the second term written as the finite product
-    const Real derivative = drag + NS::schillerNaumannDragDerivative(reynolds);
-    const Real candidate = reynolds - residual / derivative;
-
-    // Fall back on bisection if Newton steps outside the bracket
-    reynolds = (candidate > lower && candidate < upper) ? candidate : 0.5 * (lower + upper);
-  }
-
-  return reynolds / reynolds_per_speed;
-}
 
 
 Real
