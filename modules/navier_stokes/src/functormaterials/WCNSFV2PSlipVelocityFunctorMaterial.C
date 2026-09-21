@@ -55,6 +55,11 @@ WCNSFV2PSlipVelocityFunctorMaterial::validParams()
   params.addParam<MooseFunctorName>(
       "particle_diameter", 1.0, "Diameter of particles in the dispersed phase.");
   params.addParam<MooseFunctorName>("fd", 0.0, "Fraction dispersed phase.");
+  params.addParam<MooseFunctorName>(
+      "drift_velocity_name",
+      "Name of the diffusion (drift) velocity property to declare, the velocity of the dispersed "
+      "phase relative to the centre of mass of the mixture, (1 - c_d) u_slip with c_d the "
+      "dispersed phase mass fraction. Declared only when supplied.");
   MooseEnum momentum_component("x=0 y=1 z=2");
   params.addRequiredParam<MooseEnum>(
       "momentum_component",
@@ -97,6 +102,7 @@ WCNSFV2PSlipVelocityFunctorMaterial::WCNSFV2PSlipVelocityFunctorMaterial(
     _use_drag_model(getParam<bool>("use_dispersed_phase_drag_model")),
     _rho_c(_use_drag_model ? &getFunctor<ADReal>("rho_c") : nullptr),
     _particle_diameter(getFunctor<ADReal>("particle_diameter")),
+    _f_d(getFunctor<ADReal>("fd")),
     _index(getParam<MooseEnum>("momentum_component"))
 {
   if (_use_drag_model && !isParamValid("rho_c"))
@@ -133,7 +139,7 @@ WCNSFV2PSlipVelocityFunctorMaterial::WCNSFV2PSlipVelocityFunctorMaterial(
   if (auto w = dynamic_cast<MooseLinearVariableFV<Real> *>(_w_var))
     w->requestCellGradients();
 
-  addFunctorProperty<ADReal>(
+  const auto & slip_velocity = addFunctorProperty<ADReal>(
       getParam<MooseFunctorName>("slip_velocity_name"),
       [this](const auto & r, const auto & t)
       {
@@ -204,4 +210,22 @@ WCNSFV2PSlipVelocityFunctorMaterial::WCNSFV2PSlipVelocityFunctorMaterial(
             (MetaPhysicL::raw_value(slip_speed) > 0.0) ? stokes_speed / slip_speed : ADReal(1.0);
         return stokes_prefactor / f_drag * acceleration_vec(_index);
       });
+
+  // The diffusion (drift) velocity, the velocity of the dispersed phase relative to the centre of
+  // mass of the mixture. This, not the slip velocity, is the velocity that appears in the phase
+  // conservation equations, see VTT Publications 288 equation (28). The factor is written as
+  // (rho_m - alpha rho_d) / rho_m so that only quantities this object already has are needed.
+  if (isParamValid("drift_velocity_name"))
+    addFunctorProperty<ADReal>(getParam<MooseFunctorName>("drift_velocity_name"),
+                               [this, &slip_velocity](const auto & r, const auto & t) -> ADReal
+                               {
+                                 const auto rho_m = _rho_mixture(r, t);
+                                 if (MetaPhysicL::raw_value(rho_m) <= 0.0)
+                                   return slip_velocity(r, t);
+                                 const auto fd_raw = _f_d(r, t);
+                                 const ADReal fd = (fd_raw < 0.0)   ? ADReal(0.0)
+                                                   : (fd_raw > 1.0) ? ADReal(1.0)
+                                                                    : fd_raw;
+                                 return (rho_m - fd * _rho_d(r, t)) / rho_m * slip_velocity(r, t);
+                               });
 }
