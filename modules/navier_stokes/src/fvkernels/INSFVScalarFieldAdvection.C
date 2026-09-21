@@ -50,10 +50,17 @@ INSFVScalarFieldAdvection::computeQpResidual()
                                   ? Moose::StateArg(1, Moose::SolutionIterationType::Time)
                                   : Moose::StateArg(1, Moose::SolutionIterationType::Nonlinear);
 
-  ADRealVectorValue advection_velocity;
+  const auto v = velocity();
+  const auto var_face = _var(makeFace(*_face_info,
+                                      limiterType(_advected_interp_method),
+                                      MetaPhysicL::raw_value(v) * _normal > 0,
+                                      false,
+                                      &limiter_time),
+                             state);
+  auto flux = _normal * v * var_face;
+
   if (_add_slip_model)
   {
-
     Moose::FaceArg face_arg;
     if (onBoundary(*_face_info))
       face_arg = singleSidedFaceArg();
@@ -72,17 +79,20 @@ INSFVScalarFieldAdvection::computeQpResidual()
       velocity_slip_vel_vec(1) = (*_v_slip)(face_arg, state);
     if (_dim >= 3)
       velocity_slip_vel_vec(2) = (*_w_slip)(face_arg, state);
-    advection_velocity += velocity_slip_vel_vec;
+
+    // The slip flux is interpolated on its own, with its own donor cell. Summing it with the
+    // mixture flux and upwinding the sum on the mixture velocity alone hands a face carried by
+    // the slip the wrong donor wherever the mixture velocity is small or opposed to the slip, a
+    // wall cell for instance, and the advected quantity there drifts out of bounds.
+    const auto var_face_slip =
+        _var(makeFace(*_face_info,
+                      limiterType(_advected_interp_method),
+                      MetaPhysicL::raw_value(velocity_slip_vel_vec) * _normal > 0,
+                      false,
+                      &limiter_time),
+             state);
+    flux += _normal * velocity_slip_vel_vec * var_face_slip;
   }
 
-  const auto v = velocity();
-  advection_velocity += v;
-  const auto var_face = _var(makeFace(*_face_info,
-                                      limiterType(_advected_interp_method),
-                                      MetaPhysicL::raw_value(v) * _normal > 0,
-                                      false,
-                                      &limiter_time),
-                             state);
-
-  return _normal * advection_velocity * var_face;
+  return flux;
 }
