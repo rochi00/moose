@@ -70,6 +70,9 @@ protected:
   /// Particle diameter in the dispersed phase
   const Moose::Functor<ADReal> & _particle_diameter;
 
+  /// Dispersed phase fraction, converting the slip velocity into the drift velocity
+  const Moose::Functor<ADReal> & _f_d;
+
   /// index of the velocity component x|y|z
   unsigned int _index;
 };
