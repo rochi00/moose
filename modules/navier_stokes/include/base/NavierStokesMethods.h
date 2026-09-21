@@ -144,14 +144,15 @@ particleReynoldsNumber(const T & rho_c, const T & particle_diameter, const T & s
  * which has temporarily left the physical range cannot drive the mixture density non-positive.
  * Zero where either phase is absent.
  */
-inline Real
-diffusionStressCoefficient(Real fd, Real rho_d, Real rho_c)
+template <typename T>
+T
+diffusionStressCoefficient(const T & fd_in, const T & rho_d, const T & rho_c)
 {
-  fd = std::clamp(fd, 0.0, 1.0);
+  const T fd = (fd_in < 0.0) ? T(0.0) : ((fd_in > 1.0) ? T(1.0) : fd_in);
   const auto beta_d = fd * rho_d;
   const auto beta_c = (1.0 - fd) * rho_c;
   const auto rho_m = beta_d + beta_c;
-  return (rho_m > 0.0) ? beta_d * beta_c / rho_m : 0.0;
+  return (rho_m > 0.0) ? T(beta_d * beta_c / rho_m) : T(0.0);
 }
 
 /**
@@ -194,7 +195,7 @@ checkSlipVelocityComponents(const MooseObject & object, unsigned int dim, bool h
  * inputs that the root lies on this branch can evaluate it without re-testing the Reynolds number
  * on every pass. That matters: the two branches of dragFunction do not meet exactly, so an
  * iteration whose intermediate iterates re-tested the transition could step across the seam and
- * oscillate. See LinearWCNSFV2PSlipVelocityFunctorMaterial::solveSlipSpeed.
+ * oscillate. See solveSlipSpeed.
  */
 template <typename T>
 T
@@ -212,11 +213,14 @@ schillerNaumannDragFunction(const T & Re_p)
  * Written as the product because \f$ Re_p \, f'(Re_p) \f$ is finite at \f$ Re_p = 0 \f$ while
  * \f$ f' \f$ alone diverges there.
  */
-inline Real
-schillerNaumannDragDerivative(Real Re_p)
+template <typename T>
+T
+schillerNaumannDragDerivative(const T & Re_p)
 {
-  mooseAssert(Re_p >= 0, "The particle Reynolds number is formed from a magnitude");
-  return 0.15 * 0.687 * std::pow(Re_p, 0.687);
+  using std::pow;
+  mooseAssert(MetaPhysicL::raw_value(Re_p) >= 0,
+              "The particle Reynolds number is formed from a magnitude");
+  return 0.15 * 0.687 * pow(Re_p, 0.687);
 }
 
 /**
@@ -236,6 +240,90 @@ dragFunction(const T & Re_p)
   mooseAssert(MetaPhysicL::raw_value(Re_p) >= 0,
               "The particle Reynolds number is formed from a magnitude");
   return (Re_p <= 1000.0) ? schillerNaumannDragFunction(Re_p) : 0.0183 * Re_p;
+}
+
+
+/**
+ * Solves Manninen's force balance together with the drag correlation for the slip speed:
+ * \f$ s \, f(R s) = s_0 \f$, where \f$ s_0 \f$ is the slip speed in the Stokes limit and
+ * \f$ R \f$ converts a speed into a particle Reynolds number. The left hand side is zero at
+ * \f$ s = 0 \f$ and strictly increasing, so the root is unique, and since \f$ f \ge 1 \f$ it is
+ * bracketed by \f$ [0, s_0] \f$. Solved by a Newton iteration safeguarded by that bracket.
+ *
+ * Solving here rather than reading a drag functor is what keeps the functor dependency graph
+ * acyclic: a drag material formed from the slip velocity, which is the correct definition,
+ * cannot also be an input to the slip velocity. Templated so that both the AD and the linear
+ * finite volume slip closures can call it; the comparisons that steer the iteration use raw
+ * values, the arithmetic carries the derivatives.
+ */
+template <typename T>
+T
+solveSlipSpeed(const T & stokes_speed, const T & reynolds_per_speed)
+{
+  using std::sqrt;
+  // f(0) = 1, so a vanishing acceleration gives a vanishing slip and the drag never enters
+  if (MetaPhysicL::raw_value(stokes_speed) <= 0.0 || MetaPhysicL::raw_value(reynolds_per_speed) <= 0.0)
+    return stokes_speed;
+
+  // Solve in Reynolds number rather than in speed. Multiplying s f(R s) = s0 through by R turns it
+  // into Re f(Re) = B, with B = R s0 a dimensionless group formed entirely from inputs. The root is
+  // unchanged; what is gained is that the branch of f can be chosen before iterating, from a
+  // quantity that does not move as the iteration proceeds. The loop below therefore only ever
+  // evaluates the Schiller and Naumann branch, and cannot step across the 0.2% seam dragFunction
+  // takes at Re = 1000 the way an iteration re-testing its own iterate could.
+  const T driving_group = reynolds_per_speed * stokes_speed;
+
+  // Below this the drag correction 0.15 Re^0.687 is 3e-13, smaller than the relative tolerance the
+  // loop would converge to, so the Stokes answer is already the converged one.
+  constexpr Real negligible_driving_group = 1e-17;
+  if (MetaPhysicL::raw_value(driving_group) < negligible_driving_group)
+    return stokes_speed;
+
+  // In Newton's regime f = 0.0183 Re, so the balance becomes 0.0183 Re^2 = B and is exact. The
+  // branches of dragFunction change over at Re = 1000, which is this value of B.
+  constexpr Real newton_regime_driving_group = 0.0183 * 1000.0 * 1000.0;
+  if (MetaPhysicL::raw_value(driving_group) >= newton_regime_driving_group)
+    return sqrt(driving_group / 0.0183) / reynolds_per_speed;
+
+  // g(Re) = Re f(Re) is zero at the origin and strictly increasing, and f >= 1 puts the root in
+  // [0, B]. Newton is safeguarded by that bracket so that it cannot leave it.
+  T lower = 0.0;
+  T upper = driving_group;
+
+  // One Picard step off the Stokes guess Re = B. It is exact in the Stokes limit and loosens
+  // towards the transition, where the bracket absorbs the resulting overshoot in one pass.
+  T reynolds = driving_group / NS::schillerNaumannDragFunction(driving_group);
+
+  // The residual falls below this relative tolerance in a handful of iterations; the cap is a
+  // backstop, not the expected exit
+  constexpr Real rel_tol = 1e-12;
+  constexpr unsigned int max_its = 50;
+
+  for ([[maybe_unused]] const auto it : make_range(max_its))
+  {
+    const T drag = NS::schillerNaumannDragFunction(reynolds);
+    const T residual = reynolds * drag - driving_group;
+
+    if (std::abs(MetaPhysicL::raw_value(residual)) <= rel_tol * MetaPhysicL::raw_value(driving_group))
+      break;
+
+    if (MetaPhysicL::raw_value(residual) > 0.0)
+      upper = reynolds;
+    else
+      lower = reynolds;
+
+    // d/dRe [Re f(Re)] = f(Re) + Re f'(Re), the second term written as the finite product
+    const T derivative = drag + NS::schillerNaumannDragDerivative(reynolds);
+    const T candidate = reynolds - residual / derivative;
+
+    // Fall back on bisection if Newton steps outside the bracket
+    reynolds = (MetaPhysicL::raw_value(candidate) > MetaPhysicL::raw_value(lower) &&
+                MetaPhysicL::raw_value(candidate) < MetaPhysicL::raw_value(upper))
+                   ? candidate
+                   : T(0.5 * (lower + upper));
+  }
+
+  return reynolds / reynolds_per_speed;
 }
 
 /**
