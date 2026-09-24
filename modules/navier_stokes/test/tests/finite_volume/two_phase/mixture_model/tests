@@ -32,6 +32,10 @@
     valgrind = none
     allow_warnings = true
   []
+  # The two cases below solve the coupled system with automatic differentiation over a five cell
+  # ghosted stencil, which needs more derivative slots than the default build provides: they are
+  # skipped rather than run wherever the container is smaller. Changes to the drift flux therefore
+  # have to be checked against them in a configuration built with the larger size.
   [mixture_channel_drift_flux]
     type = 'Exodiff'
     input = 'channel-drift-flux.i'
