@@ -9,6 +9,8 @@
 
 #include "LinearWCNSFV2PDriftFluxBase.h"
 
+#include <algorithm>
+
 InputParameters
 LinearWCNSFV2PDriftFluxBase::validParams()
 {
@@ -56,6 +58,13 @@ bool
 LinearWCNSFV2PDriftFluxBase::slipAllowedOnCurrentFace() const
 {
   const auto & fi = *_current_face_info;
-  return fi.neighborPtr() ||
-         (!fi.boundaryIDs().empty() && _slip_boundaries.count(*fi.boundaryIDs().begin()));
+  if (fi.neighborPtr())
+    return true;
+
+  // Any of the sidesets a face belongs to may be the one that declared it permeable, so all of
+  // them are tested rather than the first: a face carrying both 'inlet' and a grouping sideset
+  // would otherwise be judged by whichever of the two the mesh happens to list first.
+  const auto & ids = fi.boundaryIDs();
+  return std::any_of(
+      ids.begin(), ids.end(), [this](const auto id) { return _slip_boundaries.count(id); });
 }

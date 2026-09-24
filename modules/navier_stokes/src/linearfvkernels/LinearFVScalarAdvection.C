@@ -8,6 +8,8 @@
 //* https://www.gnu.org/licenses/lgpl-2.1.html
 
 #include "LinearFVScalarAdvection.h"
+
+#include <algorithm>
 #include "LinearFVGradientManager.h"
 #include "MooseLinearVariableFV.h"
 #include "NS.h"
@@ -165,10 +167,14 @@ LinearFVScalarAdvection::setupFaceData(const FaceInfo * face_info)
   // gravity driven slip would advect phase straight through the wall. Note that carrying a boundary
   // condition on the advected variable is not evidence that a boundary is permeable: a wall may
   // legitimately pin the phase fraction.
+  // Any of the sidesets a face belongs to may be the one that declared it permeable, so all of
+  // them are tested rather than the first
+  const auto & boundary_ids = face_info->boundaryIDs();
   const bool slip_allowed_here =
-      face_info->neighborPtr() ||
-      (!face_info->boundaryIDs().empty() &&
-       _slip_boundaries.count(*face_info->boundaryIDs().begin()));
+      face_info->neighborPtr() || std::any_of(boundary_ids.begin(),
+                                              boundary_ids.end(),
+                                              [this](const auto id)
+                                              { return _slip_boundaries.count(id); });
 
   if (_u_slip && slip_allowed_here)
   {
