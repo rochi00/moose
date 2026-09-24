@@ -20,13 +20,17 @@ Vertical bubbly air-water flow in the 50.8 mm pipe of Hibiki, Ishii and Xiao (20
 axisymmetric, 1920 cells, 400 steps of 0.02 s. Postprocessors form the one-dimensional
 drift-flux parameters C0 and Vgj at the three measuring stations of the experiment.
 
-- `hibiki-50mm-pipe.i`: linear FV, PIMPLE, algebraic multigrid on every system
 - `newton-pipe.i`: nonlinear FV, Newton, direct factorization
+
+The linear FV half of the pipe pair is the validation input itself, under
+`test/tests/finite_volume/two_phase/mixture_model/segregated/validation/`, rather than a copy of
+it: `hibiki-50mm-pipe.i` there is the same case with the same mesh and stations, and running the
+two against each other is the point of the comparison.
 
 ## Running
 
     ./run.sh tjunction/pimple.i
-    NP=4 ./run.sh pipe/hibiki-50mm-pipe.i Mesh/uniform_refine=1
+    NP=4 ./run.sh ../../test/tests/finite_volume/two_phase/mixture_model/segregated/validation/hibiki-50mm-pipe.i Mesh/uniform_refine=1
     NP=4 ./run.sh pipe/newton-pipe.i MUMPS Mesh/uniform_refine=1
 
 `run.sh` appends one line per run to `results.log` with the wall time, number of steps, number

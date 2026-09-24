@@ -1,5 +1,5 @@
 ##########################################################
-# The 50.8 mm pipe of hibiki-50mm-pipe.i, built instead with the nonlinear (Newton) finite volume
+# The 50.8 mm pipe of the validation input hibiki-50mm-pipe.i, built instead with the nonlinear
 # mixture model. Same mesh, stations, closure (Schiller-Naumann drag solved for the slip speed,
 # mixture density in the closure, diffusion velocity in the phase equation) and time march, so that
 # the two discretizations can be compared on equal terms, both in the drift-flux parameters they

@@ -16,8 +16,7 @@
 #
 #   j    = u_m + (alpha - c_d) u_slip,       c_d = alpha rho_g / rho_m
 #
-# See the validation section of mms-drift-flux.tex for the derivation and for what these can and
-# cannot establish. In short: Vgj is a genuine test of the algebraic slip closure, whereas C0 is
+# Vgj is a genuine test of the algebraic slip closure, whereas C0 is
 # expected to come out near unity because the model carries no lift force, and is reported as a
 # diagnostic of that.
 ##########################################################
@@ -64,7 +63,6 @@ k_g = 1
 
 [Problem]
   linear_sys_names = 'u_system v_system pressure_system phi_system'
-  previous_nl_solution_required = true
 []
 
 [Physics]
