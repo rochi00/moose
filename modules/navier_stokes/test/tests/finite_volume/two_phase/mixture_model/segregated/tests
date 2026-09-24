@@ -167,6 +167,16 @@
     max_threads = 1 # see libmesh issue #3808
   []
 
+  [conservative_transient_interfacial_area_compression]
+    type = CSVDiff
+    input = 'conservative-transient-interfacial-area-compression.i'
+    csvdiff = 'conservative-transient-interfacial-area-compression_out.csv'
+    abs_zero = 1e-6
+    design = 'LinearWCNSFV2PInterfaceAreaSourceSink.md LinearFVTimeDerivative.md'
+    requirement = 'The system shall conserve the interfacial area of a closed quiescent cavity whose dispersed phase density falls in time, so that the expansion term of the interfacial area equation takes the sign that would weaken the diagonal of its matrix. The integral of rho_d xi shall hold to round-off over a fall to a third of the initial density, as it does over a tripling, the part of that term which cannot be taken implicitly being evaluated at the previous iterate instead.'
+    max_threads = 1 # see libmesh issue #3808
+  []
+
   [errors]
     requirement = "The system shall return an error if"
     [active_scalar_subcycles_without_reordering]
