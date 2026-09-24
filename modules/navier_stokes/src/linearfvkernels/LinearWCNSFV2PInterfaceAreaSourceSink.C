@@ -11,6 +11,8 @@
 #include "NavierStokesMethods.h"
 #include "NS.h"
 
+#include <algorithm>
+
 #include "libmesh/utility.h"
 
 registerMooseObject("NavierStokesApp", LinearWCNSFV2PInterfaceAreaSourceSink);
@@ -265,7 +267,25 @@ LinearWCNSFV2PInterfaceAreaSourceSink::computeCoefficients()
   // linearized about the previous iterate, which puts a non-negative coefficient on the diagonal
   // and is exact at convergence; the breakage source is left on the right hand side, where a
   // positive source belongs.
-  _implicit_coefficient = -material_time_derivative_rho_d / 3.0;
+  _implicit_coefficient = 0.0;
+  _lagged_source = -rho_d * s_ti;
+
+  // The expansion and the phase change both multiply the interfacial area concentration, so both
+  // could go on the diagonal, but neither carries a sign: the first is positive where the
+  // dispersed phase expands and negative where it is compressed, the second follows the direction
+  // of the transfer. A negative diagonal entry is what the coalescence linearization below is
+  // written to avoid, so the same discipline is applied here: the part of each that strengthens
+  // the diagonal is taken implicitly, and the part that would weaken it is evaluated at the
+  // previous iterate and moved to the right hand side. The two agree at convergence, so the
+  // converged answer is the same either way; what changes is that the matrix stays diagonally
+  // dominant on a compressing flow.
+  auto add_signed = [this, xi](const Real coefficient)
+  {
+    _implicit_coefficient += std::max(coefficient, 0.0);
+    _lagged_source -= std::min(coefficient, 0.0) * xi;
+  };
+
+  add_signed(-material_time_derivative_rho_d / 3.0);
 
   // The phase change term divides by the phase fraction, so it grows without bound as
   // the dispersed phase disappears. An exact test against zero is not enough: a fraction of 1e-12
@@ -275,11 +295,12 @@ LinearWCNSFV2PInterfaceAreaSourceSink::computeCoefficients()
   // already below one particle per cubic metre.
   constexpr Real minimum_transfer_fraction = 1e-10;
   if (f_d > minimum_transfer_fraction)
-    _implicit_coefficient -= 2.0 / 3.0 * _mass_transfer_rate(elem_arg, state) / f_d;
+    add_signed(-2.0 / 3.0 * _mass_transfer_rate(elem_arg, state) / f_d);
+
+  // The coalescence sinks are non-positive, so dividing by the previous iterate always
+  // strengthens the diagonal and needs no such split
   if (has_interface)
     _implicit_coefficient -= rho_d * (s_rc + s_we) / xi;
-
-  _lagged_source = -rho_d * s_ti;
 }
 
 void
