@@ -169,7 +169,10 @@
 
   [conservative_transient_interfacial_area_compression]
     type = CSVDiff
-    input = 'conservative-transient-interfacial-area-compression.i'
+    # The same case with the density falling rather than rising, which is one parameter, so the
+    # input is reused rather than copied
+    input = 'conservative-transient-interfacial-area.i'
+    cli_args = "rho_d_final_factor=0.3333333333333333 Outputs/file_base=conservative-transient-interfacial-area-compression_out"
     csvdiff = 'conservative-transient-interfacial-area-compression_out.csv'
     abs_zero = 1e-6
     design = 'LinearWCNSFV2PInterfaceAreaSourceSink.md LinearFVTimeDerivative.md'
