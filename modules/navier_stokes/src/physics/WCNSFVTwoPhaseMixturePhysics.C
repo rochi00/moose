@@ -458,15 +458,15 @@ WCNSFVTwoPhaseMixturePhysics::addFunctorMaterials()
       params.set<MooseFunctorName>("slip_velocity_name") = "vel_slip_" + components[dim];
       params.set<MooseEnum>("momentum_component") = components[dim];
       for (const auto j : make_range(dimension()))
-        params.set<std::vector<VariableName>>(vel_components[j]) = {
-            _flow_equations_physics->getVelocityNames()[j]};
+        params.set<SolverVariableName>(vel_components[j]) =
+            _flow_equations_physics->getVelocityNames()[j];
       // The buoyancy factor of the closure is (rho_d - rho_m) / rho_d, which carries the mixture
       // density, see VTT Publications 288 equation (58); the relaxation time carries the
       // continuous phase viscosity, Stokes drag being exerted by the fluid the particle moves in
       params.set<MooseFunctorName>(NS::density) = "rho_mixture";
       params.set<MooseFunctorName>(NS::mu) = _phase_1_viscosity;
       params.set<MooseFunctorName>("rho_d") = _phase_2_density;
-      params.set<MooseFunctorName>("fd") = _phase_2_fraction_name;
+      params.set<MooseFunctorName>("fraction_dispersed") = _phase_2_fraction_name;
       // The phase equation is advected with the drift velocity, which this object derives from
       // the slip velocity it computes
       params.set<MooseFunctorName>("drift_velocity_name") = "vel_drift_" + components[dim];

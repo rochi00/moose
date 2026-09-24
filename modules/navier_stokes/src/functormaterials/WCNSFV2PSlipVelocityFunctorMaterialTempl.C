@@ -7,7 +7,8 @@
 //* Licensed under LGPL 2.1, please see LICENSE for details
 //* https://www.gnu.org/licenses/lgpl-2.1.html
 
-#include "LinearWCNSFV2PSlipVelocityFunctorMaterial.h"
+#include "WCNSFV2PSlipVelocityFunctorMaterialTempl.h"
+#include "INSFVVelocityVariable.h"
 #include "FEProblemBase.h"
 #include "Function.h"
 #include "NS.h"
@@ -18,9 +19,11 @@
 #include <limits>
 
 registerMooseObject("NavierStokesApp", LinearWCNSFV2PSlipVelocityFunctorMaterial);
+registerMooseObject("NavierStokesApp", WCNSFV2PSlipVelocityFunctorMaterial);
 
+template <bool is_ad>
 InputParameters
-LinearWCNSFV2PSlipVelocityFunctorMaterial::validParams()
+WCNSFV2PSlipVelocityFunctorMaterialTempl<is_ad>::validParams()
 {
   InputParameters params = FunctorMaterial::validParams();
   params.addClassDescription(
@@ -152,17 +155,32 @@ LinearWCNSFV2PSlipVelocityFunctorMaterial::validParams()
   return params;
 }
 
-MooseLinearVariableFVReal &
-LinearWCNSFV2PSlipVelocityFunctorMaterial::getVelocityVariable(const std::string & param_name)
+template <bool is_ad>
+typename WCNSFV2PSlipVelocityFunctorMaterialTempl<is_ad>::VelocityVariable &
+WCNSFV2PSlipVelocityFunctorMaterialTempl<is_ad>::getVelocityVariable(const std::string & param_name)
 {
-  auto * const var = dynamic_cast<MooseLinearVariableFVReal *>(
+  auto * const var = dynamic_cast<VelocityVariable *>(
       &_fe_problem.getVariable(_tid, getParam<SolverVariableName>(param_name)));
   if (!var)
-    paramError(param_name, "The velocity must be a MooseLinearVariableFVReal.");
+    paramError(param_name,
+               is_ad ? "The velocity must be a finite volume field variable."
+                     : "The velocity must be a MooseLinearVariableFVReal.");
+
+  // The closure reads a gradient and, in a transient, a time derivative of the velocity. On the
+  // nonlinear side both come from the functor interface; on the linear side the cell gradients
+  // have to be requested, which the constructor does.
+  if constexpr (is_ad)
+    if (!dynamic_cast<const INSFVVelocityVariable *>(var) &&
+        !dynamic_cast<const MooseLinearVariableFV<Real> *>(var))
+      paramError(param_name,
+                 "The velocity must be an INSFVVelocityVariable or a linear finite volume "
+                 "variable.");
+
   return *var;
 }
 
-LinearWCNSFV2PSlipVelocityFunctorMaterial::LinearWCNSFV2PSlipVelocityFunctorMaterial(
+template <bool is_ad>
+WCNSFV2PSlipVelocityFunctorMaterialTempl<is_ad>::WCNSFV2PSlipVelocityFunctorMaterialTempl(
     const InputParameters & params)
   : FunctorMaterial(params),
     NonADFunctorInterface(this),
@@ -170,29 +188,29 @@ LinearWCNSFV2PSlipVelocityFunctorMaterial::LinearWCNSFV2PSlipVelocityFunctorMate
     _u_var(&getVelocityVariable("u")),
     _v_var(_dim > 1 && isParamValid("v") ? &getVelocityVariable("v") : nullptr),
     _w_var(_dim > 2 && isParamValid("w") ? &getVelocityVariable("w") : nullptr),
-    _rho_mixture(NonADFunctorInterface::getFunctor<Real>(NS::density)),
-    _rho_d(NonADFunctorInterface::getFunctor<Real>("rho_d")),
-    _mu_c(NonADFunctorInterface::getFunctor<Real>(NS::mu)),
-    _f_d(NonADFunctorInterface::getFunctor<Real>("fd")),
+    _rho_mixture(this->FunctorFetcher::template getFunctor<GenericReal<is_ad>>(NS::density)),
+    _rho_d(this->FunctorFetcher::template getFunctor<GenericReal<is_ad>>("rho_d")),
+    _mu_c(this->FunctorFetcher::template getFunctor<GenericReal<is_ad>>(NS::mu)),
+    _f_d(this->FunctorFetcher::template getFunctor<GenericReal<is_ad>>("fd")),
     _gravity(getParam<RealVectorValue>("gravity")),
     _force_scale(getParam<Real>("force_value")),
     _force_function(getFunction("force_function")),
     _force_postprocessor(getPostprocessorValue("force_postprocessor")),
     _force_direction(getParam<RealVectorValue>("force_direction")),
     _linear_friction(isParamValid("linear_coef_name")
-                         ? &NonADFunctorInterface::getFunctor<Real>("linear_coef_name")
+                         ? &this->FunctorFetcher::template getFunctor<GenericReal<is_ad>>("linear_coef_name")
                          : nullptr),
-    _rho_c(isParamValid("rho_c") ? &NonADFunctorInterface::getFunctor<Real>("rho_c") : nullptr),
-    _drag_model(getParam<MooseEnum>("drag_model").getEnum<DragModelEnum>()),
+    _rho_c(isParamValid("rho_c") ? &this->FunctorFetcher::template getFunctor<GenericReal<is_ad>>("rho_c") : nullptr),
+    _drag_model(getParam<MooseEnum>("drag_model").template getEnum<DragModelEnum>()),
     _sigma(isParamValid("surface_tension")
-               ? &NonADFunctorInterface::getFunctor<Real>("surface_tension")
+               ? &this->FunctorFetcher::template getFunctor<GenericReal<is_ad>>("surface_tension")
                : nullptr),
     _swarm_exponent(getParam<Real>("swarm_exponent")),
     _friction_pressure_gradient(
-        NonADFunctorInterface::getFunctor<Real>("friction_pressure_gradient")),
+        this->FunctorFetcher::template getFunctor<GenericReal<is_ad>>("friction_pressure_gradient")),
     _single_particle_friction_pressure_gradient(
-        NonADFunctorInterface::getFunctor<Real>("single_particle_friction_pressure_gradient")),
-    _particle_diameter(NonADFunctorInterface::getFunctor<Real>("particle_diameter")),
+        this->FunctorFetcher::template getFunctor<GenericReal<is_ad>>("single_particle_friction_pressure_gradient")),
+    _particle_diameter(this->FunctorFetcher::template getFunctor<GenericReal<is_ad>>("particle_diameter")),
     _index(getParam<MooseEnum>("momentum_component"))
 {
   const bool internal_drag = getParam<bool>("use_dispersed_phase_drag_model");
@@ -248,22 +266,35 @@ LinearWCNSFV2PSlipVelocityFunctorMaterial::LinearWCNSFV2PSlipVelocityFunctorMate
   // The advective part of the particle acceleration needs the velocity gradients. Requesting them
   // here is unconditional, unlike the nonlinear counterpart which only reaches this call when a
   // cast succeeds and silently skips it otherwise.
-  _u_var->computeCellGradients();
-  if (_v_var)
-    _v_var->computeCellGradients();
-  if (_w_var)
-    _w_var->computeCellGradients();
+  // Cell gradients are a linear finite volume notion; the nonlinear variables build the
+  // gradients the functor interface returns by another route
+  if constexpr (!is_ad)
+  {
+    _u_var->computeCellGradients();
+    if (_v_var)
+      _v_var->computeCellGradients();
+    if (_w_var)
+      _w_var->computeCellGradients();
+  }
 
-  const auto & slip_velocity = addFunctorProperty<Real>(
+  const auto & slip_velocity = this->template addFunctorProperty<GenericReal<is_ad>>(
       getParam<MooseFunctorName>("slip_velocity_name"),
-      [this](const auto & r, const auto & t) -> Real
+      [this](const auto & r, const auto & t) -> GenericReal<is_ad>
       {
         // Guards the division below against a prescribed friction function evaluating to zero
         constexpr Real offset = 1e-15;
 
-        RealVectorValue term_advection(0, 0, 0);
-        RealVectorValue term_transient(0, 0, 0);
-        const RealVectorValue term_force(
+        // Pulled in so that the arithmetic below resolves for a plain double and for a
+        // differentiated number alike
+        using std::abs;
+        using std::max;
+        using std::min;
+        using std::pow;
+        using std::sqrt;
+
+        GenericRealVectorValue<is_ad> term_advection(0, 0, 0);
+        GenericRealVectorValue<is_ad> term_transient(0, 0, 0);
+        const GenericRealVectorValue<is_ad> term_force(
             _force_scale * _force_postprocessor *
             _force_function.value(_t, _current_elem->vertex_average()) * _force_direction);
 
@@ -274,27 +305,27 @@ LinearWCNSFV2PSlipVelocityFunctorMaterial::LinearWCNSFV2PSlipVelocityFunctorMate
         // under, for instance, BDF2.
         if (_subproblem.isTransient())
         {
-          term_transient(0) = raw_value(_u_var->dot(r, t));
+          term_transient(0) = generic(_u_var->dot(r, t));
           if (_v_var)
-            term_transient(1) = raw_value(_v_var->dot(r, t));
+            term_transient(1) = generic(_v_var->dot(r, t));
           if (_w_var)
-            term_transient(2) = raw_value(_w_var->dot(r, t));
+            term_transient(2) = generic(_w_var->dot(r, t));
         }
 
         // Advective part of the material derivative, u . grad(u)
-        const auto u_velocity = raw_value((*_u_var)(r, t));
-        const auto u_grad = raw_value(_u_var->gradient(r, t));
+        const auto u_velocity = generic((*_u_var)(r, t));
+        const auto u_grad = generic(_u_var->gradient(r, t));
         term_advection(0) += u_velocity * u_grad(0);
         if (_v_var)
         {
-          const auto v_velocity = raw_value((*_v_var)(r, t));
-          const auto v_grad = raw_value(_v_var->gradient(r, t));
+          const auto v_velocity = generic((*_v_var)(r, t));
+          const auto v_grad = generic(_v_var->gradient(r, t));
           term_advection(0) += v_velocity * u_grad(1);
           term_advection(1) += u_velocity * v_grad(0) + v_velocity * v_grad(1);
           if (_w_var)
           {
-            const auto w_velocity = raw_value((*_w_var)(r, t));
-            const auto w_grad = raw_value(_w_var->gradient(r, t));
+            const auto w_velocity = generic((*_w_var)(r, t));
+            const auto w_grad = generic(_w_var->gradient(r, t));
             term_advection(0) += w_velocity * u_grad(2);
             term_advection(1) += w_velocity * v_grad(2);
             term_advection(2) +=
@@ -317,16 +348,16 @@ LinearWCNSFV2PSlipVelocityFunctorMaterial::LinearWCNSFV2PSlipVelocityFunctorMate
         // viscosity falls with it and would invert the correction. This object therefore keeps
         // the drag single particle and leaves every concentration effect to swarm_exponent and to
         // the ishii-zuber drag model, so that the two cannot double count
-        const Real density_scaling = (_rho_d(r, t) - _rho_mixture(r, t)) / _rho_d(r, t);
-        const RealVectorValue acceleration_vec =
+        const GenericReal<is_ad> density_scaling = (_rho_d(r, t) - _rho_mixture(r, t)) / _rho_d(r, t);
+        const GenericRealVectorValue<is_ad> acceleration_vec =
             -term_transient - term_advection + _gravity + term_force;
 
-        const Real relaxation_time =
+        const GenericReal<is_ad> relaxation_time =
             _rho_d(r, t) * Utility::pow<2>(_particle_diameter(r, t)) / (18.0 * _mu_c(r, t));
 
         // The slip in the Stokes limit, f_drag = 1, which is also the whole answer when the drag
         // function is prescribed rather than computed
-        const Real stokes_prefactor = relaxation_time * density_scaling;
+        const GenericReal<is_ad> stokes_prefactor = relaxation_time * density_scaling;
 
         if (_linear_friction)
           return stokes_prefactor / ((*_linear_friction)(r, t) + offset) *
@@ -334,9 +365,9 @@ LinearWCNSFV2PSlipVelocityFunctorMaterial::LinearWCNSFV2PSlipVelocityFunctorMate
 
         // Otherwise solve the force balance and the drag correlation together, so that the
         // particle Reynolds number is formed from the slip velocity as its definition requires
-        const Real stokes_speed = std::abs(stokes_prefactor) * acceleration_vec.norm();
-        const Real rho_c = (*_rho_c)(r, t);
-        const Real mu_c = _mu_c(r, t);
+        const GenericReal<is_ad> stokes_speed = abs(stokes_prefactor) * acceleration_vec.norm();
+        const GenericReal<is_ad> rho_c = (*_rho_c)(r, t);
+        const GenericReal<is_ad> mu_c = _mu_c(r, t);
 
         // The Ishii and Zuber multi-bubble relation is a correlation for the relative velocity
         // itself, not a drag law, so it replaces the force balance rather than closing it. It also
@@ -344,9 +375,10 @@ LinearWCNSFV2PSlipVelocityFunctorMaterial::LinearWCNSFV2PSlipVelocityFunctorMate
         // elsewhere, so no hindrance is applied on top of it.
         if (_drag_model == DragModelEnum::ISHII_ZUBER)
         {
-          const Real alpha = std::clamp(_f_d(r, t), 0.0, 1.0);
-          const Real buoyancy = std::abs(rho_c - _rho_d(r, t)) * acceleration_vec.norm();
-          const Real speed = ishiiZuberSlipSpeed(alpha,
+          const GenericReal<is_ad> alpha =
+              min(max(_f_d(r, t), GenericReal<is_ad>(0.0)), GenericReal<is_ad>(1.0));
+          const GenericReal<is_ad> buoyancy = abs(rho_c - _rho_d(r, t)) * acceleration_vec.norm();
+          const GenericReal<is_ad> speed = ishiiZuberSlipSpeed(alpha,
                                                  buoyancy,
                                                  _friction_pressure_gradient(r, t),
                                                  _single_particle_friction_pressure_gradient(r, t),
@@ -355,18 +387,19 @@ LinearWCNSFV2PSlipVelocityFunctorMaterial::LinearWCNSFV2PSlipVelocityFunctorMate
           // The correlation returns a magnitude. Its direction is that of the buoyancy, which is
           // the direction of the acceleration carrying the sign of rho_d - rho_m: a light dispersed
           // phase moves against the acceleration, a heavy one with it.
-          const Real norm = acceleration_vec.norm();
+          const GenericReal<is_ad> norm = acceleration_vec.norm();
           if (norm <= 0.0)
             return 0.0;
-          return speed * std::copysign(1.0, density_scaling) * acceleration_vec(_index) / norm;
+          return speed * (MetaPhysicL::raw_value(density_scaling) < 0.0 ? -1.0 : 1.0) * acceleration_vec(_index) / norm;
         }
 
         // Rigid sphere branch: s f(R s) = s0 with f monotone and at least unity
-        Real slip_speed = std::numeric_limits<Real>::max();
+        GenericReal<is_ad> slip_speed = std::numeric_limits<Real>::max();
         if (_drag_model != DragModelEnum::DISTORTED_PARTICLE)
         {
-          const Real reynolds_per_speed =
-              NS::particleReynoldsNumber(rho_c, _particle_diameter(r, t), 1.0, mu_c);
+          const GenericReal<is_ad> reynolds_per_speed =
+              NS::particleReynoldsNumber(
+              rho_c, _particle_diameter(r, t), GenericReal<is_ad>(1.0), mu_c);
           slip_speed = NS::solveSlipSpeed(stokes_speed, reynolds_per_speed);
         }
 
@@ -374,29 +407,30 @@ LinearWCNSFV2PSlipVelocityFunctorMaterial::LinearWCNSFV2PSlipVelocityFunctorMate
         // balance k s^2 = s0 has the closed form s = sqrt(s0 / k) and needs no iteration.
         if (_drag_model != DragModelEnum::SCHILLER_NAUMANN)
         {
-          const Real k = NS::distortedDragFunctionPerSpeed(_particle_diameter(r, t),
-                                                           rho_c,
-                                                           mu_c,
-                                                           std::abs(rho_c - _rho_d(r, t)),
-                                                           (*_sigma)(r, t),
-                                                           _gravity.norm());
-          const Real distorted_speed = (k > 0.0) ? std::sqrt(stokes_speed / k) : stokes_speed;
+          const GenericReal<is_ad> k =
+              NS::distortedDragFunctionPerSpeed(GenericReal<is_ad>(_particle_diameter(r, t)),
+                                                GenericReal<is_ad>(rho_c),
+                                                GenericReal<is_ad>(mu_c),
+                                                GenericReal<is_ad>(abs(rho_c - _rho_d(r, t))),
+                                                GenericReal<is_ad>((*_sigma)(r, t)),
+                                                _gravity.norm());
+          const GenericReal<is_ad> distorted_speed = (MetaPhysicL::raw_value(k) > 0.0) ? sqrt(stokes_speed / k) : stokes_speed;
           // A larger drag function gives a smaller slip, so taking the more resistant of the two
           // laws is the same as taking the smaller of the two speeds
-          slip_speed = std::min(slip_speed, distorted_speed);
+          slip_speed = min(slip_speed, distorted_speed);
         }
 
         // Recover the drag function the chosen speed implies, and apply the closure with it. This
         // keeps a single expression for the returned component whichever branch was taken.
-        const Real f_drag = (slip_speed > 0.0) ? stokes_speed / slip_speed : 1.0;
+        const GenericReal<is_ad> f_drag = (slip_speed > 0.0) ? stokes_speed / slip_speed : 1.0;
 
         // Hindrance of the swarm. Applied to the speed rather than to the drag function because
         // the two branches respond differently to a factor on the drag, being respectively linear
         // and square-root in it, whereas a factor on the speed means the same thing for both.
-        const Real hindrance =
+        const GenericReal<is_ad> hindrance =
             (_swarm_exponent == 0.0)
                 ? 1.0
-                : std::pow(std::max(1.0 - std::clamp(_f_d(r, t), 0.0, 1.0), 0.0),
+                : pow(max(1.0 - min(max(_f_d(r, t), GenericReal<is_ad>(0.0)), GenericReal<is_ad>(1.0)), 0.0),
                            _swarm_exponent);
 
         return stokes_prefactor / f_drag * hindrance * acceleration_vec(_index);
@@ -406,31 +440,34 @@ LinearWCNSFV2PSlipVelocityFunctorMaterial::LinearWCNSFV2PSlipVelocityFunctorMate
   // mass of the mixture. This, not the slip velocity, is the velocity that appears in the phase
   // conservation equations, see VTT Publications 288 equation (28).
   if (isParamValid("drift_velocity_name"))
-    addFunctorProperty<Real>(getParam<MooseFunctorName>("drift_velocity_name"),
-                             [this, &slip_velocity](const auto & r, const auto & t) -> Real
+    this->template addFunctorProperty<GenericReal<is_ad>>(getParam<MooseFunctorName>("drift_velocity_name"),
+                             [this, &slip_velocity](const auto & r, const auto & t) -> GenericReal<is_ad>
                              { return diffusionVelocityFactor(r, t) * slip_velocity(r, t); });
 
   // The volumetric drift, j - u_m = (alpha - c_d) u_slip, which the dilatation of the pressure
   // equation and the pressure work of the energy equation both carry
   if (isParamValid("volumetric_drift_velocity_name"))
-    addFunctorProperty<Real>(getParam<MooseFunctorName>("volumetric_drift_velocity_name"),
-                             [this, &slip_velocity](const auto & r, const auto & t) -> Real
+    this->template addFunctorProperty<GenericReal<is_ad>>(getParam<MooseFunctorName>("volumetric_drift_velocity_name"),
+                             [this, &slip_velocity](const auto & r, const auto & t) -> GenericReal<is_ad>
                              { return volumetricDriftFactor(r, t) * slip_velocity(r, t); });
 }
 
 
 
-Real
-LinearWCNSFV2PSlipVelocityFunctorMaterial::ishiiZuberSlipSpeed(const Real alpha,
-                                                               const Real buoyancy,
-                                                               const Real m_f,
-                                                               const Real m_f_inf,
-                                                               const Real sigma,
-                                                               const Real rho_c)
+template <bool is_ad>
+GenericReal<is_ad>
+WCNSFV2PSlipVelocityFunctorMaterialTempl<is_ad>::ishiiZuberSlipSpeed(
+    const GenericReal<is_ad> alpha,
+    const GenericReal<is_ad> buoyancy,
+    const GenericReal<is_ad> m_f,
+    const GenericReal<is_ad> m_f_inf,
+    const GenericReal<is_ad> sigma,
+    const GenericReal<is_ad> rho_c)
 {
-  const Real one_minus = std::max(1.0 - alpha, 0.0);
-  const Real denominator = buoyancy + m_f_inf;
-  if (denominator <= 0.0 || sigma <= 0.0 || rho_c <= 0.0 || one_minus <= 0.0)
+  const GenericReal<is_ad> one_minus = std::max(1.0 - alpha, GenericReal<is_ad>(0.0));
+  const GenericReal<is_ad> denominator = buoyancy + m_f_inf;
+  if (MetaPhysicL::raw_value(denominator) <= 0.0 || MetaPhysicL::raw_value(sigma) <= 0.0 ||
+      MetaPhysicL::raw_value(rho_c) <= 0.0 || MetaPhysicL::raw_value(one_minus) <= 0.0)
     return 0.0;
 
   // Equation numbers below are those of Hibiki and Ishii, "One-dimensional drift-flux model and
@@ -441,23 +478,27 @@ LinearWCNSFV2PSlipVelocityFunctorMaterial::ishiiZuberSlipSpeed(const Real alpha,
   // The terminal velocity of an isolated distorted particle, equation (49). The frictional
   // pressure gradient of the single particle system adds to the buoyancy here, so it raises the
   // terminal velocity rather than merely hindering it.
-  const Real v_r_inf =
-      std::sqrt(2.0) * std::pow(denominator * sigma / Utility::pow<2>(rho_c), 0.25);
+  const GenericReal<is_ad> v_r_inf =
+      sqrt(2.0) * pow(denominator * sigma / Utility::pow<2>(rho_c), 0.25);
 
   // The ratio of equation (46), through which the frictional pressure gradient of the two phase
   // flow enters. With both gradients zero it is simply 1 - alpha.
-  const Real ratio = std::max((buoyancy * one_minus + m_f) / denominator, 0.0);
+  const GenericReal<is_ad> ratio =
+      std::max((buoyancy * one_minus + m_f) / denominator, GenericReal<is_ad>(0.0));
 
   // Equation (46) with the viscosity ratio of equation (47), mu_f / mu_m = 1 - alpha
-  const Real f_alpha = one_minus * std::sqrt(ratio);
+  const GenericReal<is_ad> f_alpha = one_minus * sqrt(ratio);
 
   // Equation (45), the multi-particle relative velocity. The constants are those of the Newton
   // regime drag ratio of Ishii and Zuber (1979), arranged so that the concentration factor is
   // unity at alpha = 0.
-  const Real concentration =
-      18.67 * f_alpha / (1.0 + 17.67 * std::pow(f_alpha, 6.0 / 7.0));
+  const GenericReal<is_ad> concentration =
+      18.67 * f_alpha / (1.0 + 17.67 * pow(f_alpha, 6.0 / 7.0));
 
   // Equation (45) gives the drift velocity; the relative velocity carries one power of
   // (1 - alpha) less
-  return v_r_inf * std::sqrt(one_minus) * concentration;
+  return v_r_inf * sqrt(one_minus) * concentration;
 }
+
+template class WCNSFV2PSlipVelocityFunctorMaterialTempl<false>;
+template class WCNSFV2PSlipVelocityFunctorMaterialTempl<true>;

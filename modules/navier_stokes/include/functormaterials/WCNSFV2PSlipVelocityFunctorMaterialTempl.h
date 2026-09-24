@@ -14,6 +14,7 @@
 #include "NonADFunctorInterface.h"
 
 #include <algorithm>
+#include <type_traits>
 
 class Function;
 
@@ -38,18 +39,27 @@ class Function;
  * phase fraction with \f$ u_m + u_s \f$ rather than \f$ u_m + u_{Md} \f$ is the dilute
  * approximation \f$ c_d \to 0 \f$.
  *
- * This is the linear finite volume counterpart of WCNSFV2PSlipVelocityFunctorMaterial. The two are
- * kept separate rather than sharing one object which switches on the velocity variable type at
- * run time: holding MooseLinearVariableFVReal directly makes the requirements of this closure,
- * cell gradients and a time derivative, a property of the type rather than something rediscovered
- * by a cast on every use.
+ * One implementation serves both discretizations, in the manner of
+ * NSFVMixtureFunctorMaterialTempl: the template parameter selects the scalar type the closure is
+ * evaluated in, plain for the linear finite volume systems and automatically differentiated for
+ * the nonlinear ones, and with it the velocity variable type. The closure itself is written once,
+ * which is what keeps the two discretizations from drifting apart in it.
  */
-class LinearWCNSFV2PSlipVelocityFunctorMaterial : public FunctorMaterial,
-                                                  public NonADFunctorInterface
+template <bool is_ad>
+class WCNSFV2PSlipVelocityFunctorMaterialTempl
+  : public FunctorMaterial, public NonADFunctorInterface
 {
 public:
   static InputParameters validParams();
-  LinearWCNSFV2PSlipVelocityFunctorMaterial(const InputParameters & parameters);
+  WCNSFV2PSlipVelocityFunctorMaterialTempl(const InputParameters & parameters);
+
+  /// The velocity variables this closure reads. The linear finite volume instantiation holds the
+  /// linear variable directly, so that the cell gradients and the time derivative this closure
+  /// needs are requirements of the type rather than something a cast rediscovers on every use;
+  /// the automatic differentiation instantiation takes the field base, which is what the
+  /// nonlinear finite volume variables derive from.
+  using VelocityVariable =
+      std::conditional_t<is_ad, MooseVariableField<Real>, MooseLinearVariableFVReal>;
 
 protected:
   /// Which drag law closes the force balance
@@ -67,8 +77,24 @@ protected:
     ISHII_ZUBER = 3
   };
 
-  /// Retrieve a velocity variable and check that it is a linear finite volume variable
-  MooseLinearVariableFVReal & getVelocityVariable(const std::string & param_name);
+  /// Both bases offer a getFunctor; which one serves this instantiation is a property of the
+  /// scalar type, and naming it here keeps every fetch below unambiguous
+  using FunctorFetcher = std::conditional_t<is_ad, FunctorMaterial, NonADFunctorInterface>;
+
+  /// The velocity variables return a differentiated value whichever discretization they belong
+  /// to. The automatic differentiation instantiation keeps the derivatives; the plain one drops
+  /// them here, which is where the two paths legitimately differ.
+  template <typename T>
+  static auto generic(const T & value)
+  {
+    if constexpr (is_ad)
+      return value;
+    else
+      return MetaPhysicL::raw_value(value);
+  }
+
+  /// Retrieve a velocity variable and check that it is of the type this instantiation needs
+  VelocityVariable & getVelocityVariable(const std::string & param_name);
 
 
   /**
@@ -79,12 +105,12 @@ protected:
    * into [0, 1], matching the clamping applied by the mixture property material.
    */
   template <typename SpaceArg, typename StateArg>
-  Real diffusionVelocityFactor(const SpaceArg & r, const StateArg & t) const
+  GenericReal<is_ad> diffusionVelocityFactor(const SpaceArg & r, const StateArg & t) const
   {
     const auto rho_m = _rho_mixture(r, t);
-    if (rho_m <= 0.0)
+    if (MetaPhysicL::raw_value(rho_m) <= 0.0)
       return 1.0;
-    const auto fd = std::clamp(_f_d(r, t), 0.0, 1.0);
+    const auto fd = std::min(std::max(_f_d(r, t), GenericReal<is_ad>(0.0)), GenericReal<is_ad>(1.0));
     return (rho_m - fd * _rho_d(r, t)) / rho_m;
   }
 
@@ -94,12 +120,12 @@ protected:
    * vanishes at equal phase densities, where the two velocities coincide.
    */
   template <typename SpaceArg, typename StateArg>
-  Real volumetricDriftFactor(const SpaceArg & r, const StateArg & t) const
+  GenericReal<is_ad> volumetricDriftFactor(const SpaceArg & r, const StateArg & t) const
   {
     const auto rho_m = _rho_mixture(r, t);
-    if (rho_m <= 0.0)
+    if (MetaPhysicL::raw_value(rho_m) <= 0.0)
       return 0.0;
-    const auto fd = std::clamp(_f_d(r, t), 0.0, 1.0);
+    const auto fd = std::min(std::max(_f_d(r, t), GenericReal<is_ad>(0.0)), GenericReal<is_ad>(1.0));
     return fd * (rho_m - _rho_d(r, t)) / rho_m;
   }
 
@@ -107,24 +133,24 @@ protected:
   const unsigned int _dim;
 
   /// Velocity in the x direction
-  MooseLinearVariableFVReal * const _u_var;
+  VelocityVariable * const _u_var;
   /// Velocity in the y direction
-  MooseLinearVariableFVReal * const _v_var;
+  VelocityVariable * const _v_var;
   /// Velocity in the z direction
-  MooseLinearVariableFVReal * const _w_var;
+  VelocityVariable * const _w_var;
 
   /// Mixture density
-  const Moose::Functor<Real> & _rho_mixture;
+  const Moose::Functor<GenericReal<is_ad>> & _rho_mixture;
   /// Dispersed phase density
-  const Moose::Functor<Real> & _rho_d;
+  const Moose::Functor<GenericReal<is_ad>> & _rho_d;
   /// Continuous phase dynamic viscosity. Both the particle relaxation time and the particle
   /// Reynolds number are formed from it; see the note in validParams on why this is not the
   /// mixture viscosity
-  const Moose::Functor<Real> & _mu_c;
+  const Moose::Functor<GenericReal<is_ad>> & _mu_c;
 
   /// Volume fraction of the dispersed phase, needed to convert the slip velocity into the
   /// diffusion velocity
-  const Moose::Functor<Real> & _f_d;
+  const Moose::Functor<GenericReal<is_ad>> & _f_d;
 
   /// Gravity acceleration vector
   const RealVectorValue _gravity;
@@ -139,16 +165,16 @@ protected:
 
   /// Prescribed linear drag function. Null when the drag is computed internally from the
   /// Schiller and Naumann correlation, see NS::solveSlipSpeed
-  const Moose::Functor<Real> * const _linear_friction;
+  const Moose::Functor<GenericReal<is_ad>> * const _linear_friction;
 
   /// Continuous phase density, used to form the particle Reynolds number
-  const Moose::Functor<Real> * const _rho_c;
+  const Moose::Functor<GenericReal<is_ad>> * const _rho_c;
 
   /// Which drag law to close the force balance with
   const DragModelEnum _drag_model;
 
   /// Surface tension, needed by the distorted particle drag
-  const Moose::Functor<Real> * const _sigma;
+  const Moose::Functor<GenericReal<is_ad>> * const _sigma;
 
   /// Exponent p of the hindrance factor (1 - alpha)^p applied to the slip velocity. Zero leaves
   /// the single-particle result untouched
@@ -157,8 +183,8 @@ protected:
   /// Frictional pressure gradients of the two phase and single particle systems, M_F and M_Finf,
   /// equations (41) and (24) of the Hibiki and Ishii paper cited on ishiiZuberSlipSpeed below.
   /// Only the 'ishii-zuber' drag model uses them.
-  const Moose::Functor<Real> & _friction_pressure_gradient;
-  const Moose::Functor<Real> & _single_particle_friction_pressure_gradient;
+  const Moose::Functor<GenericReal<is_ad>> & _friction_pressure_gradient;
+  const Moose::Functor<GenericReal<is_ad>> & _single_particle_friction_pressure_gradient;
 
   /**
    * The relative velocity of the distorted particle multi-bubble system.
@@ -187,11 +213,18 @@ protected:
    * @param sigma surface tension
    * @param rho_c density of the continuous phase
    */
-  static Real ishiiZuberSlipSpeed(
-      Real alpha, Real buoyancy, Real m_f, Real m_f_inf, Real sigma, Real rho_c);
+  static GenericReal<is_ad> ishiiZuberSlipSpeed(const GenericReal<is_ad> alpha,
+                                                const GenericReal<is_ad> buoyancy,
+                                                const GenericReal<is_ad> m_f,
+                                                const GenericReal<is_ad> m_f_inf,
+                                                const GenericReal<is_ad> sigma,
+                                                const GenericReal<is_ad> rho_c);
   /// Particle diameter in the dispersed phase
-  const Moose::Functor<Real> & _particle_diameter;
+  const Moose::Functor<GenericReal<is_ad>> & _particle_diameter;
 
   /// Index of the velocity component x|y|z
   const unsigned int _index;
 };
+
+typedef WCNSFV2PSlipVelocityFunctorMaterialTempl<false> LinearWCNSFV2PSlipVelocityFunctorMaterial;
+typedef WCNSFV2PSlipVelocityFunctorMaterialTempl<true> WCNSFV2PSlipVelocityFunctorMaterial;

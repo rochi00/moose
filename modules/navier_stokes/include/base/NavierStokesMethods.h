@@ -355,16 +355,18 @@ solveSlipSpeed(const T & stokes_speed, const T & reynolds_per_speed)
  * @param sigma surface tension between the phases
  * @param gravity_magnitude magnitude of the gravity vector
  */
-inline Real
-distortedDragFunctionPerSpeed(Real particle_diameter,
-                              Real rho_c,
-                              Real mu_c,
-                              Real delta_rho,
-                              Real sigma,
-                              Real gravity_magnitude)
+template <typename T>
+inline T
+distortedDragFunctionPerSpeed(const T & particle_diameter,
+                              const T & rho_c,
+                              const T & mu_c,
+                              const T & delta_rho,
+                              const T & sigma,
+                              const Real gravity_magnitude)
 {
+  using std::sqrt;
   return Utility::pow<2>(particle_diameter) * rho_c / (36.0 * mu_c) *
-         std::sqrt(gravity_magnitude * delta_rho / sigma);
+         sqrt(gravity_magnitude * delta_rho / sigma);
 }
 
 /**
