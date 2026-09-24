@@ -3,8 +3,6 @@
 
 [Problem]
   linear_sys_names = 'u_system v_system w_system pressure_system phi_system'
-  # The drift stress kernel's deferred correction reads the previous iterate
-  previous_nl_solution_required = true
 []
 
 [Physics]
