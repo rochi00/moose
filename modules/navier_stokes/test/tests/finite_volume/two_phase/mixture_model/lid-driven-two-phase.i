@@ -287,6 +287,21 @@ g = -9.81
     type = ElementAverageValue
     variable = 'phase_2'
   []
+  # The bounds of the phase fraction. Recorded because they are what the donor cell of the drift
+  # flux decides: upwinding the mixture and drift fluxes together on the mixture velocity alone
+  # hands the drift the wrong donor wherever the two oppose, which is the near-wall cells here,
+  # and moves these two numbers by several per cent. They are a volume fraction and belong in
+  # [0, 1] whatever the scheme does.
+  [min_void]
+    type = ElementExtremeValue
+    variable = 'phase_2'
+    value_type = min
+  []
+  [max_void]
+    type = ElementExtremeValue
+    variable = 'phase_2'
+    value_type = max
+  []
   [max_y_velocity]
     type = ElementExtremeValue
     variable = 'vel_y'
