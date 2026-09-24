@@ -157,6 +157,16 @@
     max_threads = 1 # see libmesh issue #3808
   []
 
+  [conservative_transient_interfacial_area]
+    type = CSVDiff
+    input = 'conservative-transient-interfacial-area.i'
+    csvdiff = 'conservative-transient-interfacial-area_out.csv'
+    abs_zero = 1e-6
+    design = 'LinearWCNSFV2PInterfaceAreaSourceSink.md LinearFVTimeDerivative.md'
+    requirement = 'The system shall conserve the interfacial area of a closed quiescent cavity whose dispersed phase density varies in time, by assembling the transient of its conservative transport equation as d(rho_d xi)/dt, whose discrete sum telescopes, so the integral of rho_d xi holds to round-off over a tripling of the dispersed phase density. Holding the multiplier outside the derivative instead gives rho_d d(xi)/dt, and the interfacial area does not move at all and the integral triples, so the assertion fails by nine orders of magnitude rather than by a margin comparable to the tolerance.'
+    max_threads = 1 # see libmesh issue #3808
+  []
+
   [errors]
     requirement = "The system shall return an error if"
     [active_scalar_subcycles_without_reordering]
