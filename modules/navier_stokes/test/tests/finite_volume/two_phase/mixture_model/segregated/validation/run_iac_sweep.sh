@@ -21,7 +21,7 @@ IN=hibiki-iac-compressible.i
 # mixture density puts into the buoyancy factor survives into the Stokes-limit slip. The distorted
 # particle balance takes its square root, so (1 - alpha)^0.5 is already present before any
 # hindrance is applied. The residual that recovers Ishii's (1 - alpha)^0.75 relative velocity is
-# therefore 0.25, the same value hibiki-annulus.i carries and for the same reason.
+# therefore 0.25, which is the value every case of this family carries and for the same reason.
 COMMON="jf=0.491 dp=0.0025 drag_model=distorted-particle swarm_exponent=0.25"
 STEPS="Executioner/num_steps=2000 Executioner/dt=0.02 Outputs/checkpoint=false"
 LTOL="Executioner/momentum_l_tol=1e-10 Executioner/pressure_l_tol=1e-10 Executioner/active_scalar_l_tol=1e-10"
