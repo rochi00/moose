@@ -282,7 +282,10 @@ LinearWCNSFV2PInterfaceAreaSourceSink::computeCoefficients()
   auto add_signed = [this, xi](const Real coefficient)
   {
     _implicit_coefficient += std::max(coefficient, 0.0);
-    _lagged_source -= std::min(coefficient, 0.0) * xi;
+    // _lagged_source carries the left hand side form, which computeRightHandSideContribution()
+    // negates, so the part evaluated at the previous iterate enters it with the sign it has on the
+    // left rather than the sign it will end up with on the right
+    _lagged_source += std::min(coefficient, 0.0) * xi;
   };
 
   add_signed(-material_time_derivative_rho_d / 3.0);

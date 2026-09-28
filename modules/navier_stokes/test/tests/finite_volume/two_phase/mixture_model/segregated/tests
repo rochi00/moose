@@ -176,7 +176,7 @@
     csvdiff = 'conservative-transient-interfacial-area-compression_out.csv'
     abs_zero = 1e-6
     design = 'LinearWCNSFV2PInterfaceAreaSourceSink.md LinearFVTimeDerivative.md'
-    requirement = 'The system shall conserve the interfacial area of a closed quiescent cavity whose dispersed phase density falls in time, so that the expansion term of the interfacial area equation takes the sign that would weaken the diagonal of its matrix. The integral of rho_d xi shall hold to round-off over a fall to a third of the initial density, as it does over a tripling, the part of that term which cannot be taken implicitly being evaluated at the previous iterate instead.'
+    requirement = 'The system shall conserve the interfacial area of a closed quiescent cavity whose dispersed phase density falls in time. The integral of rho_d xi shall hold to round-off over a fall to a third of the initial density, as it does over a tripling, which is the property of the conservative form of the transient term this case is built on. The sources of the interfacial area equation are not assembled here, so this says nothing about them.'
     max_threads = 1 # see libmesh issue #3808
   []
 
