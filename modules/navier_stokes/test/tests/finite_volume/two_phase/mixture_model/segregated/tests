@@ -180,6 +180,16 @@
     max_threads = 1 # see libmesh issue #3808
   []
 
+  [interfacial_mass_transfer_closed_on_area]
+    type = CSVDiff
+    input = 'interfacial-mass-transfer-verification.i'
+    csvdiff = 'interfacial-mass-transfer-verification_out.csv'
+    abs_zero = 1e-8
+    design = 'WCNSFV2PInterfacialMassTransferFunctorMaterial.md LinearWCNSFV2PInterfaceAreaSourceSink.md'
+    requirement = 'The system shall close the interfacial mass transfer rate on the transported interfacial area concentration and drive the phase, energy and interfacial area equations with that one rate. In a closed quiescent cavity whose phases have equal densities and specific heats, the transfer grows the particles present without changing their number, so xi / alpha^(2/3) is invariant. It shall hold over a sixfold growth of the phase fraction to the order of the time integrator: the drift is 4.7 per cent of the initial value at a step of 0.2 and falls to 2.4, 1.2 and 0.6 per cent as that step is halved, which is the first order rate of the implicit Euler default.'
+    max_threads = 1 # see libmesh issue #3808
+  []
+
   [errors]
     requirement = "The system shall return an error if"
     [active_scalar_subcycles_without_reordering]
