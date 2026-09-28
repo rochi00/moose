@@ -80,12 +80,31 @@ WCNSLinearFVTwoPhaseMixturePhysics::validParams()
   params.addParam<MooseFunctorName>(
       "interfacial_mass_transfer",
       "Rate at which mass is transferred into the dispersed phase per unit mixture volume, the "
-      "Gamma of the dispersed phase mass balance. Positive generates the dispersed phase. It is "
-      "taken as a functor rather than computed here, so that the coupling can be exercised "
-      "independently of any closure for it. Note that no counterpart is needed in the mixture mass "
-      "or momentum equations: mass and momentum are conserved in the exchange, and the volume the "
-      "phase change creates reaches the pressure equation through the phase fraction, by way of "
-      "'add_mass_density_transient'.");
+      "Gamma of the dispersed phase mass balance, prescribed rather than closed. Positive generates "
+      "the dispersed phase. Supplying it directly lets the coupling be exercised against a rate "
+      "with an analytic answer; supply 'interfacial_area' and 'T_saturation' instead to have the "
+      "rate computed from the transported area. Note that no counterpart is needed in the mixture "
+      "mass or momentum equations: mass and momentum are conserved in the exchange, and the volume "
+      "the phase change creates reaches the pressure equation through the phase fraction, by way "
+      "of 'add_mass_density_transient'.");
+  params.addParam<MooseFunctorName>(
+      "interfacial_area",
+      "Interfacial area concentration of the dispersed phase, normally the variable of an "
+      "interfacial area transport equation. Supplying it together with 'T_saturation' and "
+      "'interfacial_latent_heat' closes the interfacial mass transfer rate on the solved area "
+      "instead of taking it as prescribed, so that the phase equation and the area equation are "
+      "driven by one rate rather than two independently supplied ones. The computed rate is "
+      "declared as '<name of this Physics block>_interfacial_mass_transfer_rate', which is the "
+      "name to give the 'mass_transfer_rate' of the interfacial area source and sink so that it "
+      "reads the same rate the phase equation is given.");
+  params.addParam<MooseFunctorName>(
+      "T_saturation",
+      "Saturation temperature of the transition the interfacial mass transfer represents. Supplied "
+      "together with 'interfacial_area' to close that transfer. Available from a "
+      "TwoPhaseFluidProperties object as T_sat(p), which is why it is taken as a functor.");
+  params.addParamNamesToGroup(
+      "interfacial_latent_heat interfacial_mass_transfer interfacial_area T_saturation",
+      "Phase change");
   params.addParam<MooseFunctorName>(
       "phase_1_density_time_derivative",
       "Time derivative of the continuous phase density. Optional counterpart of "
@@ -164,8 +183,34 @@ WCNSLinearFVTwoPhaseMixturePhysics::WCNSLinearFVTwoPhaseMixturePhysics(
     _phase_2_thermal_conductivity(getParam<MooseFunctorName>("phase_2_thermal_conductivity_name")),
     _use_external_mixture_properties(getParam<bool>("use_external_mixture_properties")),
     _use_drift_flux(getParam<bool>("add_drift_flux_momentum_terms")),
-    _use_advection_slip(getParam<bool>("add_advection_slip_term"))
+    _use_advection_slip(getParam<bool>("add_advection_slip_term")),
+    _close_mass_transfer_on_area(isParamValid("interfacial_area")),
+    // The one name every consumer of the transfer rate reads, whether it was prescribed or closed
+    // on the area. Resolving it once here is what keeps the phase equation, the latent heat sink
+    // and the interfacial area source from being pointed at different rates.
+    _interfacial_mass_transfer(
+        _close_mass_transfer_on_area
+            ? MooseFunctorName(prefix() + "interfacial_mass_transfer_rate")
+            : (isParamValid("interfacial_mass_transfer")
+                   ? getParam<MooseFunctorName>("interfacial_mass_transfer")
+                   : MooseFunctorName()))
 {
+  if (_close_mass_transfer_on_area)
+  {
+    if (isParamValid("interfacial_mass_transfer"))
+      paramError("interfacial_mass_transfer",
+                 "The transfer rate cannot be both prescribed and closed on the interfacial area. "
+                 "Supply this parameter to prescribe it, or 'interfacial_area' to close it.");
+    if (!isParamValid("T_saturation"))
+      paramError("T_saturation",
+                 "Closing the interfacial mass transfer on the interfacial area needs a saturation "
+                 "temperature for the transfer to be driven by");
+    if (!isParamValid("interfacial_latent_heat"))
+      paramError("interfacial_latent_heat",
+                 "Closing the interfacial mass transfer on the interfacial area needs the latent "
+                 "heat of the transition, which sets the mass converted per unit of heat");
+  }
+
   // Check that only one scalar was passed, as we are using vector parameters
   if (_passive_scalar_names.size() > 1)
     paramError("phase_fraction_name", "Only one phase fraction currently supported.");
@@ -194,6 +239,15 @@ WCNSLinearFVTwoPhaseMixturePhysics::WCNSLinearFVTwoPhaseMixturePhysics(
     _has_energy_equation = false;
     _fluid_energy_physics = nullptr;
   }
+
+  // The area-closed transfer is driven by the departure of the mixture temperature from
+  // saturation, so there has to be an energy equation for that temperature to come from. A
+  // prescribed rate does not need one, which is why this is checked only on that path.
+  if (_close_mass_transfer_on_area && !_has_energy_equation)
+    paramError("interfacial_area",
+               "Closing the interfacial mass transfer on the interfacial area needs an energy "
+               "equation, since the transfer is driven by the departure of the mixture temperature "
+               "from saturation. Set 'fluid_heat_transfer_physics'.");
 
   // Check that the mixture parameters are correctly in use in the other physics
   if (_has_energy_equation)
@@ -308,10 +362,10 @@ WCNSLinearFVTwoPhaseMixturePhysics::addFVKernels()
       getParam<bool>("add_mass_density_transient"))
     addMassDensityTransientTerm();
 
-  if (_add_phase_equation && isParamValid("interfacial_mass_transfer"))
+  if (_add_phase_equation && !_interfacial_mass_transfer.empty())
     addInterfacialMassTransferTerm();
 
-  if (_has_energy_equation && isParamValid("interfacial_mass_transfer") &&
+  if (_has_energy_equation && !_interfacial_mass_transfer.empty() &&
       isParamValid("interfacial_latent_heat"))
     addLatentHeatTransferTerm();
 
@@ -416,8 +470,7 @@ WCNSLinearFVTwoPhaseMixturePhysics::addLatentHeatTransferTerm()
     assignBlocks(params, _blocks);
     params.set<std::string>("expression") = "gamma * h_lat";
     params.set<std::vector<std::string>>("functor_names") = {
-        getParam<MooseFunctorName>("interfacial_mass_transfer"),
-        getParam<MooseFunctorName>("interfacial_latent_heat")};
+        _interfacial_mass_transfer, getParam<MooseFunctorName>("interfacial_latent_heat")};
     params.set<std::vector<std::string>>("functor_symbols") = {"gamma", "h_lat"};
     params.set<std::string>("property_name") = latent_source;
     getProblem().addMaterial("ParsedFunctorMaterial", latent_source + "_mat", params);
@@ -545,6 +598,32 @@ WCNSLinearFVTwoPhaseMixturePhysics::buildMixtureDensityPressureDerivative()
 }
 
 void
+WCNSLinearFVTwoPhaseMixturePhysics::addInterfacialMassTransferRateMaterial()
+{
+  // The rate is declared once, here, and read by every equation that needs it: the phase equation
+  // source below, the latent heat sink on the energy equation, and the phase change term of the
+  // interfacial area transport equation. Those three cannot disagree about it because there is one
+  // functor rather than one parameter per consumer.
+  auto params = getFactory().getValidParams("WCNSFV2PInterfacialMassTransferFunctorMaterial");
+  assignBlocks(params, _blocks);
+  params.set<MooseFunctorName>("interfacial_area") =
+      getParam<MooseFunctorName>("interfacial_area");
+  params.set<MooseFunctorName>("fraction_dispersed") = _phase_2_fraction_name;
+  params.set<MooseFunctorName>(NS::T_fluid) = _fluid_energy_physics->getFluidTemperatureName();
+  params.set<MooseFunctorName>("T_saturation") = getParam<MooseFunctorName>("T_saturation");
+  params.set<MooseFunctorName>("latent_heat") =
+      getParam<MooseFunctorName>("interfacial_latent_heat");
+  params.set<MooseFunctorName>("rho_c") = _phase_1_density;
+  params.set<MooseFunctorName>("mu_c") = _phase_1_viscosity;
+  params.set<MooseFunctorName>("k_c") = _phase_1_thermal_conductivity;
+  setSlipVelocityParams(params);
+  params.set<MooseFunctorName>("interfacial_mass_transfer_name") = _interfacial_mass_transfer;
+  getProblem().addMaterial("WCNSFV2PInterfacialMassTransferFunctorMaterial",
+                           _interfacial_mass_transfer + "_mat",
+                           params);
+}
+
+void
 WCNSLinearFVTwoPhaseMixturePhysics::addInterfacialMassTransferTerm()
 {
   // The dispersed phase mass balance is
@@ -564,8 +643,7 @@ WCNSLinearFVTwoPhaseMixturePhysics::addInterfacialMassTransferTerm()
   auto params = getFactory().getValidParams("LinearFVSource");
   assignBlocks(params, _blocks);
   params.set<LinearVariableName>("variable") = _phase_2_fraction_name;
-  params.set<MooseFunctorName>("source_density") =
-      getParam<MooseFunctorName>("interfacial_mass_transfer");
+  params.set<MooseFunctorName>("source_density") = _interfacial_mass_transfer;
   params.set<MooseFunctorName>("scaling_factor") = "1";
   getProblem().addLinearFVKernel(
       "LinearFVSource", prefix() + "interfacial_mass_transfer", params);
@@ -904,6 +982,9 @@ WCNSLinearFVTwoPhaseMixturePhysics::addAdvectionSlipTerm()
 void
 WCNSLinearFVTwoPhaseMixturePhysics::addMaterials()
 {
+  if (_close_mass_transfer_on_area)
+    addInterfacialMassTransferRateMaterial();
+
   // Add the phase fraction variable, for output purposes mostly
   if (!getProblem().hasFunctor(_phase_1_fraction_name, /*thread_id=*/0))
   {
