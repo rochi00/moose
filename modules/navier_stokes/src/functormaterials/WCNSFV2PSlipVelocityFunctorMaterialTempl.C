@@ -445,8 +445,8 @@ WCNSFV2PSlipVelocityFunctorMaterialTempl<is_ad>::WCNSFV2PSlipVelocityFunctorMate
                              [this, &slip_velocity](const auto & r, const auto & t) -> GenericReal<is_ad>
                              { return diffusionVelocityFactor(r, t) * slip_velocity(r, t); });
 
-  // The volumetric drift, j - u_m = (alpha - c_d) u_slip, which the dilatation of the pressure
-  // equation and the pressure work of the energy equation both carry
+  // The volumetric drift, j - u_m = (alpha - c_d) u_slip, which the pressure work of the energy
+  // equation carries
   if (isParamValid("volumetric_drift_velocity_name"))
     this->template addFunctorProperty<GenericReal<is_ad>>(getParam<MooseFunctorName>("volumetric_drift_velocity_name"),
                              [this, &slip_velocity](const auto & r, const auto & t) -> GenericReal<is_ad>

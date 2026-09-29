@@ -22,9 +22,8 @@ assembled by a kernel of its own.
 For a mixture, the velocity that carries the pressure work is not the mixture velocity alone. The
 phases move relative to the centre of mass, and the relative motion carries pressure work of its
 own, so that the full coefficient is $\vec{u}_m + (\alpha - c_d)\vec{u}_s$ with
-$c_d = \alpha\rho_d/\rho_m$ the mass fraction of the dispersed phase. That group is the same one the
-dilatation term of the pressure equation carries, being the difference between the volume averaged
-and the mass averaged mixture velocity.
+$c_d = \alpha\rho_d/\rho_m$ the mass fraction of the dispersed phase. That group is the volumetric
+drift, the difference between the volume averaged and the mass averaged mixture velocity.
 
 It is convenient to assemble the two contributions separately, since the mixture part is available
 to a single-phase formulation and the drift part is not. Only one of the pieces may then carry the

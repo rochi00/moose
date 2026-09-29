@@ -117,7 +117,10 @@ WCNSLinearFVTwoPhaseMixturePhysics::validParams()
       "d(rho_m)/dt + div(rho_m u_m) = 0, and the pressure equation of the segregated algorithm "
       "realises the second term alone, which is exact in a steady state and not otherwise. Setting "
       "this lets a cell accumulate mass rather than pass a divergence free mass flux at every "
-      "instant, which is what separates the assembled system from a compressible SIMPLE.");
+      "instant, which is what separates the assembled system from a compressible SIMPLE. It is "
+      "the only addition mixture continuity needs: the pressure equation is assembled on the "
+      "mass flux rho_m u_m, so the dilatation the relative motion of the phases produces is "
+      "already inside its divergence.");
   params.addParam<MooseFunctorName>(
       "phase_2_density_time_derivative",
       "Time derivative of the dispersed phase density, needed by the mixture density storage term "
@@ -150,15 +153,6 @@ WCNSLinearFVTwoPhaseMixturePhysics::validParams()
       "the drift correction alone.");
   params.addParamNamesToGroup("phase_drift_advection_interpolation", "Numerical scheme");
 
-  params.addParam<bool>(
-      "add_drift_flux_mass_term",
-      false,
-      "Whether to add the dilatation the relative motion of the phases produces to the pressure "
-      "equation. The mixture momentum equation is written for the mass averaged velocity, which is "
-      "not solenoidal wherever the mixture density varies, so constraining it to be divergence "
-      "free omits that dilatation. The term is an exact identity and vanishes when the two phase "
-      "densities are equal.");
-  params.addParamNamesToGroup("add_drift_flux_mass_term", "Numerical scheme");
 
   // This is added to match a nonlinear test result. If the underlying issue is fixed, remove it
   params.addParam<bool>("add_gravity_term_in_slip_velocity",
@@ -377,10 +371,6 @@ WCNSLinearFVTwoPhaseMixturePhysics::addFVKernels()
       _fluid_energy_physics->getParam<bool>("include_pressure_work"))
     addEnergyPressureWorkDriftTerm();
 
-  if (_flow_equations_physics && _flow_equations_physics->hasFlowEquations() &&
-      getParam<bool>("add_drift_flux_mass_term"))
-    addMassDriftFluxTerm();
-
   if (_flow_equations_physics && _flow_equations_physics->hasFlowEquations() && _use_drift_flux)
   {
     addPhaseDriftFluxTerm();
@@ -399,27 +389,6 @@ WCNSLinearFVTwoPhaseMixturePhysics::scalarConservativeDensity(const VariableName
   // Only the phase fraction is transported as a mass. Any other scalar carried by this Physics is
   // solved for itself.
   return (vname == _phase_2_fraction_name) ? _phase_2_density : MooseFunctorName();
-}
-
-void
-WCNSLinearFVTwoPhaseMixturePhysics::addMassDriftFluxTerm()
-{
-  const std::string object_type = "LinearWCNSFV2PMassDriftFlux";
-  auto params = getFactory().getValidParams(object_type);
-  assignBlocks(params, _blocks);
-  params.set<LinearVariableName>("variable") = _flow_equations_physics->getPressureName();
-  params.set<MooseFunctorName>("fraction_dispersed") = _phase_2_fraction_name;
-  params.set<MooseFunctorName>("rho_d") = _phase_2_density;
-  params.set<MooseFunctorName>(NS::density) = "rho_mixture";
-
-  // The dilatation comes from the relative velocity, since the identity it is derived from is
-  // written in terms of the slip rather than the diffusion velocity
-  setRelativeVelocityParams(params);
-
-  // The phases cannot separate across an impermeable boundary
-  params.set<std::vector<BoundaryName>>("slip_boundaries") = slipBoundaries();
-
-  getProblem().addLinearFVKernel(object_type, prefix() + "mass_drift_flux", params);
 }
 
 void
