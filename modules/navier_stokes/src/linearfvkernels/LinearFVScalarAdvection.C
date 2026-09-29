@@ -9,7 +9,6 @@
 
 #include "LinearFVScalarAdvection.h"
 
-#include <algorithm>
 #include "LinearFVGradientManager.h"
 #include "MooseLinearVariableFV.h"
 #include "NS.h"
@@ -70,10 +69,10 @@ LinearFVScalarAdvection::LinearFVScalarAdvection(const InputParameters & params)
         isParamValid("slip_advected_interp_method_name")
             ? getParam<InterpolationMethodName>("slip_advected_interp_method_name")
             : getParam<InterpolationMethodName>("advected_interp_method_name"))),
-    _slip_gradient_field(_slip_adv_interp_method.needsGradients()
-                             ? &_var.requestCellGradients(
-                                   _slip_adv_interp_method.gradientMethodName())
-                             : nullptr),
+    _slip_gradient_field(
+        _slip_adv_interp_method.needsGradients()
+            ? &_var.requestCellGradients(_slip_adv_interp_method.gradientMethodName())
+            : nullptr),
     _volumetric_face_flux(0.0),
     _slip_face_flux(0.0),
     _density(isParamValid("density") ? &getFunctor<Real>("density") : nullptr),
@@ -82,9 +81,9 @@ LinearFVScalarAdvection::LinearFVScalarAdvection(const InputParameters & params)
     _w_slip(isParamValid("w_slip") ? &getFunctor<ADReal>("w_slip") : nullptr),
     _add_slip_model(isParamValid("u_slip") ? true : false)
 {
-  const auto slip_ids = _mesh.getBoundaryIDs(getParam<std::vector<BoundaryName>>("slip_boundaries"));
+  const auto slip_ids =
+      _mesh.getBoundaryIDs(getParam<std::vector<BoundaryName>>("slip_boundaries"));
   _slip_boundaries.insert(slip_ids.begin(), slip_ids.end());
-
 }
 
 Real
@@ -167,16 +166,7 @@ LinearFVScalarAdvection::setupFaceData(const FaceInfo * face_info)
   // gravity driven slip would advect phase straight through the wall. Note that carrying a boundary
   // condition on the advected variable is not evidence that a boundary is permeable: a wall may
   // legitimately pin the phase fraction.
-  // Any of the sidesets a face belongs to may be the one that declared it permeable, so all of
-  // them are tested rather than the first
-  const auto & boundary_ids = face_info->boundaryIDs();
-  const bool slip_allowed_here =
-      face_info->neighborPtr() || std::any_of(boundary_ids.begin(),
-                                              boundary_ids.end(),
-                                              [this](const auto id)
-                                              { return _slip_boundaries.count(id); });
-
-  if (_u_slip && slip_allowed_here)
+  if (_u_slip && NS::slipAllowedOnFace(*face_info, _slip_boundaries))
   {
     const auto state = determineState();
     // TODO Add boundary treatment to be able select two-term expansion if desired
@@ -189,8 +179,8 @@ LinearFVScalarAdvection::setupFaceData(const FaceInfo * face_info)
                                                nullptr}
                               : singleSidedFaceArg(face_info);
 
-    const RealVectorValue velocity_slip_vel_vec = MetaPhysicL::raw_value(
-        NS::slipVelocityVector(*_u_slip, _v_slip, _w_slip, face_arg, state));
+    const RealVectorValue velocity_slip_vel_vec =
+        MetaPhysicL::raw_value(NS::slipVelocityVector(*_u_slip, _v_slip, _w_slip, face_arg, state));
 
     // The drift is held apart from the mixture flux and interpolated on its own terms, so the
     // donor cell it selects is the one the drift itself points away from. Each part is then

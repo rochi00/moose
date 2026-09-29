@@ -70,12 +70,7 @@ protected:
     return face_value;
   }
 
-  /**
-   * Whether the dispersed phase may cross the current face: every internal face, and a boundary
-   * face only if its boundary was declared permeable through 'slip_boundaries'. The phase cannot
-   * cross an impermeable wall, and carrying a boundary condition on the transported variable is
-   * not evidence that a boundary is permeable: a wall may legitimately pin the variable.
-   */
+  /// Whether the dispersed phase may cross the current face, see NS::slipAllowedOnFace
   bool slipAllowedOnCurrentFace() const;
 
   /// The dimension of the simulation

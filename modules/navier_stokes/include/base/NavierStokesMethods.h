@@ -11,7 +11,10 @@
 
 #include <vector>
 #include <utility>
+#include <set>
+#include <algorithm>
 #include "Moose.h"
+#include "FaceInfo.h"
 #include "MooseUtils.h"
 #include "libmesh/utility.h"
 #include "ADReal.h"
@@ -134,6 +137,26 @@ diffusionStressCoefficient(const T & fd_in, const T & rho_d, const T & rho_c)
   const auto beta_c = (1.0 - fd) * rho_c;
   const auto rho_m = beta_d + beta_c;
   return (rho_m > 0.0) ? T(beta_d * beta_c / rho_m) : T(0.0);
+}
+
+/**
+ * Whether the dispersed phase may cross a face: every internal face, and a boundary face only if
+ * one of its boundaries was declared permeable. The phase cannot cross an impermeable wall, and
+ * carrying a boundary condition on the transported variable is not evidence that a boundary is
+ * permeable: a wall may legitimately pin the variable. Any of the sidesets a face belongs to may
+ * be the one that declared it permeable, so all of them are tested rather than the first: a face
+ * carrying both 'inlet' and a grouping sideset would otherwise be judged by whichever of the two
+ * the mesh happens to list first.
+ */
+inline bool
+slipAllowedOnFace(const FaceInfo & fi, const std::set<BoundaryID> & slip_boundaries)
+{
+  if (fi.neighborPtr())
+    return true;
+  const auto & ids = fi.boundaryIDs();
+  return std::any_of(ids.begin(),
+                     ids.end(),
+                     [&slip_boundaries](const auto id) { return slip_boundaries.count(id); });
 }
 
 /**
