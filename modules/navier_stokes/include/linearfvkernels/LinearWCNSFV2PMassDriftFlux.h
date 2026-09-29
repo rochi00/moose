@@ -15,36 +15,19 @@
  * Adds the dilatation produced by the relative motion of the phases to the pressure equation of a
  * two phase mixture.
  *
- * The mixture momentum equation is written for the mass averaged velocity \f$ \uvec_m \f$, whose
- * continuity equation is
+ * The mass averaged velocity is not solenoidal wherever the mixture density varies, so a pressure
+ * correction that enforces \f$ \nabla\cdot\mathbf{u}_m = 0 \f$ leaves out the dilatation an evolving
+ * phase fraction produces. With constant phase densities and no phase change the constraint the
+ * pressure equation should impose is instead
  *
  * \f[
- *   \frac{\partial \rho_m}{\partial t} + \nabla\cdot\left(\rho_m \mathbf{u}_m\right) = 0 ,
+ *   \nabla\cdot\mathbf{u}_m = -\nabla\cdot\left[\left(\alpha - c_d\right)\mathbf{u}_s\right] ,
  * \f]
  *
- * so \f$ \mathbf{u}_m \f$ is not solenoidal wherever the mixture density varies. Enforcing
- * \f$ \nabla\cdot\mathbf{u}_m = 0 \f$, as the single phase pressure correction does, therefore
- * leaves out the dilatation an evolving phase fraction produces.
- *
- * With constant phase densities and no phase change the two phase volume equations sum to
- * \f$ \nabla\cdot\mathbf{j} = 0 \f$ for the volumetric flux
- * \f$ \mathbf{j} = \alpha\mathbf{u}_d + (1-\alpha)\mathbf{u}_c \f$, which is an exact restatement
- * of the mixture continuity equation above. Using the identity
- * \f$ \mathbf{j} = \mathbf{u}_m + \left(\alpha - c_d\right)\mathbf{u}_s \f$ with
- * \f$ c_d = \alpha\rho_d/\rho_m \f$ the mass fraction of the dispersed phase, the constraint the
- * pressure equation should impose is
- *
- * \f[
- *   \nabla\cdot\mathbf{u}_m = -\nabla\cdot\left[\left(\alpha - c_d\right)\mathbf{u}_s\right] .
- * \f]
- *
- * This object adds the right hand side of that relation to the pressure equation, in the same form
- * and with the same sign convention as the divergence of the predicted flux. Being an exact
- * algebraic identity it carries no time derivative, so it is equally valid in a steady solve, where
- * \f$ \mathbf{u}_m \f$ is still not solenoidal because \f$ \rho_m \f$ varies in space.
- *
- * The contribution vanishes identically when the phase densities are equal, since \f$ c_d = \alpha
- * \f$ then, which is the check the verification test makes.
+ * whose right hand side this object supplies, in the same form and sign convention as the
+ * divergence of the predicted flux. It is an algebraic identity with no time derivative, so it holds
+ * in a steady solve too, and it vanishes when the phase densities are equal since \f$ c_d = \alpha
+ * \f$ then. The derivation from the volumetric flux is in the documentation page.
  */
 class LinearWCNSFV2PMassDriftFlux : public LinearWCNSFV2PDriftFluxBase
 {

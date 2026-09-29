@@ -20,24 +20,9 @@ class Function;
 
 /**
  * Computes the slip velocity of the dispersed phase relative to the continuous phase for the
- * two-phase mixture model, for the linear finite volume discretization, and optionally the
- * diffusion (drift) velocity derived from it.
- *
- * Two distinct relative velocities appear in the mixture model and are easy to confuse. The slip,
- * or relative, velocity is the velocity of the dispersed phase with respect to the continuous
- * phase, \f$ u_s = u_d - u_c \f$, and it is what the algebraic closure of Manninen et al.
- * predicts. The diffusion, or drift, velocity is the velocity of the dispersed phase with respect
- * to the centre of mass of the mixture, \f$ u_{Md} = u_d - u_m \f$, and it is what enters the
- * conservation equations. The two are related by the dispersed phase mass fraction
- * \f$ c_d = \alpha \rho_d / \rho_m \f$,
- *
- * \f[
- *   u_{Md} = \left( 1 - c_d \right) u_s
- * \f]
- *
- * see Manninen, Taivassalo and Kallio, VTT Publications 288 (1996), equation (28). Advecting the
- * phase fraction with \f$ u_m + u_s \f$ rather than \f$ u_m + u_{Md} \f$ is the dilute
- * approximation \f$ c_d \to 0 \f$.
+ * two-phase mixture model, and optionally the diffusion (drift) velocity derived from it,
+ * \f$ u_{Md} = (1 - c_d) u_s \f$ with \f$ c_d = \alpha \rho_d / \rho_m \f$. The two velocities, and
+ * the closures that produce the slip, are described on the documentation page.
  *
  * One implementation serves both discretizations, in the manner of
  * NSFVMixtureFunctorMaterialTempl: the template parameter selects the scalar type the closure is

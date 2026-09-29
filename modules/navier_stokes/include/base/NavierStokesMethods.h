@@ -308,26 +308,13 @@ solveSlipSpeed(const T & stokes_speed, const T & reynolds_per_speed)
 }
 
 /**
- * The linear drag function of a distorted fluid particle.
- *
- * Above roughly a millimetre a bubble no longer behaves as a rigid sphere: it deforms, and its
- * drag coefficient grows with size rather than falling with Reynolds number,
- * \\f$ C_D = \\frac{2}{3} d_d \\sqrt{g \\Delta\\rho / \\sigma} \\f$. Manninen's closure carries the
- * drag as the linear function \\f$ f_{drag} = C_D Re_p / 24 \\f$, which normalises Stokes drag to
- * unity, so that coefficient becomes
- *
- * \\f[
- *   f_{drag} = \\frac{d_d^2 \\rho_c \\left|u_s\\right|}{36 \\mu_c}
- *              \\sqrt{\\frac{g \\Delta\\rho}{\\sigma}} .
- * \\f]
- *
- * Substituted into the closure this returns the terminal velocity
- * \\f$ \\sqrt{2}\\left(g\\sigma\\Delta\\rho/\\rho_c^2\\right)^{1/4} \\f$, independent of the
- * particle size, which is the drift velocity correlation of Ishii for the bubbly flow regime.
- * See Hibiki and Ishii, Int. J. Heat Mass Transfer 45 (2002) 707, equation (15).
+ * The linear drag function of a distorted fluid particle, the deformed-bubble regime in which the
+ * drag coefficient grows with size rather than falling with Reynolds number. Substituted into the
+ * closure it gives Ishii's terminal velocity for bubbly flow, independent of the particle size; the
+ * derivation is on the LinearWCNSFV2PSlipVelocityFunctorMaterial documentation page.
  *
  * Unlike dragFunction this one is linear in the slip speed, so it is returned per unit speed: the
- * caller multiplies by \\f$ \\left|u_s\\right| \\f$.
+ * caller multiplies by \f$ \left|u_s\right| \f$.
  *
  * @param particle_diameter diameter of the particles of the dispersed phase
  * @param rho_c continuous phase density

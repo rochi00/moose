@@ -29,49 +29,16 @@
  * \f$ \alpha_g \f$ the density and volume fraction of the dispersed (gas) phase, and
  * \f$ \dot m_g \f$ the mass transfer rate into the gas phase per unit mixture volume. The first two
  * terms on the right are the change of area from expansion of the dispersed phase and from phase
- * change. \f$ S_{RC} \f$, \f$ S_{WE} \f$ and \f$ S_{TI} \f$ are the coalescence sinks from random
+ * change; \f$ S_{RC} \f$, \f$ S_{WE} \f$ and \f$ S_{TI} \f$ are the coalescence sinks from random
  * collision and wake entrainment, and the breakage source from turbulent impact.
  *
  * This object assembles everything except the time derivative and the advection, which are the
  * business of LinearFVTimeDerivative given a factor of \f$ \rho_g \f$ and of
  * LinearFVScalarAdvection given a density of \f$ \rho_g \f$ and the dispersed phase velocity.
  *
- * Two closure sets are offered, selected by the 'model' parameter. The averaged particle size is
- * common to both, \f$ d_b = \psi \alpha_g / \chi_p \f$.
- *
- * **Hibiki and Ishii**, Int. J. Heat Mass Transfer 43 (2000) 2711. There is no wake
- * entrainment model, so
- * \f$ S_{WE} = 0 \f$.
- *
- * \f[
- *   S_{RC} = -\left(\frac{\alpha_g}{\chi_p}\right)^2
- *     \frac{\Gamma_C \alpha_g^2 \epsilon^{1/3}}{d_b^{11/3}\left(\alpha_{g,max}-\alpha_g\right)}
- *     \exp\left(-K_C \frac{d_b^{5/6}\rho_f^{1/2}\epsilon^{1/3}}{\sigma^{1/2}}\right)
- * \f]
- * \f[
- *   S_{TI} = \left(\frac{\alpha_g}{\chi_p}\right)^2
- *     \frac{\Gamma_B \alpha_g\left(1-\alpha_g\right)\epsilon^{1/3}}
- *          {d_b^{11/3}\left(\alpha_{g,max}-\alpha_g\right)}
- *     \exp\left(-K_B \frac{\sigma}{\rho_f d_b^{5/3}\epsilon^{2/3}}\right)
- * \f]
- *
- * **Ishii and Kim**, with the mean bubble fluctuating velocity
- * \f$ u_t = \epsilon^{1/3} d_b^{1/3} \f$, the terminal velocity \f$ u_r \f$ and the Weber number
- * \f$ We = \rho_f u_t^2 d_b / \sigma \f$. The breakage rate is zero below the critical Weber
- * number.
- *
- * \f[
- *   S_{RC} = -\frac{1}{3\pi} C_{RC} u_t \chi_p^2
- *     \left[\frac{1}{\alpha_{g,max}^{1/3}\left(\alpha_{g,max}^{1/3}-\alpha_g^{1/3}\right)}\right]
- *     \left[1 - \exp\left(-C\frac{\alpha_{g,max}^{1/3}\alpha_g^{1/3}}
- *                                {\alpha_{g,max}^{1/3}-\alpha_g^{1/3}}\right)\right]
- * \f]
- * \f[
- *   S_{WE} = -\frac{1}{3\pi} C_{WE} u_r \chi_p^2 C_D^{1/3} ,
- *   \qquad
- *   S_{TI} = \frac{1}{18} C_{TI} u_t \frac{\chi_p^2}{\alpha_g}
- *            \left(1-\frac{We_{cr}}{We}\right)^{1/2}\exp\left(-\frac{We_{cr}}{We}\right)
- * \f]
+ * Two closure sets are offered for the interaction terms, Hibiki and Ishii and Ishii and Kim,
+ * selected by the 'model' parameter and sharing the averaged particle size
+ * \f$ d_b = \psi \alpha_g / \chi_p \f$. Their correlations are given in the documentation page.
  */
 class LinearWCNSFV2PInterfaceAreaSourceSink : public LinearFVElementalKernel
 {

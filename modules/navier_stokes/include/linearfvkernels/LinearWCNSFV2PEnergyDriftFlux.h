@@ -17,37 +17,12 @@
  * Enthalpy carried by the relative motion of the phases, the energy counterpart of the diffusion
  * (drift) stress in the mixture momentum equation.
  *
- * The exact advective term of the mixture energy equation is the sum over the phases of each phase
- * carrying its own enthalpy at its own velocity,
- *
- * \f[
- *   \nabla \cdot \sum_k \alpha_k \rho_k h_k u_k
- * \f]
- *
- * Substituting \f$ u_k = u_m + u_{Mk} \f$ splits this into the mixture term that
- * LinearFVEnergyAdvection already assembles plus a remainder,
- *
- * \f[
- *   \nabla \cdot \left( \rho_m h_m u_m \right)
- *     + \nabla \cdot \sum_k \alpha_k \rho_k h_k u_{Mk}
- * \f]
- *
- * For a single dispersed phase, using \f$ \beta_c u_{Mc} = -\beta_d u_{Md} \f$ and
- * \f$ u_{Md} = (\beta_c / \rho_m) u_s \f$, the remainder collapses onto the slip velocity with the
- * same coefficient that carries the diffusion stress,
- *
- * \f[
- *   \sum_k \alpha_k \rho_k h_k u_{Mk}
- *     = \frac{\beta_d \beta_c}{\rho_m} \left( h_d - h_c \right) u_s
- * \f]
- *
- * With both phases at the mixture temperature, \f$ h_k = c_{p,k} T \f$, this kernel therefore
- * assembles \f$ \nabla \cdot \left[ \frac{\beta_d \beta_c}{\rho_m} (c_{p,d} - c_{p,c}) T u_s
- * \right] \f$ on the left hand side. It vanishes identically when the two specific heats are
- * equal.
- *
- * This is the term written \f$ q_p = \sum_k \alpha_k \rho_k e_k u_k \f$ in the INL reference
- * report, and the phase-summed advection of ANSYS Fluent Theory Guide equation 16.4-7.
+ * Substituting \f$ u_k = u_m + u_{Mk} \f$ into the phase-summed advective term of the energy
+ * equation leaves, beyond what LinearFVEnergyAdvection assembles, a remainder that for one dispersed
+ * phase collapses onto the slip velocity. With both phases at the mixture temperature this kernel
+ * assembles \f$ \nabla \cdot \left[ \frac{\beta_d \beta_c}{\rho_m} (c_{p,d} - c_{p,c}) T u_s \right]
+ * \f$ on the left hand side; it vanishes identically when the two specific heats are equal. The
+ * derivation is in the documentation page.
  */
 class LinearWCNSFV2PEnergyDriftFlux : public LinearWCNSFV2PDriftFluxBase
 {

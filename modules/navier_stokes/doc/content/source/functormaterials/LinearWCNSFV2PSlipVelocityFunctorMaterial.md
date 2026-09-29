@@ -53,9 +53,13 @@ velocity outside the dilute limit.
 
 ## The drag function
 
-With `use_dispersed_phase_drag_model = true` this object evaluates the Schiller and Naumann drag
-correlation itself rather than reading it from a functor. The particle Reynolds number of that
-correlation is formed from the slip velocity and the continuous phase properties,
+With `use_dispersed_phase_drag_model = true` this object evaluates a drag law itself rather than
+reading one from a functor, and
+[!param](/FunctorMaterials/LinearWCNSFV2PSlipVelocityFunctorMaterial/drag_model) selects which.
+Three of the four options supply a drag function that closes the force balance; the fourth,
+`ishii-zuber`, is a correlation for the relative velocity itself and is described in its own
+section below. The rigid sphere law is taken first. The particle Reynolds number of the Schiller
+and Naumann correlation is formed from the slip velocity and the continuous phase properties,
 
 !equation
 Re_p = \frac{\rho_c d_d |\bm{u}_{slip,d}|}{\mu_c}
@@ -82,6 +86,37 @@ function directly.
 The `rho_c` and `mu_c` parameters are the continuous phase properties needed for $Re_p$, and are
 required whenever the drag model is active. Note that they are distinct from `rho` and `mu`, which
 are the *mixture* density and viscosity used by the buoyancy factor and the relaxation time.
+
+### The distorted particle law
+
+Above roughly a millimetre a bubble no longer behaves as a rigid sphere: it deforms, and its drag
+coefficient grows with size rather than falling with Reynolds number,
+
+!equation
+C_D = \frac{2}{3} d_d \sqrt{\frac{g \Delta\rho}{\sigma}}
+
+Manninen's closure carries the drag as the linear function $f_{drag} = C_D Re_p / 24$, which
+normalises Stokes drag to unity, so that coefficient becomes
+
+!equation
+f_{drag} = \frac{d_d^2 \rho_c \left|\bm{u}_{slip,d}\right|}{36 \mu_c}
+           \sqrt{\frac{g \Delta\rho}{\sigma}}
+
+This is linear in the slip speed, so substituting it into the closure turns the force balance from
+linear into quadratic in that speed and the root is explicit: no iteration is needed on this branch.
+Evaluating it gives the terminal velocity
+
+!equation
+s_\infty = \sqrt{2}\left(\frac{g \sigma \Delta\rho}{\rho_c^2}\right)^{1/4}
+
+independent of the particle diameter, which cancels between the relaxation time and the drag
+coefficient. That is Ishii's drift velocity correlation for the bubbly regime, see
+[!cite](hibikiishii2002) equation (15), reproduced as an identity of the algebra rather than
+approached to within a tolerance. The size independence is what the verification checks, by
+instantiating the law at two diameters and requiring the same speed exactly.
+
+`automatic` evaluates both single particle laws and takes whichever resists more, which selects the
+regime by itself where it is not known in advance or varies across the domain.
 
 ## Verification
 

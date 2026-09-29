@@ -15,49 +15,19 @@
  * Computes the interfacial mass transfer rate of the two-phase mixture model from the transported
  * interfacial area concentration, rather than taking it as a prescribed rate.
  *
- * The rate follows the interfacial energy jump condition: the heat the interface exchanges with
- * the surrounding fluid is what converts mass from one phase to the other, so
+ * The rate follows the interfacial energy jump condition, the heat reaching the interface divided
+ * by the latent heat,
  *
  * \f[
- *   \Gamma = \frac{\chi_p h_i \left(T - T_{sat}\right)}{h_{fg}}
+ *   \Gamma = \frac{\chi_p h_i \left(T - T_{sat}\right)}{h_{fg}} ,
  * \f]
  *
- * in which \f$ \chi_p \f$ is the interfacial area concentration, \f$ h_i \f$ the interfacial heat
- * transfer coefficient per unit area, and \f$ h_{fg} \f$ the latent heat. Positive generates the
- * dispersed phase.
- *
- * The mixture model carries one energy equation and therefore one temperature, so the two phases
- * are in thermal equilibrium with each other and the driving potential is the departure of that
- * shared temperature from saturation rather than a difference between phase temperatures. The
- * interface itself is at saturation, so the enthalpy the transfer has to supply is \f$ h_{fg} \f$.
- * This is the same driving potential the mixture-model phase change closures of the CFD codes use,
- * with the rate coefficient computed from the solved area instead of being tuned.
- *
- * The coefficient is the bubbly-flow interfacial Nusselt number of RELAP5/MOD3, the modified
- * Lee-Ryley correlation of Section 4.1.1.1.1 of NUREG/CR-5535 Volume 4,
- *
- * \f[
- *   h_i = \frac{k_c}{d_b}\left(2 + 0.74\, Re_b^{1/2}\right) ,
- *   \qquad d_b = \frac{\psi \alpha}{\chi_p} ,
- *   \qquad Re_b = \frac{\rho_c d_b \left|u_s\right|}{\mu_c} ,
- * \f]
- *
- * with the Prandtl number dependence dropped, as that reference drops it for bubbly flow. RELAP5
- * forms its volumetric coefficient as the product of this with an interfacial area of
- * \f$ 3.6\alpha/d_b \f$ obtained from a critical Weber number. Here the transported area takes the
- * place of that algebraic estimate, which is the one substitution this closure makes: the heat
- * transfer physics is the reference correlation, the geometry is solved for.
- *
- * Two limitations follow from that choice and are worth stating. The correlation was assessed
- * against RELAP5's own area, so the product is no longer the quantity that reference validated.
- * And RELAP5 takes the larger of this and a Plesset-Zwick bubble growth rate, which dominates at
- * strong superheat; only the Lee-Ryley branch is evaluated here, so rapid flashing is outside what
- * this closure has been written for.
- *
- * Wall nucleation is not included. This is bulk transfer between phases already in contact, which
- * grows the particles present at fixed number density and is what the two thirds exponent of the
- * interfacial area source assumes. Vapour generated at a heated wall creates new particles instead
- * and needs a nucleation source the area equation does not have.
+ * positive generating the dispersed phase. There is one energy equation and therefore one
+ * temperature, so the driving potential is the departure of the mixture temperature from saturation.
+ * The coefficient \f$ h_i \f$ is the bubbly-flow interfacial Nusselt number of RELAP5/MOD3, NUREG/CR-5535
+ * Volume 4 Section 4.1.1.1.1, with the transported area in place of the algebraic area that
+ * reference multiplies it by. That substitution, and the three limits it carries, are set out in the
+ * documentation page.
  */
 class WCNSFV2PInterfacialMassTransferFunctorMaterial : public FunctorMaterial
 {
