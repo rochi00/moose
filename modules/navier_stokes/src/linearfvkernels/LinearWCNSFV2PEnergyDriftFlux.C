@@ -107,29 +107,11 @@ LinearWCNSFV2PEnergyDriftFlux::setupFaceData(const FaceInfo * face_info)
 
   const auto & normal = _current_face_info->normal();
   const auto state = determineState();
-  const bool on_boundary = Moose::FV::onBoundary(*this, *_current_face_info);
-
-  const auto face_arg =
-      on_boundary ? singleSidedFaceArg(_current_face_info) : makeCDFace(*_current_face_info);
-
-  const auto u_slip_vel_vec = slipVelocity(face_arg, state);
-
-  Real face_coefficient;
-  if (on_boundary)
-    face_coefficient = enthalpyFluxCoefficient(face_arg, state);
-  else
-  {
-    const auto elem_arg = makeElemArg(_current_face_info->elemPtr());
-    const auto neigh_arg = makeElemArg(_current_face_info->neighborPtr());
-
-    Moose::FV::interpolate(_coeff_interp_method,
-                           face_coefficient,
-                           enthalpyFluxCoefficient(elem_arg, state),
-                           enthalpyFluxCoefficient(neigh_arg, state),
-                           *_current_face_info,
-                           true);
-  }
-
+  const auto u_slip_vel_vec = slipVelocity(currentFaceArg(), state);
+  const auto face_coefficient = faceCoefficient([this](const auto & arg, const auto & state)
+                                                { return enthalpyFluxCoefficient(arg, state); },
+                                                state,
+                                                _coeff_interp_method);
 
   _face_flux = slipAllowedOnCurrentFace() ? face_coefficient * (normal * u_slip_vel_vec) : 0.0;
 

@@ -43,7 +43,8 @@ LinearWCNSFV2PDriftFluxBase::LinearWCNSFV2PDriftFluxBase(const InputParameters &
 {
   NS::checkSlipVelocityComponents(*this, _dim, _v_slip, _w_slip);
 
-  const auto slip_ids = _mesh.getBoundaryIDs(getParam<std::vector<BoundaryName>>("slip_boundaries"));
+  const auto slip_ids =
+      _mesh.getBoundaryIDs(getParam<std::vector<BoundaryName>>("slip_boundaries"));
   _slip_boundaries.insert(slip_ids.begin(), slip_ids.end());
 }
 
@@ -52,6 +53,13 @@ LinearWCNSFV2PDriftFluxBase::setupFaceData(const FaceInfo * face_info)
 {
   LinearFVFluxKernel::setupFaceData(face_info);
   _boundary_normal_factor = (_current_face_type == FaceInfo::VarFaceNeighbors::ELEM) ? 1.0 : -1.0;
+}
+
+Moose::FaceArg
+LinearWCNSFV2PDriftFluxBase::currentFaceArg() const
+{
+  return Moose::FV::onBoundary(*this, *_current_face_info) ? singleSidedFaceArg(_current_face_info)
+                                                           : makeCDFace(*_current_face_info);
 }
 
 bool
