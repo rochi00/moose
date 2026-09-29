@@ -118,7 +118,6 @@ T findyPlus(const T & mu, const T & rho, const T & u, Real dist);
 
 using MooseUtils::isZero;
 
-
 /**
  * The coefficient of the diffusion stress of the mixture model, \f$ \beta_d \beta_c / \rho_m \f$,
  * which also weights the enthalpy the relative motion carries. The phase fraction is clamped into
@@ -224,6 +223,47 @@ dragFunction(const T & Re_p)
   return (Re_p <= 1000.0) ? schillerNaumannDragFunction(Re_p) : 0.0183 * Re_p;
 }
 
+/**
+ * Solves g(x) = 0 for a strictly increasing g whose root is known to lie in [lower, upper].
+ * Newton steps are taken from the initial iterate x while they stay inside the bracket, which the
+ * sign of the residual shrinks around the root at every iterate; a step that would leave it is
+ * replaced by bisection, so the iteration cannot escape. The comparisons that steer it use raw
+ * values, so that an automatic differentiation type carries its derivatives through the
+ * arithmetic.
+ * @param residual_and_derivative callable returning the pair (g(x), g'(x))
+ * @param scale the magnitude the residual is measured against for convergence
+ */
+template <typename T, typename Function>
+T
+bracketedNewton(const Function & residual_and_derivative, T lower, T upper, T x, const Real scale)
+{
+  // The residual falls below this relative tolerance in a handful of iterations; the cap is a
+  // backstop, not the expected exit
+  constexpr Real rel_tol = 1e-12;
+  constexpr unsigned int max_its = 50;
+
+  for ([[maybe_unused]] const auto it : make_range(max_its))
+  {
+    const auto [residual, derivative] = residual_and_derivative(x);
+
+    if (std::abs(MetaPhysicL::raw_value(residual)) <= rel_tol * scale)
+      break;
+
+    if (MetaPhysicL::raw_value(residual) > 0.0)
+      upper = x;
+    else
+      lower = x;
+
+    // Fall back on bisection if Newton steps outside the bracket
+    const T candidate = x - residual / derivative;
+    x = (MetaPhysicL::raw_value(candidate) > MetaPhysicL::raw_value(lower) &&
+         MetaPhysicL::raw_value(candidate) < MetaPhysicL::raw_value(upper))
+            ? candidate
+            : T(0.5 * (lower + upper));
+  }
+
+  return x;
+}
 
 /**
  * Solves Manninen's force balance together with the drag correlation for the slip speed:
@@ -244,7 +284,8 @@ solveSlipSpeed(const T & stokes_speed, const T & reynolds_per_speed)
 {
   using std::sqrt;
   // f(0) = 1, so a vanishing acceleration gives a vanishing slip and the drag never enters
-  if (MetaPhysicL::raw_value(stokes_speed) <= 0.0 || MetaPhysicL::raw_value(reynolds_per_speed) <= 0.0)
+  if (MetaPhysicL::raw_value(stokes_speed) <= 0.0 ||
+      MetaPhysicL::raw_value(reynolds_per_speed) <= 0.0)
     return stokes_speed;
 
   // Solve in Reynolds number rather than in speed. Multiplying s f(R s) = s0 through by R turns it
@@ -268,42 +309,21 @@ solveSlipSpeed(const T & stokes_speed, const T & reynolds_per_speed)
     return sqrt(driving_group / 0.0183) / reynolds_per_speed;
 
   // g(Re) = Re f(Re) is zero at the origin and strictly increasing, and f >= 1 puts the root in
-  // [0, B]. Newton is safeguarded by that bracket so that it cannot leave it.
-  T lower = 0.0;
-  T upper = driving_group;
-
-  // One Picard step off the Stokes guess Re = B. It is exact in the Stokes limit and loosens
-  // towards the transition, where the bracket absorbs the resulting overshoot in one pass.
-  T reynolds = driving_group / NS::schillerNaumannDragFunction(driving_group);
-
-  // The residual falls below this relative tolerance in a handful of iterations; the cap is a
-  // backstop, not the expected exit
-  constexpr Real rel_tol = 1e-12;
-  constexpr unsigned int max_its = 50;
-
-  for ([[maybe_unused]] const auto it : make_range(max_its))
-  {
-    const T drag = NS::schillerNaumannDragFunction(reynolds);
-    const T residual = reynolds * drag - driving_group;
-
-    if (std::abs(MetaPhysicL::raw_value(residual)) <= rel_tol * MetaPhysicL::raw_value(driving_group))
-      break;
-
-    if (MetaPhysicL::raw_value(residual) > 0.0)
-      upper = reynolds;
-    else
-      lower = reynolds;
-
-    // d/dRe [Re f(Re)] = f(Re) + Re f'(Re), the second term written as the finite product
-    const T derivative = drag + NS::schillerNaumannDragDerivative(reynolds);
-    const T candidate = reynolds - residual / derivative;
-
-    // Fall back on bisection if Newton steps outside the bracket
-    reynolds = (MetaPhysicL::raw_value(candidate) > MetaPhysicL::raw_value(lower) &&
-                MetaPhysicL::raw_value(candidate) < MetaPhysicL::raw_value(upper))
-                   ? candidate
-                   : T(0.5 * (lower + upper));
-  }
+  // [0, B]. The iteration starts from one Picard step off the Stokes guess Re = B, which is exact
+  // in the Stokes limit and loosens towards the transition, where the bracket absorbs the
+  // resulting overshoot in one pass.
+  const T reynolds = NS::bracketedNewton(
+      [&driving_group](const T & re)
+      {
+        // d/dRe [Re f(Re)] = f(Re) + Re f'(Re), the second term written as the finite product
+        const T drag = NS::schillerNaumannDragFunction(re);
+        return std::pair<T, T>(re * drag - driving_group,
+                               drag + NS::schillerNaumannDragDerivative(re));
+      },
+      T(0.0),
+      driving_group,
+      driving_group / NS::schillerNaumannDragFunction(driving_group),
+      MetaPhysicL::raw_value(driving_group));
 
   return reynolds / reynolds_per_speed;
 }

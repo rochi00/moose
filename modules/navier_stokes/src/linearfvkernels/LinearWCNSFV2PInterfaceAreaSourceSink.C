@@ -29,8 +29,8 @@ LinearWCNSFV2PInterfaceAreaSourceSink::validParams()
   MooseEnum model("hibiki-ishii ishii-kim", "hibiki-ishii");
   params.addParam<MooseEnum>("model", model, "Which closure set to evaluate.");
 
-  params.addRequiredParam<MooseFunctorName>(
-      "u", "The dispersed phase velocity in the x direction.");
+  params.addRequiredParam<MooseFunctorName>("u",
+                                            "The dispersed phase velocity in the x direction.");
   params.addParam<MooseFunctorName>("v", "The dispersed phase velocity in the y direction.");
   params.addParam<MooseFunctorName>("w", "The dispersed phase velocity in the z direction.");
 
@@ -43,8 +43,8 @@ LinearWCNSFV2PInterfaceAreaSourceSink::validParams()
   params.addParam<MooseFunctorName>("fd", 0.0, "Volume fraction of the dispersed phase, alpha_g.");
   params.renameParam("fd", "fraction_dispersed", "");
   params.addParam<MooseFunctorName>("sigma", 1.0, "Surface tension between the phases.");
-  params.addRequiredParam<MooseFunctorName>(
-      "epsilon", "Turbulent dissipation rate of the continuous phase.");
+  params.addRequiredParam<MooseFunctorName>("epsilon",
+                                            "Turbulent dissipation rate of the continuous phase.");
   params.addParam<MooseFunctorName>(
       "mass_transfer_rate",
       0.0,
@@ -128,36 +128,17 @@ LinearWCNSFV2PInterfaceAreaSourceSink::solveTerminalVelocity(const Real stokes_v
   if (stokes_velocity <= 0.0 || reynolds_per_velocity <= 0.0)
     return stokes_velocity;
 
-  Real lower = 0.0;
-  Real upper = stokes_velocity;
-  Real u = stokes_velocity;
-
-  // The residual falls below this relative tolerance in a handful of iterations; the cap is a
-  // backstop, not the expected exit
-  constexpr Real rel_tol = 1e-12;
-  constexpr unsigned int max_its = 50;
-
-  for ([[maybe_unused]] const auto it : make_range(max_its))
-  {
-    const Real correction = 0.1 * std::pow(reynolds_per_velocity * u, 0.75);
-    const Real residual = u * (1.0 + correction) - stokes_velocity;
-
-    if (std::abs(residual) <= rel_tol * stokes_velocity)
-      break;
-
-    if (residual > 0.0)
-      upper = u;
-    else
-      lower = u;
-
-    // d/du [u (1 + 0.1 (B u)^{3/4})] = 1 + 0.175 (B u)^{3/4}
-    const Real derivative = 1.0 + 1.75 * correction;
-    const Real candidate = u - residual / derivative;
-
-    u = (candidate > lower && candidate < upper) ? candidate : 0.5 * (lower + upper);
-  }
-
-  return u;
+  return NS::bracketedNewton(
+      [=](const Real u)
+      {
+        const Real correction = 0.1 * std::pow(reynolds_per_velocity * u, 0.75);
+        // d/du [u (1 + 0.1 (B u)^{3/4})] = 1 + 0.175 (B u)^{3/4}
+        return std::make_pair(u * (1.0 + correction) - stokes_velocity, 1.0 + 1.75 * correction);
+      },
+      0.0,
+      stokes_velocity,
+      stokes_velocity,
+      stokes_velocity);
 }
 
 void
@@ -236,8 +217,8 @@ LinearWCNSFV2PInterfaceAreaSourceSink::computeCoefficients()
     const auto cbrt_max = cbrt(_f_d_max);
     const auto cbrt_fd = cbrt(f_d);
     const auto cbrt_gap = std::max(cbrt_max - cbrt_fd, libMesh::TOLERANCE);
-    s_rc = -1.0 / (3.0 * libMesh::pi) * _c_rc * u_t * Utility::pow<2>(xi) /
-           (cbrt_max * cbrt_gap) * (1.0 - exp(-_c * cbrt_max * cbrt_fd / cbrt_gap));
+    s_rc = -1.0 / (3.0 * libMesh::pi) * _c_rc * u_t * Utility::pow<2>(xi) / (cbrt_max * cbrt_gap) *
+           (1.0 - exp(-_c * cbrt_max * cbrt_fd / cbrt_gap));
 
     // Wake entrainment. The terminal velocity and the drag coefficient are
     // mutually implicit and are solved together.
@@ -254,8 +235,8 @@ LinearWCNSFV2PInterfaceAreaSourceSink::computeCoefficients()
     // Turbulent impact. Below the critical Weber number the breakage rate is zero.
     const auto weber = rho_f * Utility::pow<2>(u_t) * db / sigma;
     if (weber > _we_cr)
-      s_ti = 1.0 / 18.0 * _c_ti * u_t * Utility::pow<2>(xi) / f_d *
-             sqrt(1.0 - _we_cr / weber) * exp(-_we_cr / weber);
+      s_ti = 1.0 / 18.0 * _c_ti * u_t * Utility::pow<2>(xi) / f_d * sqrt(1.0 - _we_cr / weber) *
+             exp(-_we_cr / weber);
   }
 
   // Everything is moved to the left hand side of the transport equation. The two terms that
