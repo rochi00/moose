@@ -51,6 +51,8 @@ mu_continuous = 1.0
 mu_dispersed = 0.1
 alpha = 0.25
 dp = 0.01
+dp_half = 0.005
+sigma = 0.072
 f_drag = 1.0
 g = -9.81
 
@@ -159,6 +161,68 @@ g = -9.81
     drift_velocity_name = vel_driftdrag_y
   []
 
+  # The deformed bubble law. Its terminal velocity is independent of the particle size, so the same
+  # material is instantiated twice at diameters a factor of two apart and must return the same
+  # speed; that is the property the closure is being checked for, not merely a value.
+  [slip_dist_y]
+    type = LinearWCNSFV2PSlipVelocityFunctorMaterial
+    momentum_component = y
+    u = vel_x
+    v = vel_y
+    rho = rho_mixture
+    rho_d = ${rho_dispersed}
+    mu = ${mu_continuous}
+    fraction_dispersed = ${alpha}
+    particle_diameter = ${dp}
+    use_dispersed_phase_drag_model = true
+    drag_model = 'distorted-particle'
+    surface_tension = ${sigma}
+    rho_c = ${rho_continuous}
+    gravity = '0 ${g} 0'
+    slip_velocity_name = vel_slipdist_y
+    drift_velocity_name = vel_driftdist_y
+  []
+  [slip_dist_half_y]
+    type = LinearWCNSFV2PSlipVelocityFunctorMaterial
+    momentum_component = y
+    u = vel_x
+    v = vel_y
+    rho = rho_mixture
+    rho_d = ${rho_dispersed}
+    mu = ${mu_continuous}
+    fraction_dispersed = ${alpha}
+    particle_diameter = ${dp_half}
+    use_dispersed_phase_drag_model = true
+    drag_model = 'distorted-particle'
+    surface_tension = ${sigma}
+    rho_c = ${rho_continuous}
+    gravity = '0 ${g} 0'
+    slip_velocity_name = vel_slipdisthalf_y
+    drift_velocity_name = vel_driftdisthalf_y
+  []
+
+  # The automatic branch takes whichever of the two single particle laws resists more, so at these
+  # conditions it must return the rigid sphere result and not the deformed one. The two differ by a
+  # factor of six here, so a wrong selection cannot pass.
+  [slip_auto_y]
+    type = LinearWCNSFV2PSlipVelocityFunctorMaterial
+    momentum_component = y
+    u = vel_x
+    v = vel_y
+    rho = rho_mixture
+    rho_d = ${rho_dispersed}
+    mu = ${mu_continuous}
+    fraction_dispersed = ${alpha}
+    particle_diameter = ${dp}
+    use_dispersed_phase_drag_model = true
+    drag_model = 'automatic'
+    surface_tension = ${sigma}
+    rho_c = ${rho_continuous}
+    gravity = '0 ${g} 0'
+    slip_velocity_name = vel_slipauto_y
+    drift_velocity_name = vel_driftauto_y
+  []
+
   # The drag function evaluated from the resulting slip velocity. This closes the loop: it must
   # reproduce the f_drag that the closure above solved for, and it demonstrates that a drag
   # material built the correct way does not recurse back into the slip velocity.
@@ -217,6 +281,33 @@ g = -9.81
   []
   # Re_p = R |u_slip| with R = 10, so this must equal the drag function evaluated at that Re_p.
   # It is the consistency of the implicit solve, not a second independent quantity.
+  # The deformed bubble branch, and the size independence of its terminal velocity: the two speeds
+  # below must agree exactly, the particle diameter cancelling between the relaxation time and the
+  # drag coefficient.
+  [slipdist_y]
+    type = ElementAverageFunctorPostprocessor
+    functor = vel_slipdist_y
+  []
+  [slipdist_half_y]
+    type = ElementAverageFunctorPostprocessor
+    functor = vel_slipdisthalf_y
+  []
+  [dist_size_ratio]
+    type = ParsedPostprocessor
+    expression = 'slipdist_half_y / slipdist_y'
+    pp_names = 'slipdist_half_y slipdist_y'
+  []
+  # The automatic branch, which must return the rigid sphere speed here
+  [slipauto_y]
+    type = ElementAverageFunctorPostprocessor
+    functor = vel_slipauto_y
+  []
+  [auto_over_drag]
+    type = ParsedPostprocessor
+    expression = 'slipauto_y / slipdrag_y'
+    pp_names = 'slipauto_y slipdrag_y'
+  []
+
   [slip_times_drag]
     type = ParsedPostprocessor
     expression = '-slipdrag_y * drag_function'
