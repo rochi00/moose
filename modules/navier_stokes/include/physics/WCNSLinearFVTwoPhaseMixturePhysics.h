@@ -43,8 +43,9 @@ private:
   /// term carries the dispersed phase density.
   virtual MooseFunctorName scalarConservativeDensity(const VariableName & vname) const override;
 
-  /// Sets the slip velocity, u_d - u_c, on objects that consume the relative motion of the phases
-  /// directly, namely the momentum and energy diffusion flux kernels
+  /// Sets the slip velocity, u_d - u_c, and the phase densities and fraction that weight it, on
+  /// the kernels that consume the relative motion of the phases directly, namely the momentum and
+  /// energy diffusion flux kernels
   void setRelativeVelocityParams(InputParameters & params) const;
 
   /**
