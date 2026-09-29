@@ -10,6 +10,7 @@
 #include "WCNSFV2PInterfacialMassTransferFunctorMaterial.h"
 #include "NS.h"
 #include "NavierStokesMethods.h"
+#include "HeatTransferUtils.h"
 
 registerMooseObject("NavierStokesApp", WCNSFV2PInterfacialMassTransferFunctorMaterial);
 
@@ -92,7 +93,7 @@ WCNSFV2PInterfacialMassTransferFunctorMaterial::WCNSFV2PInterfacialMassTransferF
     if (_dim > 2)
       slip(2) = (*_w_slip)(r, t);
 
-    const auto reynolds = NS::particleReynoldsNumber(_rho_c(r, t), d_b, slip.norm(), _mu_c(r, t));
+    const auto reynolds = HeatTransferUtils::reynolds(_rho_c(r, t), slip.norm(), d_b, _mu_c(r, t));
 
     // RELAP5/MOD3 modified Lee-Ryley, NUREG/CR-5535 Volume 4 Section 4.1.1.1.1, with the Prandtl
     // dependence dropped as that reference drops it for bubbly flow

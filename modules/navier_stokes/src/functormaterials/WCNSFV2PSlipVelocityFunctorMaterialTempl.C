@@ -17,6 +17,7 @@
 #include "libmesh/utility.h"
 
 #include <limits>
+#include "HeatTransferUtils.h"
 
 registerMooseObject("NavierStokesApp", LinearWCNSFV2PSlipVelocityFunctorMaterial);
 registerMooseObject("NavierStokesApp", WCNSFV2PSlipVelocityFunctorMaterial);
@@ -398,8 +399,8 @@ WCNSFV2PSlipVelocityFunctorMaterialTempl<is_ad>::WCNSFV2PSlipVelocityFunctorMate
         if (_drag_model != DragModelEnum::DISTORTED_PARTICLE)
         {
           const GenericReal<is_ad> reynolds_per_speed =
-              NS::particleReynoldsNumber(
-              rho_c, _particle_diameter(r, t), GenericReal<is_ad>(1.0), mu_c);
+              HeatTransferUtils::reynolds(
+                  rho_c, GenericReal<is_ad>(1.0), _particle_diameter(r, t), mu_c);
           slip_speed = NS::solveSlipSpeed(stokes_speed, reynolds_per_speed);
         }
 

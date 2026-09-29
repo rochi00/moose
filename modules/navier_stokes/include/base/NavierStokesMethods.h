@@ -117,25 +117,6 @@ T findyPlus(const T & mu, const T & rho, const T & u, Real dist);
 
 using MooseUtils::isZero;
 
-/**
- * The particle Reynolds number of a dispersed phase.
- *
- * \\f$ Re_p = \\rho_c d_d |u_{slip}| / \\mu_c \\f$, formed from the properties of the
- * *continuous* phase and from the *slip* velocity, the velocity of the dispersed phase relative
- * to the continuous phase. See Manninen, Taivassalo and Kallio, VTT Publications 288 (1996),
- * equation (39).
- *
- * @param rho_c continuous phase density
- * @param particle_diameter diameter of the particles of the dispersed phase
- * @param slip_speed magnitude of the slip velocity
- * @param mu_c continuous phase dynamic viscosity
- */
-template <typename T>
-T
-particleReynoldsNumber(const T & rho_c, const T & particle_diameter, const T & slip_speed, const T & mu_c)
-{
-  return rho_c * particle_diameter * slip_speed / mu_c;
-}
 
 /**
  * The coefficient of the diffusion stress of the mixture model, \f$ \beta_d \beta_c / \rho_m \f$,

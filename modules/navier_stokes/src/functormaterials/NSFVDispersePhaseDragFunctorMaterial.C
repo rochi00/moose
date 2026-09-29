@@ -10,6 +10,7 @@
 #include "NSFVDispersePhaseDragFunctorMaterial.h"
 #include "NS.h"
 #include "NavierStokesMethods.h"
+#include "HeatTransferUtils.h"
 
 registerMooseObject("NavierStokesApp", NSFVDispersePhaseDragFunctorMaterial);
 
@@ -62,8 +63,8 @@ NSFVDispersePhaseDragFunctorMaterial::NSFVDispersePhaseDragFunctorMaterial(
       velocity(2) = (*_w_var)(r, t);
     const auto speed = NS::computeSpeed<ADReal>(velocity);
 
-    const auto Re_particle = NS::particleReynoldsNumber(
-        _rho_mixture(r, t), _particle_diameter(r, t), speed, _mu_mixture(r, t));
+    const auto Re_particle = HeatTransferUtils::reynolds(
+        _rho_mixture(r, t), speed, _particle_diameter(r, t), _mu_mixture(r, t));
 
     if (MetaPhysicL::raw_value(Re_particle) < 0)
       mooseException("Cannot take a non-integer power of a negative number");
