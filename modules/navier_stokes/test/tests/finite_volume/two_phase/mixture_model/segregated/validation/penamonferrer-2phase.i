@@ -166,6 +166,13 @@ k_g = 1
 
       phase_2_density_name = 'rho_g_var'
       phase_2_density_time_derivative = 'drho_g_dt'
+      # The gas density is read from the solved pressure, so mixture continuity carries a storage
+      # term and the pressure driven part of it belongs on the matrix. The term vanishes at the
+      # fixed point this case is marched to, where d(alpha)/dt and dp/dt are both zero: switching
+      # it on moves the mid station void fraction by 0.005 per cent. It is on because the density
+      # is pressure dependent, not because the answer needs it.
+      add_mass_density_transient = true
+      phase_2_density_pressure_derivative = '${fparse rho_g / p_ref}'
       phase_2_viscosity_name = ${mu_g}
       phase_2_specific_heat_name = ${cp_g}
       phase_2_thermal_conductivity_name = ${k_g}
