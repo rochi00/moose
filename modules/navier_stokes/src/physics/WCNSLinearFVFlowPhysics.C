@@ -204,7 +204,7 @@ void
 WCNSLinearFVFlowPhysics::addPressureCorrectionKernels()
 {
   {
-    const std::string kernel_type = "LinearFVAnisotropicDiffusion";
+    const std::string kernel_type = "LinearFVPressureCorrectionDiffusion";
     const std::string kernel_name = prefix() + "p_diffusion";
 
     InputParameters params = getFactory().getValidParams(kernel_type);

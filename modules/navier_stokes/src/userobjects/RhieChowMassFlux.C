@@ -579,10 +579,11 @@ RhieChowMassFlux::initialSetup()
     paramError(
         "p_diffusion_kernel",
         "The kernel with the given name could not be found or multiple instances were identified.");
-  _p_diffusion_kernel = dynamic_cast<LinearFVAnisotropicDiffusion *>(flux_kernel[0]);
+  _p_diffusion_kernel = dynamic_cast<LinearFVPressureCorrectionDiffusion *>(flux_kernel[0]);
   if (!_p_diffusion_kernel)
     paramError("p_diffusion_kernel",
-               "The provided diffusion kernel should be of type LinearFVAnisotropicDiffusion.");
+               "The provided diffusion kernel must be of type "
+               "LinearFVPressureCorrectionDiffusion.");
 
   // We fetch the body forces kernel to ensure that the face flux correction
   // is accurate.
