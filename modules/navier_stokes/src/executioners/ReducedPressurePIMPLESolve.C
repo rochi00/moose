@@ -538,7 +538,7 @@ ReducedPressurePIMPLESolve::initializeStartupPressureField(const SolverParams & 
 }
 
 void
-ReducedPressurePIMPLESolve::postPreparePressureCorrectorState(const bool subtract_updated_pressure)
+ReducedPressurePIMPLESolve::postPreparePressureCorrectorState(const bool /*subtract_updated_pressure*/)
 {
   if (auto * diffuse_rc = diffuseInterfaceRC())
     diffuse_rc->updateAdditionalPressureFluxFunctors(_print_fields);

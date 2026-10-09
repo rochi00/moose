@@ -94,12 +94,6 @@ WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::
                "true.");
 }
 
-void
-WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::setMomentumTimeKernelParams(
-    InputParameters & params) const
-{
-}
-
 std::string
 WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::momentumOutletBCType(
     const BoundaryName & boundary, const MooseEnum & momentum_outlet_type) const

@@ -287,26 +287,6 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::getVolumetricFaceFlux(const Fa
   return libmesh_map_find(_corrected_face_phi, fi.id());
 }
 
-Real
-ConservativeDiffuseInterfaceRhieChowMassFluxBase::getVolumetricFaceFlux(
-    const Moose::FV::InterpMethod m,
-    const FaceInfo & fi,
-    const Moose::StateArg & time,
-    const THREAD_ID /*tid*/,
-    bool libmesh_dbg_var(subtract_mesh_velocity)) const
-{
-  mooseAssert(
-      !subtract_mesh_velocity,
-      "ConservativeDiffuseInterfaceRhieChowMassFluxBase does not support moving meshes yet!");
-
-  if (m != Moose::FV::InterpMethod::RhieChow)
-    mooseError("Interpolation methods other than Rhie-Chow are not supported!");
-  if (time.state != Moose::currentState().state)
-    mooseError("Older interpolation times are not supported!");
-
-  return getVolumetricFaceFlux(fi);
-}
-
 void
 ConservativeDiffuseInterfaceRhieChowMassFluxBase::initializeAdditionalPressureFluxStorage(
     const bool preserve_corrected_face_phi)
@@ -689,15 +669,6 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::interpolatedPhysicalFaceFlux(
   return face_velocity * fi->normal();
 }
 
-RealVectorValue
-ConservativeDiffuseInterfaceRhieChowMassFluxBase::interpolateFaceRawAinv(const FaceInfo * fi) const
-{
-  std::vector<std::unique_ptr<NumericVector<Number>>> owned_raw_ainv;
-  std::vector<PetscVectorReader> raw_ainv_readers;
-  buildDiffuseFaceRawAinvReaders(owned_raw_ainv, raw_ainv_readers);
-  return interpolateMomentumVectorReadersToFace(fi, raw_ainv_readers);
-}
-
 void
 ConservativeDiffuseInterfaceRhieChowMassFluxBase::buildDiffuseFaceRawAinvReaders(
     std::vector<std::unique_ptr<NumericVector<Number>>> & owned_raw_ainv,
@@ -767,14 +738,6 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::buildDiffuseFaceOperatorState(
   state.face_rho = interpolateFaceDensity(fi, time_arg);
   state.face_raw_ainv = interpolateMomentumVectorReadersToFace(fi, raw_ainv_readers);
   state.normal_raw_ainv = computeFaceNormalAinv(state.face_raw_ainv, state.face_normal);
-  if (!_suppress_startup_pressure_predictor_flux_sources &&
-      !_suppress_explicit_hydrostatic_pressure_flux)
-  {
-    const Real ghf = _gravity * (fi->faceCentroid() - _reference_pressure_point);
-    const Real sn_grad_rho = computeFaceNormalDensityGradient(fi, time_arg);
-    state.hydrostatic_mass_flux_density_raw = -ghf * sn_grad_rho * state.normal_raw_ainv;
-  }
-
   return state;
 }
 
@@ -816,29 +779,6 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::computeDefaultTransientProject
   // Euler ddtCorr contribution: fvcDdtPhiCoeff(U.oldTime(), phi.oldTime(), phiCorr) * phiCorr / dt.
   // The pressure corrector adds interpolate(rho*rAU()) times that value to phiHbyA.
   return ddt_coupling_coeff * state.face_rho * state.normal_raw_ainv * phi_corr / dt;
-}
-
-Real
-ConservativeDiffuseInterfaceRhieChowMassFluxBase::massFluxDensityToVolumetricNormalFlux(
-    const FaceInfo * fi, const Real mass_flux_density) const
-{
-  if (!fi)
-    return 0.0;
-
-  const RealVectorValue face_normal = fi->normal();
-  const RealVectorValue face_raw_ainv = interpolateFaceRawAinv(fi);
-  const RealVectorValue face_density_weighted_ainv = libmesh_map_find(_Ainv, fi->id());
-  const Real normal_raw_ainv = computeFaceNormalAinv(face_raw_ainv, face_normal);
-  const Real normal_density_weighted_ainv =
-      computeFaceNormalAinv(face_density_weighted_ainv, face_normal);
-
-  if (std::abs(normal_density_weighted_ainv) <= libMesh::TOLERANCE)
-  {
-    const Real face_rho = predictorFaceDensity(fi, Moose::currentState());
-    return std::abs(face_rho) > libMesh::TOLERANCE ? mass_flux_density / face_rho : 0.0;
-  }
-
-  return mass_flux_density * normal_raw_ainv / normal_density_weighted_ainv;
 }
 
 Real

@@ -32,7 +32,6 @@ public:
   struct DiffuseFaceOperatorState
   {
     Real face_rho = 0.0;
-    Real hydrostatic_mass_flux_density_raw = 0.0;
     Real normal_raw_ainv = 0.0;
     RealVectorValue face_normal;
     RealVectorValue face_raw_ainv;
@@ -61,11 +60,7 @@ public:
   void computeCellVelocity() override;
   Real getMassFlux(const FaceInfo & fi) const override;
   Real getVolumetricFaceFlux(const FaceInfo & fi) const override;
-  Real getVolumetricFaceFlux(const Moose::FV::InterpMethod m,
-                             const FaceInfo & fi,
-                             const Moose::StateArg & time,
-                             const THREAD_ID tid,
-                             bool subtract_mesh_velocity) const override;
+  using RhieChowMassFlux::getVolumetricFaceFlux;
   void commitAcceptedTimestepTransportHistory();
   void freezeVOFTransportState(const bool use_previous_timestep_flux = false);
   void adoptPublishedVOFTransportState();
@@ -131,7 +126,6 @@ protected:
                                      const Moose::StateArg & time_arg) const;
   Real interpolatedPhysicalFaceFlux(const FaceInfo * fi, const Moose::StateArg & time_arg) const;
 
-  RealVectorValue interpolateFaceRawAinv(const FaceInfo * fi) const;
   void buildDiffuseFaceRawAinvReaders(
       std::vector<std::unique_ptr<NumericVector<Number>>> & owned_raw_ainv,
       std::vector<PetscVectorReader> & raw_ainv_readers) const;
@@ -148,8 +142,6 @@ protected:
   Real computeDefaultTransientProjectionVolumetricFlux(const FaceInfo * fi,
                                                        const Moose::StateArg & time_arg,
                                                        const DiffuseFaceOperatorState & state);
-  Real massFluxDensityToVolumetricNormalFlux(const FaceInfo * fi,
-                                             const Real mass_flux_density) const;
   Real computeFaceNormalDensityGradient(const FaceInfo * fi,
                                         const Moose::StateArg & time_arg) const;
   Real computeFaceNormalScalarGradient(const Moose::Functor<Real> & functor,
