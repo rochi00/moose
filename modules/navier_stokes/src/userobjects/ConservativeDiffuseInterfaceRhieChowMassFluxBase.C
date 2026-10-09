@@ -542,12 +542,7 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::initialize()
   RhieChowMassFlux::initialize();
 
   initializeAdditionalPressureFluxStorage(/*preserve_corrected_face_phi=*/true);
-  if (!_corrected_face_phi_seeded)
-    cacheCurrentCorrectedVolumetricFlux();
-
-  for (const auto * fi : flowFaceInfo())
-    _previous_timestep_corrected_face_phi[fi->id()] =
-        libmesh_map_find(_corrected_face_phi, fi->id());
+  commitAcceptedTimestepTransportHistory();
 }
 
 void
