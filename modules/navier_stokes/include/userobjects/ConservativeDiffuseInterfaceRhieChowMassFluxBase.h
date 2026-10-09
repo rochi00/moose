@@ -63,8 +63,6 @@ public:
   using RhieChowMassFlux::getVolumetricFaceFlux;
   void commitAcceptedTimestepTransportHistory();
   void freezeVOFTransportState(const bool use_previous_timestep_flux = false);
-  void adoptPublishedVOFTransportState();
-  void clearVOFTransportState();
 
   /// Update the additional pressure-equation source-flux functors before the pressure solve.
   void updateAdditionalPressureFluxFunctors(const bool verbose);
@@ -196,7 +194,6 @@ protected:
   const Moose::Functor<Real> * _vof_rho_phi;
   const Moose::Functor<Real> * _surface_tension_coefficient = nullptr;
   const Moose::Functor<Real> * _surface_tension_volume_fraction = nullptr;
-  bool _vof_transport_phi_valid = false;
   bool _corrected_face_phi_seeded = false;
   bool _suppress_explicit_hydrostatic_pressure_flux = false;
   bool _suppress_startup_pressure_predictor_flux_sources = false;

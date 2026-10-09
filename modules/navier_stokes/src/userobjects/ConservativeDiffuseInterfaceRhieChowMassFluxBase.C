@@ -301,7 +301,6 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::initializeAdditionalPressureFl
     _pressure_predictor_flux[fi->id()] = 0.0;
   }
 
-  _vof_transport_phi_valid = false;
   _corrected_face_phi_seeded = preserve_corrected_face_phi && _corrected_face_phi_seeded;
   _pressure_coupled_velocity_correction_valid = false;
 }
@@ -498,23 +497,6 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::freezeVOFTransportState(
             ? libmesh_map_find(_previous_timestep_corrected_face_phi, fi->id())
             : libmesh_map_find(_corrected_face_phi, fi->id());
 
-  _vof_transport_phi_valid = true;
-}
-
-void
-ConservativeDiffuseInterfaceRhieChowMassFluxBase::adoptPublishedVOFTransportState()
-{
-  if (!_vof_transport_phi_valid)
-    freezeVOFTransportState(false);
-}
-
-void
-ConservativeDiffuseInterfaceRhieChowMassFluxBase::clearVOFTransportState()
-{
-  for (auto & pair : _vof_transport_phi)
-    pair.second = 0.0;
-
-  _vof_transport_phi_valid = false;
 }
 
 void

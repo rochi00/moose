@@ -52,14 +52,12 @@ private:
   bool shouldRunStartupInitialization() const;
   bool solvesVolumeFraction() const;
   void initializeStartupPressureField(const SolverParams & solver_params);
-  void resetVOFTransportStateForNewSolve() const;
   void initializeConsistentStartupState();
   void commitAcceptedVOFTransportHistoryIfNeeded() const;
   void advanceOuterIterationHistories();
   void solveVolumeFractionBeforeFlowCorrection(ResidualStorage & residual_storage,
                                                const SolverParams & solver_params);
   void prepareVOFTransportStateForOuterIteration() const;
-  void adoptPublishedVOFTransportState() const;
   void
   storeActiveScalarResiduals(ResidualStorage & residual_storage,
                              const std::vector<std::pair<unsigned int, Real>> & vf_residuals) const;

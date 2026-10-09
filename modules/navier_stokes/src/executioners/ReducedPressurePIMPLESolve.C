@@ -297,8 +297,6 @@ ReducedPressurePIMPLESolve::preSolveSetup(const SolverParams & /* solver_params 
 void
 ReducedPressurePIMPLESolve::initializeSolveLoop(const SolverParams & solver_params)
 {
-  resetVOFTransportStateForNewSolve();
-
   if (shouldRunStartupInitialization())
     initializeConsistentStartupState();
 
@@ -317,14 +315,6 @@ ReducedPressurePIMPLESolve::preMomentumPressureIteration(ResidualStorage & resid
 
   if (solvesVolumeFraction())
     solveVolumeFractionBeforeFlowCorrection(residual_storage, solver_params);
-}
-
-void
-ReducedPressurePIMPLESolve::resetVOFTransportStateForNewSolve() const
-{
-  if (solvesVolumeFraction())
-    if (auto * diffuse_rc = diffuseInterfaceRC())
-      diffuse_rc->clearVOFTransportState();
 }
 
 void
@@ -377,8 +367,6 @@ ReducedPressurePIMPLESolve::solveVolumeFractionBeforeFlowCorrection(
   Moose::PetscSupport::petscSetOptions(_active_scalar_petsc_options, solver_params);
   const auto vf_residuals = solveVolumeFractionSystems();
 
-  adoptPublishedVOFTransportState();
-
   _problem.execute(EXEC_NONLINEAR);
   storeActiveScalarResiduals(residual_storage, vf_residuals);
 }
@@ -391,16 +379,8 @@ ReducedPressurePIMPLESolve::prepareVOFTransportStateForOuterIteration() const
 
   if (auto * diffuse_rc = diffuseInterfaceRC())
   {
-    diffuse_rc->clearVOFTransportState();
     diffuse_rc->freezeVOFTransportState(use_previous_timestep_transport_flux);
   }
-}
-
-void
-ReducedPressurePIMPLESolve::adoptPublishedVOFTransportState() const
-{
-  if (auto * diffuse_rc = diffuseInterfaceRC())
-    diffuse_rc->adoptPublishedVOFTransportState();
 }
 
 void
