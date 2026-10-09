@@ -31,6 +31,7 @@ public:
   virtual std::vector<UserObjectName> getSuppliedUserObjects() const override;
 
 protected:
+  void addFVInterpolationMethods() override;
   void initializePhysicsAdditional() override;
   void addSolverVariables() override;
   void addFVKernels() override;

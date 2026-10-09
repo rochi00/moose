@@ -17,6 +17,9 @@ registerWCNSFVFlowPhysicsBaseTasks("NavierStokesApp",
                                    WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics);
 registerMooseAction("NavierStokesApp",
                     WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics,
+                    "add_interpolation_method_physics");
+registerMooseAction("NavierStokesApp",
+                    WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics,
                     "add_linear_fv_kernel");
 registerMooseAction("NavierStokesApp",
                     WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics,
