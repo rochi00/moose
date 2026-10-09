@@ -93,9 +93,8 @@ RhieChowMassFlux::validParams()
   params.addRequiredParam<VariableName>("u", "The x-component of velocity");
   params.addParam<VariableName>("v", "The y-component of velocity");
   params.addParam<VariableName>("w", "The z-component of velocity");
-  params.addRequiredParam<std::string>(
-      "p_diffusion_kernel",
-      "The diffusion kernel acting on the pressure.");
+  params.addRequiredParam<std::string>("p_diffusion_kernel",
+                                       "The diffusion kernel acting on the pressure.");
   params.addParam<std::vector<std::vector<std::string>>>(
       "body_force_kernel_names",
       {},
@@ -1921,14 +1920,14 @@ RhieChowMassFlux::buildMomentumPredictorFaceState(
           neighbor_info.dofIndices()[_global_momentum_system_numbers[dim_i]][0];
       interpolate(Moose::FV::InterpMethod::Average,
                   state.face_hbya(dim_i),
-                  -hbya_reader[dim_i](elem_dof),
-                  -hbya_reader[dim_i](neighbor_dof),
+                  hbya_reader[dim_i](elem_dof),
+                  hbya_reader[dim_i](neighbor_dof),
                   *fi,
                   true);
       interpolate(Moose::FV::InterpMethod::Average,
                   state.density_weighted_face_hbya(dim_i),
-                  -elem_rho * hbya_reader[dim_i](elem_dof),
-                  -neighbor_rho * hbya_reader[dim_i](neighbor_dof),
+                  elem_rho * hbya_reader[dim_i](elem_dof),
+                  neighbor_rho * hbya_reader[dim_i](neighbor_dof),
                   *fi,
                   true);
 
@@ -1988,7 +1987,7 @@ RhieChowMassFlux::buildMomentumPredictorFaceState(
     for (const auto dim_i : make_range(_dim))
     {
       const auto elem_dof = elem_info.dofIndices()[_global_momentum_system_numbers[dim_i]][0];
-      state.face_hbya(dim_i) = -boundary_normal_multiplier * hbya_reader[dim_i](elem_dof);
+      state.face_hbya(dim_i) = boundary_normal_multiplier * hbya_reader[dim_i](elem_dof);
       state.density_weighted_face_hbya(dim_i) = state.face_rho * state.face_hbya(dim_i);
     }
   }
@@ -2162,8 +2161,7 @@ RhieChowMassFlux::computeHbyA(bool verbose)
       // restore explicit body-force sources.
       // The coupling gradient is the snapshot taken before this predictor was assembled,
       // which is the gradient the momentum pressure source actually used.
-      working_vector_petsc->pointwise_mult(*coupling_pressure_gradient[system_i],
-                                          *_cell_volumes);
+      working_vector_petsc->pointwise_mult(*coupling_pressure_gradient[system_i], *_cell_volumes);
       HbyA.add(-1.0, *working_vector_petsc);
 
       if (!_body_force_kernels.empty())
