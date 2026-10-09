@@ -32,7 +32,6 @@ public:
   struct DiffuseFaceOperatorState
   {
     Real face_rho = 0.0;
-    Real negative_sn_grad_p = 0.0;
     Real hydrostatic_mass_flux_density_raw = 0.0;
     Real normal_raw_ainv = 0.0;
     RealVectorValue face_normal;
@@ -73,7 +72,7 @@ public:
   void clearVOFTransportState();
 
   /// Update the additional pressure-equation source-flux functors before the pressure solve.
-  void updateAdditionalPressureFluxFunctors(const bool with_updated_pressure, const bool verbose);
+  void updateAdditionalPressureFluxFunctors(const bool verbose);
 
   void computePressureCorrectedCellVelocity();
 
@@ -136,14 +135,10 @@ protected:
   void buildDiffuseFaceRawAinvReaders(
       std::vector<std::unique_ptr<NumericVector<Number>>> & owned_raw_ainv,
       std::vector<PetscVectorReader> & raw_ainv_readers) const;
-  void
-  buildSelectedPressureGradientReaders(const bool with_updated_pressure,
-                                       std::vector<PetscVectorReader> & pressure_gradient_readers);
   DiffuseFaceOperatorState buildDiffuseFaceOperatorState(
       const FaceInfo * fi,
       const Moose::StateArg & time_arg,
-      const std::vector<PetscVectorReader> & raw_ainv_readers,
-      const std::vector<PetscVectorReader> * pressure_gradient_readers = nullptr) const;
+      const std::vector<PetscVectorReader> & raw_ainv_readers) const;
 
   Real evaluateFaceScalarFunctor(const Moose::Functor<Real> * functor,
                                  const FaceInfo * fi,
@@ -162,8 +157,6 @@ protected:
                                        const Moose::StateArg & time_arg) const;
   Real computeFaceNormalPressureGradient(const FaceInfo * fi,
                                          const Moose::StateArg & time_arg) const;
-  Real computeFaceNormalPressureGradient(
-      const FaceInfo * fi, const std::vector<PetscVectorReader> & pressure_gradient_readers) const;
   bool useExplicitHydrostaticPredictorForce() const;
   Real
   computeDiscreteHydrostaticPredictorFaceNormalForceDensity(const FaceInfo * fi,

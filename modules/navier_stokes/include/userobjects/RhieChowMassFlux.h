@@ -29,6 +29,8 @@ class INSFVPressureVariable;
 class LinearFVGradientReader;
 class FVReconstructedPressureGradient;
 class LinearFVPressureCorrectionDiffusion;
+class LinearFVBoundaryCondition;
+class LinearFVElementalKernel;
 namespace libMesh
 {
 class Elem;
@@ -118,7 +120,32 @@ public:
   /// Maximum face-flux Courant number over active flow cells for the supplied timestep.
   virtual Real maxCourant(const Real dt) const;
   /// Update the values of the face velocities in the containers
-  void computeFaceMassFlux();
+  virtual void computeFaceMassFlux();
+  /// Update the cell values of the velocity variables
+  virtual void computeCellVelocity();
+  /// Accessor for the current cell Ainv state.
+  Real cellAinvRaw(const unsigned int system_i, const dof_id_type dof) const;
+  /// Begin streaming native linear FV assembly contributions into the cached split predictor.
+  void beginFVSplitMomentumPredictorOperatorAssembly(const unsigned int system_i);
+  /// Finalize the split predictor assembled from the momentum operator.
+  void completeFVSplitMomentumPredictorOperatorAssembly(const unsigned int system_i,
+                                                        const Real relaxation_parameter,
+                                                        const bool enforce_diagonal_dominance);
+  /// Populate cached split-predictor internals from the assembled momentum operator.
+  void cacheFVSplitMomentumPredictorOperatorAssembly(const unsigned int system_i,
+                                                     libMesh::SparseMatrix<Number> & matrix,
+                                                     const NumericVector<Number> & rhs);
+  /// Invalidate the cached assembled/relaxed momentum predictor operator.
+  void clearMomentumPredictorOperatorCache();
+  /// Add explicit forcing to the momentum predictor RHS after the base operator assembly.
+  virtual void addMomentumPredictorExplicitForcing(const unsigned int system_i,
+                                                   NumericVector<Number> & rhs) const;
+  /// Whether the predictor operator excludes explicit pressure/body-force terms.
+  bool splitMomentumPredictorOperator() const { return _split_momentum_predictor_operator; }
+  /// Update boundary pressure gradients from the current predictor and boundary velocity state.
+  void updatePressureBoundaryNormalGradients(const bool apply_pressure_flux_adjustment);
+  /// Refresh boundary-face velocity values from the active FV velocity BC objects.
+  virtual void updateVelocityBoundaryState();
 
   /// Whether the registered pressure gradient field is produced by the reconstructed method.
   bool usingReconstructedPressureGradientMethod() const;
@@ -196,6 +223,74 @@ protected:
 
   /// Check the single-variable system layout assumed by reconstructed pressure-gradient vector ops.
   void checkReconstructedPressureGradientCompatibility() const;
+  struct MomentumPredictorOperator;
+  struct FaceMomentumPredictorState
+  {
+    Real face_rho = 0.0;
+    RealVectorValue face_hbya;
+    RealVectorValue density_weighted_face_hbya;
+    RealVectorValue face_density_weighted_ainv;
+    RealVectorValue face_pressure_ainv;
+  };
+
+  /// Predictor-side face flux entering the pressure equation. Defaults to the HbyA contribution.
+  virtual Real pressurePredictorFlux(const FaceInfo * fi) const;
+  /// Populate the explicit face state used by the pressure corrector.
+  void updatePressurePredictorFaceState();
+  /// Optional per-face adjustment added to the predictor flux for reference-pressure compatibility.
+  Real pressurePredictorFluxAdjustment(const FaceInfo * fi) const;
+  /// Target boundary flux for the active pressure-correction space.
+  virtual Real pressureBoundaryTargetFlux(const FaceInfo * fi,
+                                          const Moose::StateArg & time_arg) const;
+  /// Normal diffusion coefficient for the active pressure-correction space.
+  virtual Real pressureBoundaryNormalAinv(const FaceInfo * fi) const;
+  /// Fetch and initialize the pressure boundary condition attached to a boundary face.
+  LinearFVBoundaryCondition * pressureBoundaryCondition(const FaceInfo * fi) const;
+  /// Whether pressure-correction face fluxes include face area.
+  virtual bool pressureCorrectionFluxIsIntegrated() const { return false; }
+  /// Whether a boundary face should use constrained boundary values for the predictor state.
+  virtual bool useConstrainedBoundaryPredictorState(const FaceInfo * fi) const;
+  /// Whether a face touches the active flow block set.
+  bool isFlowFace(const FaceInfo & fi) const;
+  /// Flow-side element information for a boundary face.
+  const ElemInfo & boundaryElemInfo(const FaceInfo * fi) const;
+  /// Orientation multiplier from flow-side boundary values to face normal convention.
+  Real boundaryNormalMultiplier(const FaceInfo * fi) const;
+  /// Build a central-difference face argument on the requested side.
+  Moose::FaceArg makeCenteredFaceArg(const FaceInfo * fi,
+                                     const Elem * face_side = nullptr,
+                                     const Moose::StateArg * limiter_state = nullptr) const;
+  /// Geometric face measure used to convert between flux density and integrated flux.
+  Real faceMeasure(const FaceInfo & fi) const;
+  /// Face area supplied to the pressure diffusion kernel when reconstructing pressure fluxes.
+  virtual Real pressureDiffusionFaceArea(const FaceInfo * fi) const;
+  /// Evaluate or fetch the boundary face value for a velocity component.
+  Real boundaryVelocityValue(const FaceInfo * fi,
+                             const unsigned int component,
+                             const Moose::StateArg & time_arg) const;
+  /// Fetch and initialize the velocity boundary condition for one component.
+  LinearFVBoundaryCondition * velocityBoundaryCondition(const FaceInfo * fi,
+                                                        const unsigned int component) const;
+  /// Compute the target physical boundary mass flux rho U_b.n at a face.
+  Real boundaryMassFluxTarget(const FaceInfo * fi, const Moose::StateArg & time_arg) const;
+  /// Compute the target volumetric boundary flux U_b.n at a face.
+  Real boundaryVolumetricFluxTarget(const FaceInfo * fi, const Moose::StateArg & time_arg) const;
+  /// Compute the normal component of a face diagonal Ainv vector.
+  Real computeFaceNormalAinv(const RealVectorValue & face_ainv,
+                             const RealVectorValue & face_normal) const;
+  /// Compute the normal component of the face diffusion coefficient used by pressure BCs.
+  Real boundaryNormalAinv(const FaceInfo * fi) const;
+  /// Determine whether a boundary face belongs to an adjustable fixed-flux pressure patch.
+  bool isAdjustablePressureBoundaryFace(const FaceInfo * fi) const;
+  /// Compute the face flux contributed by the solved pressure equation in the
+  /// native pressure-correction space used by this Rhie-Chow object.
+  virtual Real computeDiscretePressureFaceFlux(const FaceInfo * fi) const;
+  /// Optional extension point after boundary velocity state has been refreshed.
+  virtual void postUpdateVelocityBoundaryState() {}
+
+  /// Accessor for the cached set of flow faces used by this Rhie-Chow object.
+  const std::vector<const FaceInfo *> & flowFaceInfo() const { return _flow_face_info; }
+
 
   /// Compute the cell volumes on the mesh
   void setupMeshInformation();
@@ -330,6 +425,60 @@ protected:
 
   /// Coupling pressure gradient captured before the current momentum predictor is assembled.
   std::vector<std::unique_ptr<NumericVector<Number>>> _grad_p_current;
+  /**
+   * Exact face flux contribution from the solved pressure equation, in the same sign convention
+   * used in face_mass_flux = -predictor_flux + pressure_equation_flux.
+   */
+  FaceCenteredMapFunctor<Real, std::unordered_map<dof_id_type, Real>> _pressure_equation_flux;
+
+  /**
+   * Cached boundary-normal pressure gradient used by fixed-flux pressure boundary updates against
+   * the current predictor flux.
+   */
+  FaceCenteredMapFunctor<Real, std::unordered_map<dof_id_type, Real>>
+      _pressure_boundary_normal_gradient;
+
+  /// Indicates whether _pressure_equation_flux matches the latest solved pressure field.
+  bool _pressure_equation_flux_valid = false;
+
+  /// Per-face predictor source-flux adjustments used for the local adjustPhi analogue.
+  std::unordered_map<dof_id_type, Real> _pressure_predictor_flux_adjustment;
+
+  /// Unadjusted predictor-side face flux prior to the local adjustPhi analogue, stored in the
+  /// internal pressure-correction convention. The accepted transport flux uses the negated value.
+  std::unordered_map<dof_id_type, Real> _pressure_predictor_base_flux;
+
+  /// Indicates whether _pressure_boundary_normal_gradient matches the latest predictor state.
+  bool _pressure_boundary_normal_gradient_valid = false;
+
+  /// Indicates whether _phiHbyA_flux/_phig_flux match the latest predictor state.
+  bool _pressure_predictor_face_state_valid = false;
+
+  /// Boundary-face velocity values refreshed from the current FV velocity BCs.
+  std::vector<std::unordered_map<dof_id_type, Real>> _boundary_velocity_face_values;
+
+  /// Indicates whether _boundary_velocity_face_values matches the latest cell-centered velocity.
+  bool _velocity_boundary_state_valid = false;
+
+  /// Whether to consume a cached assembled predictor operator instead of rebuilding HbyA live.
+  const bool _use_cached_momentum_predictor_operator;
+
+  /// Whether the momentum predictor operator already excludes explicit pressure/body-force terms.
+  const bool _split_momentum_predictor_operator;
+
+  /// Predictor operators for each momentum component.
+  std::vector<std::unique_ptr<MomentumPredictorOperator>> _momentum_predictor_operators;
+
+  /// Indicates whether the cached predictor operator has been populated for every component.
+  bool _cached_predictor_operator_valid = false;
+
+  /// Indicates whether all streamed component operators have been vector-finalized.
+  bool _cached_predictor_operator_finalized = false;
+
+  /// Pointer to the body force terms
+  std::vector<std::vector<LinearFVElementalKernel *>> _body_force_kernels;
+  /// Vector of body force term names
+  std::vector<std::vector<std::string>> _body_force_kernel_names;
 
   /**
    * Producer counter for the conservative face mass flux: incremented every time

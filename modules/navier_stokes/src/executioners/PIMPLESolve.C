@@ -80,7 +80,7 @@ PIMPLESolve::correctVelocity(const bool /*recompute_face_mass_flux*/,
 void
 PIMPLESolve::preparePressureCorrectorState(const bool subtract_updated_pressure)
 {
-  _rc_uo->computeHbyA(subtract_updated_pressure, _print_fields);
+  _rc_uo->computeHbyA(_print_fields);
   postPreparePressureCorrectorState(subtract_updated_pressure);
 }
 

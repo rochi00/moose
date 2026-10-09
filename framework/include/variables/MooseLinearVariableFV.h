@@ -196,7 +196,6 @@ public:
    */
   LinearFVBoundaryCondition * getBoundaryCondition(const FaceInfo & fi) const;
 
-  const std::unordered_map<BoundaryID, LinearFVBoundaryCondition *> & getBoundaryConditionMap()
   /// Boundary-condition map keyed by boundary ID for this variable.
   const std::unordered_map<BoundaryID, LinearFVBoundaryCondition *> &
   getBoundaryConditionMap() const

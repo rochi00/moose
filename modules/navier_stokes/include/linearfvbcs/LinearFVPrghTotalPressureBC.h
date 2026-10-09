@@ -30,7 +30,7 @@ public:
   LinearFVPrghTotalPressureBC(const InputParameters & parameters);
 
   Real computeBoundaryValue() const override;
-  bool useBoundaryGradientExtrapolation() const override { return false; }
+  bool needsBoundaryNonorthogonalCorrection() const override { return false; }
 
 protected:
   const ElemInfo & fluidElemInfo() const;

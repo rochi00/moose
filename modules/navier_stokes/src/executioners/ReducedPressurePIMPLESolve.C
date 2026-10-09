@@ -541,7 +541,7 @@ void
 ReducedPressurePIMPLESolve::postPreparePressureCorrectorState(const bool subtract_updated_pressure)
 {
   if (auto * diffuse_rc = diffuseInterfaceRC())
-    diffuse_rc->updateAdditionalPressureFluxFunctors(subtract_updated_pressure, _print_fields);
+    diffuse_rc->updateAdditionalPressureFluxFunctors(_print_fields);
 
   // Refresh the patch velocity / target-flux state from the latest momentum
   // predictor before assembling the constrained pressure boundary gradient.

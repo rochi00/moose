@@ -755,32 +755,18 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::buildDiffuseFaceRawAinvReaders
   }
 }
 
-void
-ConservativeDiffuseInterfaceRhieChowMassFluxBase::buildSelectedPressureGradientReaders(
-    const bool with_updated_pressure, std::vector<PetscVectorReader> & pressure_gradient_readers)
-{
-  pressure_gradient_readers.clear();
-  auto & pressure_gradient = selectPressureGradient(with_updated_pressure);
-  pressure_gradient_readers.reserve(pressure_gradient.size());
-  for (const auto & component : pressure_gradient)
-    pressure_gradient_readers.emplace_back(*component);
-}
 
 ConservativeDiffuseInterfaceRhieChowMassFluxBase::DiffuseFaceOperatorState
 ConservativeDiffuseInterfaceRhieChowMassFluxBase::buildDiffuseFaceOperatorState(
     const FaceInfo * fi,
     const Moose::StateArg & time_arg,
-    const std::vector<PetscVectorReader> & raw_ainv_readers,
-    const std::vector<PetscVectorReader> * pressure_gradient_readers) const
+    const std::vector<PetscVectorReader> & raw_ainv_readers) const
 {
   DiffuseFaceOperatorState state;
   state.face_normal = fi->normal();
   state.face_rho = interpolateFaceDensity(fi, time_arg);
   state.face_raw_ainv = interpolateMomentumVectorReadersToFace(fi, raw_ainv_readers);
   state.normal_raw_ainv = computeFaceNormalAinv(state.face_raw_ainv, state.face_normal);
-  state.negative_sn_grad_p = -(
-      pressure_gradient_readers ? computeFaceNormalPressureGradient(fi, *pressure_gradient_readers)
-                                : computeFaceNormalPressureGradient(fi, time_arg));
   if (!_suppress_startup_pressure_predictor_flux_sources &&
       !_suppress_explicit_hydrostatic_pressure_flux)
   {
@@ -952,40 +938,6 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::computeFaceNormalPressureGradi
   }
 
   return 0.0;
-}
-
-Real
-ConservativeDiffuseInterfaceRhieChowMassFluxBase::computeFaceNormalPressureGradient(
-    const FaceInfo * fi, const std::vector<PetscVectorReader> & pressure_gradient_readers) const
-{
-  if (!fi)
-    return 0.0;
-
-  auto cell_grad_dot_normal = [this, &pressure_gradient_readers, fi](const ElemInfo & elem_info)
-  {
-    RealVectorValue grad_p;
-    for (const auto dim_i : make_range(_dim))
-    {
-      const auto dof = elem_info.dofIndices()[_global_pressure_system_number][0];
-      grad_p(dim_i) = pressure_gradient_readers[dim_i](dof);
-    }
-    return grad_p * fi->normal();
-  };
-
-  if (_vel[0]->isInternalFace(*fi))
-  {
-    const Real elem_grad = cell_grad_dot_normal(*fi->elemInfo());
-    const Real neighbor_grad = cell_grad_dot_normal(*fi->neighborInfo());
-    Real face_grad = 0.0;
-    Moose::FV::interpolate(
-        Moose::FV::InterpMethod::Average, face_grad, elem_grad, neighbor_grad, *fi, true);
-    return face_grad;
-  }
-
-  if (_pressure_boundary_normal_gradient_valid)
-    return libmesh_map_find(_pressure_boundary_normal_gradient, fi->id());
-
-  return cell_grad_dot_normal(boundaryElemInfo(fi));
 }
 
 bool
@@ -1190,7 +1142,7 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::
 
 void
 ConservativeDiffuseInterfaceRhieChowMassFluxBase::updateAdditionalPressureFluxFunctors(
-    const bool with_updated_pressure, const bool /*verbose*/)
+    const bool /*verbose*/)
 {
   _pressure_coupled_velocity_correction_valid = false;
   _pressure_predictor_face_state_valid = false;
@@ -1200,8 +1152,6 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::updateAdditionalPressureFluxFu
   std::vector<std::unique_ptr<NumericVector<Number>>> owned_raw_ainv;
   std::vector<PetscVectorReader> raw_ainv_readers;
   buildDiffuseFaceRawAinvReaders(owned_raw_ainv, raw_ainv_readers);
-  std::vector<PetscVectorReader> pressure_gradient_readers;
-  buildSelectedPressureGradientReaders(with_updated_pressure, pressure_gradient_readers);
 
   std::vector<PetscVectorReader> hbya_readers;
   hbya_readers.reserve(_HbyA_raw.size());
@@ -1221,7 +1171,7 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::updateAdditionalPressureFluxFu
     const Real face_measure = faceMeasure(*fi);
     const Real predictor_operator_volumetric_flux = predictor_state.face_hbya * fi->normal();
     const auto state =
-        buildDiffuseFaceOperatorState(fi, time_arg, raw_ainv_readers, &pressure_gradient_readers);
+        buildDiffuseFaceOperatorState(fi, time_arg, raw_ainv_readers);
     const RealVectorValue pressure_face_raw_ainv = state.face_raw_ainv;
     const Real normal_pressure_ainv =
         computeFaceNormalAinv(pressure_face_raw_ainv, state.face_normal);

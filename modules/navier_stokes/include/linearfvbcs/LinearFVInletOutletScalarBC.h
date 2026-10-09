@@ -33,7 +33,7 @@ public:
   Real computeBoundaryGradientRHSContribution() const override;
 
   bool includesMaterialPropertyMultiplier() const override { return !isBackflow(); }
-  bool useBoundaryGradientExtrapolation() const override { return isBackflow(); }
+  bool needsBoundaryNonorthogonalCorrection() const override { return isBackflow(); }
 
 protected:
   bool isBackflow() const;

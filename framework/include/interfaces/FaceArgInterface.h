@@ -74,6 +74,8 @@ public:
                           const bool elem_is_upwind,
                           const bool correct_skewness = false,
                           const Moose::StateArg * state_limiter = nullptr) const;
+
+  /**
    * Determine a face argument for evaluating a functor on a face. If the functor is defined on a
    * single side, that side is selected. If it is defined on both sides, the face is left unsided.
    */
