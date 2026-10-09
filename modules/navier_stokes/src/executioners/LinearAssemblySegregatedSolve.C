@@ -417,9 +417,9 @@ LinearAssemblySegregatedSolve::solveMomentumPredictor()
     if (system_i == 0)
       momentum_solver.reuse_preconditioner(true);
 
-    // Save the normalized post-solve residual for outer residual control.
+    // Save the normalized residual
     its_normalized_residuals.push_back(
-        std::make_pair(its_resid_pair.first, its_resid_pair.second / norm_factor));
+        std::make_pair(its_resid_pair.first, momentum_solver.get_initial_residual() / norm_factor));
 
     if (_print_fields)
     {
@@ -602,7 +602,8 @@ LinearAssemblySegregatedSolve::solvePressureCorrector()
   if (_rc_uo)
     _rc_uo->cachePressureEquationFlux();
 
-  const auto residuals = std::make_pair(its_res_pair.first, its_res_pair.second / norm_factor);
+  const auto residuals =
+      std::make_pair(its_res_pair.first, pressure_solver.get_initial_residual() / norm_factor);
 
   _console << " Pressure equation: " << COLOR_GREEN << residuals.second << COLOR_DEFAULT
            << " Linear its: " << residuals.first << std::endl;
