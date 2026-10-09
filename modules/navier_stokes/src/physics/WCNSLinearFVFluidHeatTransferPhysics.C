@@ -215,8 +215,11 @@ WCNSLinearFVFluidHeatTransferPhysics::addEnergyHeatConductionKernels()
                  "Vector thermal conductivities not currently supported with the linear finite "
                  "volume discretization");
 
+    // LinearFVConservativeEnergyDiffusion does not support the correction and errors when it is
+    // asked for, while this parameter defaults to true, so forwarding it unconditionally made the
+    // conserved energy solve unusable unless the input turned it off by hand.
     params.set<bool>("use_nonorthogonal_correction") =
-        getParam<bool>("use_nonorthogonal_correction");
+        _solve_for_conserved_energy ? false : getParam<bool>("use_nonorthogonal_correction");
 
     getProblem().addLinearFVKernel(
         kernel_type, prefix() + "ins_energy_diffusion_" + block_name, params);
