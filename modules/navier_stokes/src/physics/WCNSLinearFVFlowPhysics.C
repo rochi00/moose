@@ -11,6 +11,7 @@
 #include "MapConversionUtils.h"
 #include "MooseUtils.h"
 #include "NS.h"
+#include "NSFVUtils.h"
 #include "RhieChowMassFlux.h"
 #include "TheWarehouse.h"
 
@@ -36,6 +37,11 @@ WCNSLinearFVFlowPhysics::validParams()
   params.addParam<bool>(
       "orthogonality_correction", false, "Whether to use orthogonality correction");
   params.renameParam("orthogonality_correction", "use_nonorthogonal_correction", "");
+  params.addParam<MooseEnum>(
+      "pressure_diffusion_interpolation",
+      NS::fvFaceInterpolationMethods(),
+      "The face interpolation method for Ainv in the pressure correction diffusion term.");
+  params.addParamNamesToGroup("pressure_diffusion_interpolation", "Numerical scheme");
   params.set<unsigned short>("ghost_layers") = 1;
 
   params.set<std::vector<SolverSystemName>>("system_names") = {
@@ -722,9 +728,17 @@ WCNSLinearFVFlowPhysics::addRhieChowUserObjects()
   params.set<MooseFunctorName>(NS::density) = _density_name;
   params.set<MooseEnum>("pressure_projection_method") =
       getParam<MooseEnum>("pressure_projection_method");
+  params.set<MooseEnum>("pressure_diffusion_interpolation") =
+      getParam<MooseEnum>("pressure_diffusion_interpolation");
   setRhieChowUserObjectParams(params);
 
-  getProblem().addUserObject(object_type, rhieChowUOName(), params);
+  addUserObject(object_type, rhieChowUOName(), params);
+}
+
+std::vector<UserObjectName>
+WCNSLinearFVFlowPhysics::getSuppliedUserObjects() const
+{
+  return {rhieChowUOName()};
 }
 
 void
