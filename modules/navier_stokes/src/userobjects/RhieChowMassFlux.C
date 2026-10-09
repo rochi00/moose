@@ -1687,6 +1687,12 @@ RhieChowMassFlux::useConstrainedBoundaryPredictorState(const FaceInfo * fi) cons
   if (!fi || _vel[0]->isInternalFace(*fi))
     return false;
 
+  // A LinearFVPressureFluxBC already enforces the prescribed boundary mass flux, so reconstructing
+  // the predictor state from the Dirichlet velocity there would impose it twice. Those faces take
+  // the one-term boundary expansion instead.
+  if (dynamic_cast<const LinearFVPressureFluxBC *>(pressureBoundaryCondition(fi)))
+    return false;
+
   return _vel[0]->isDirichletBoundaryFace(*fi);
 }
 
