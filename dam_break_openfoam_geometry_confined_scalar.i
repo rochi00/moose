@@ -80,7 +80,6 @@ tracer_patch_y = ${fparse 0.75 * dam_y}
         passive_scalar_names = 'alpha'
         initial_scalar_variables = 'alpha_init'
         system_names = 'alpha_system'
-        volume_fraction_outlet_type = 'inlet-outlet'
 
         liquid_density_name = 'rho_l'
         gas_density_name = 'rho_g'

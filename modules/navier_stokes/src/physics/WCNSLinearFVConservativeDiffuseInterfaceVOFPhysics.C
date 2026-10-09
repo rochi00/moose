@@ -46,12 +46,6 @@ WCNSLinearFVConservativeDiffuseInterfaceVOFPhysics::validParams()
       "1_minus_alpha",
       "Name of the complementary gas/second-phase volume-fraction functor.");
 
-  MooseEnum volume_fraction_outlet_type("inlet-outlet", "inlet-outlet");
-  params.addParam<MooseEnum>(
-      "volume_fraction_outlet_type",
-      volume_fraction_outlet_type,
-      "Outlet treatment for the transported volume fraction. The supported diffuse-interface path "
-      "imposes a backflow value on inflow and zero-gradient / extrapolation on outflow.");
   params.addParam<MooseFunctorName>(
       "volume_fraction_outlet_backflow_functor",
       "0",

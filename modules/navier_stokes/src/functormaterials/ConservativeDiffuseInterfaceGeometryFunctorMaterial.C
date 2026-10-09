@@ -12,29 +12,11 @@
 #include "MooseFunctorArguments.h"
 #include "SubProblem.h"
 #include "FVUtils.h"
+#include "MathUtils.h"
 
-#include <algorithm>
 #include <cmath>
-#include <type_traits>
 
 registerMooseObject("NavierStokesApp", ConservativeDiffuseInterfaceGeometryFunctorMaterial);
-
-namespace
-{
-Real
-geometryClampValue(const Real value, const Real lower, const Real upper)
-{
-  return std::max(lower, std::min(value, upper));
-}
-
-Real
-geometrySafeMagnitude(const RealVectorValue & v)
-{
-  using std::sqrt;
-  return sqrt(v * v);
-}
-
-}
 
 InputParameters
 ConservativeDiffuseInterfaceGeometryFunctorMaterial::validParams()
@@ -113,7 +95,7 @@ ConservativeDiffuseInterfaceGeometryFunctorMaterial::
       {
         Real alpha = _volume_fraction(r, t);
         if (_clip_volume_fraction)
-          alpha = geometryClampValue(alpha, _alpha_lower_bound, _alpha_upper_bound);
+          alpha = MathUtils::clamp(alpha, _alpha_lower_bound, _alpha_upper_bound);
         return (alpha >= _near_interface_lower && alpha <= _near_interface_upper) ? 1.0 : 0.0;
       },
       clearance_schedule);
@@ -128,7 +110,7 @@ ConservativeDiffuseInterfaceGeometryFunctorMaterial::
       [this](const auto & r, const auto & t) -> RealVectorValue
       {
         const RealVectorValue grad_alpha = alphaGradient(r, t);
-        const Real mag_grad_alpha = geometrySafeMagnitude(grad_alpha);
+        const Real mag_grad_alpha = grad_alpha.norm();
 
         return grad_alpha / (mag_grad_alpha + _delta_n);
       },

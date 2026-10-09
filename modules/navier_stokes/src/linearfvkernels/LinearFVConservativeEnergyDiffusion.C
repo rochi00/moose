@@ -64,18 +64,6 @@ LinearFVConservativeEnergyDiffusion::computeNeighborMatrixContribution()
 }
 
 Real
-LinearFVConservativeEnergyDiffusion::computeElemRightHandSideContribution()
-{
-  return 0.0;
-}
-
-Real
-LinearFVConservativeEnergyDiffusion::computeNeighborRightHandSideContribution()
-{
-  return 0.0;
-}
-
-Real
 LinearFVConservativeEnergyDiffusion::computeBoundaryMatrixContribution(
     const LinearFVBoundaryCondition & bc)
 {

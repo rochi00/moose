@@ -21,8 +21,6 @@ public:
 
   virtual Real computeElemMatrixContribution() override;
   virtual Real computeNeighborMatrixContribution() override;
-  virtual Real computeElemRightHandSideContribution() override;
-  virtual Real computeNeighborRightHandSideContribution() override;
   virtual Real computeBoundaryMatrixContribution(const LinearFVBoundaryCondition & bc) override;
 
 private:
