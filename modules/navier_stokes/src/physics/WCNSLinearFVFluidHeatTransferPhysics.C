@@ -43,7 +43,7 @@ WCNSLinearFVFluidHeatTransferPhysics::validParams()
   params.set<std::vector<SolverSystemName>>("system_names") = {"energy_system"};
 
   // We could split between discretization and solver here.
-  params.addParamNamesToGroup("use_nonorthogonal_correction system_names "
+  params.addParamNamesToGroup("use_nonorthogonal_correction "
                               "energy_mass_heat_capacity_face_flux "
                               "energy_mass_heat_capacity_face_flux_is_integrated "
                               "use_vof_consistent_energy_advection",

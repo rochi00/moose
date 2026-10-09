@@ -131,7 +131,7 @@ WCNSLinearFVConservativeDiffuseInterfaceVOFPhysics::validParams()
   params.addRequiredParam<MooseFunctorName>("gas_dynamic_viscosity_name",
                                             "Gas-phase dynamic viscosity functor.");
 
-  params.addParamNamesToGroup("system_names passive_scalar_names initial_scalar_variables "
+  params.addParamNamesToGroup("passive_scalar_names initial_scalar_variables "
                               "passive_scalar_advection_interpolation compression_factor "
                               "interface_normal_functor confined_scalar_variables "
                               "confined_scalar_backflow_concentration confined_scalar_alpha_floor "
