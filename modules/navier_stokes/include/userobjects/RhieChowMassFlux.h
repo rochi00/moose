@@ -13,12 +13,17 @@
 #include "CellCenteredMapFunctor.h"
 #include "FaceCenteredMapFunctor.h"
 #include "VectorComponentFunctor.h"
+#include "LinearFVElementalKernel.h"
+#include "LinearFVAnisotropicDiffusion.h"
+#include "PetscVectorReader.h"
+#include <string>
 #include <unordered_map>
 #include <set>
 
 #include "libmesh/petsc_vector.h"
 
 class MooseMesh;
+class ElemInfo;
 class INSFVVelocityVariable;
 class INSFVPressureVariable;
 class LinearFVGradientReader;
@@ -28,6 +33,8 @@ namespace libMesh
 {
 class Elem;
 class MeshBase;
+template <typename T>
+class SparseMatrix;
 }
 
 /**
@@ -39,12 +46,13 @@ class RhieChowMassFlux : public RhieChowFaceFluxProvider, public NonADFunctorInt
 public:
   static InputParameters validParams();
   RhieChowMassFlux(const InputParameters & params);
+  ~RhieChowMassFlux() override;
 
   /// Get the face velocity times density (used in advection terms)
-  Real getMassFlux(const FaceInfo & fi) const;
+  virtual Real getMassFlux(const FaceInfo & fi) const;
 
   /// Get the volumetric face flux (used in advection terms)
-  Real getVolumetricFaceFlux(const FaceInfo & fi) const;
+  virtual Real getVolumetricFaceFlux(const FaceInfo & fi) const;
 
   /// Get the registered pressure gradient field used by compatible momentum pressure kernels.
   const LinearFVGradientReader & pressureGradientField() const;
@@ -102,9 +110,13 @@ public:
                                      bool subtract_mesh_velocity) const override;
 
   /// Initialize the container for face velocities
-  void initFaceMassFlux();
+  virtual void initFaceMassFlux();
   /// Initialize the coupling fields (HbyA and Ainv)
   void initCouplingField();
+  /// Cache the pressure-equation face flux from the current solved pressure field.
+  virtual void cachePressureEquationFlux();
+  /// Maximum face-flux Courant number over active flow cells for the supplied timestep.
+  virtual Real maxCourant(const Real dt) const;
   /// Update the values of the face velocities in the containers
   void computeFaceMassFlux();
 
@@ -193,6 +205,42 @@ protected:
   populateCouplingFunctors(const std::vector<std::unique_ptr<NumericVector<Number>>> & raw_hbya,
                            const std::vector<std::unique_ptr<NumericVector<Number>>> & raw_Ainv);
 
+  /// Build the face predictor state shared by stock and diffuse-interface pressure coupling.
+  FaceMomentumPredictorState
+  buildMomentumPredictorFaceState(const FaceInfo * fi,
+                                  const std::vector<PetscVectorReader> & hbya_reader,
+                                  const std::vector<PetscVectorReader> * ainv_reader,
+                                  const Moose::StateArg & time_arg,
+                                  bool include_boundary_body_force_correction,
+                                  bool use_boundary_velocity_values) const;
+  /// Interpolate per-component momentum-system cell readers to a face vector.
+  RealVectorValue
+  interpolateMomentumVectorReadersToFace(const FaceInfo * fi,
+                                         const std::vector<PetscVectorReader> & readers) const;
+
+  /// Build the base predictor operator vectors M*u - A*u - rhs and the relaxed diagonal.
+  void computePredictorOperatorBase(const unsigned int system_i,
+                                    NumericVector<Number> & base_raw,
+                                    NumericVector<Number> & diagonal_raw,
+                                    const NumericVector<Number> * rhs_override = nullptr) const;
+
+  /// Refresh the aggregate validity flag for the cached predictor operator.
+  void updateCachedMomentumPredictorOperatorValidity();
+
+  /// Whether the cached predictor-operator state is complete and can be consumed.
+  bool canUseCachedMomentumPredictorOperator();
+
+  /// Finalize all component operators as one vector momentum-predictor object.
+  void finalizeCachedMomentumPredictorOperators();
+
+  /// Access the cached momentum-predictor operator for a component.
+  const MomentumPredictorOperator *
+  cachedMomentumPredictorOperator(const unsigned int system_i) const;
+
+  /// Access the cached fvMatrix::D() diagonal used by pressure projection for a component.
+  const NumericVector<Number> *
+  cachedMomentumPredictorDiagonalRaw(const unsigned int system_i) const;
+
   /**
    * Check the block consistency between the passed in \p var and us
    */
@@ -218,7 +266,7 @@ protected:
   std::vector<MooseLinearVariableFVReal *> _vel;
 
   /// Pointer to the pressure diffusion term in the pressure Poisson equation
-  LinearFVPressureCorrectionDiffusion * _p_diffusion_kernel;
+  LinearFVAnisotropicDiffusion * _p_diffusion_kernel;
 
   /**
    * A map functor from faces to $HbyA_{ij} = (A_{offdiag}*\mathrm{(predicted~velocity)} -
@@ -227,6 +275,26 @@ protected:
    * linearized momentum predictor step.
    */
   FaceCenteredMapFunctor<Real, std::unordered_map<dof_id_type, Real>> _HbyA_flux;
+
+  /**
+   * Explicit predictor-side face flux entering the pressure equation in the native
+   * pressure-correction sign convention. The accepted transport-face flux is therefore formed as
+   * -_phiHbyA_flux + _pressure_equation_flux.
+   */
+  FaceCenteredMapFunctor<Real, std::unordered_map<dof_id_type, Real>> _phiHbyA_flux;
+
+  /**
+   * Predictor-side face flux in the same native pressure-correction space consumed by the
+   * pressure equation and pressure boundary-condition updates. For stock RC this is a normal
+   * flux density; diffuse/conservative paths publish an area-integrated phi. It is
+   * still a pressure-correction-space predictor quantity, not the accepted transport phi.
+   */
+  FaceCenteredMapFunctor<Real, std::unordered_map<dof_id_type, Real>> _pressure_predictor_flux;
+
+  /**
+   * Explicit face-force contribution entering the pressure corrector.
+   */
+  FaceCenteredMapFunctor<Real, std::unordered_map<dof_id_type, Real>> _phig_flux;
 
   /**
    * We hold on to the cell-based HbyA vectors so that we can easily reconstruct the
@@ -239,6 +307,13 @@ protected:
    * for the momentum equation.
    */
   FaceCenteredMapFunctor<RealVectorValue, std::unordered_map<dof_id_type, RealVectorValue>> _Ainv;
+
+  /**
+   * Face diffusion tensor in the native pressure-correction space. For stock RC this matches the
+   * density-weighted face Ainv, while diffuse/conservative paths may publish raw face rAUf here.
+   */
+  FaceCenteredMapFunctor<RealVectorValue, std::unordered_map<dof_id_type, RealVectorValue>>
+      _pressure_Ainv;
 
   /**
    * We hold on to the cell-based 1/A vectors so that we can easily reconstruct the

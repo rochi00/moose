@@ -13,6 +13,11 @@
 #include "LinearSystem.h"
 #include "Executioner.h"
 
+#include <iostream>
+#include <limits>
+
+using namespace libMesh;
+
 InputParameters
 LinearAssemblySegregatedSolve::validParams()
 {
@@ -215,9 +220,6 @@ LinearAssemblySegregatedSolve::LinearAssemblySegregatedSolve(Executioner & ex)
     _active_scalar_pc_solve_counter(0),
     _cht(ex.parameters())
 {
-  if (!_should_solve_momentum && _should_solve_pressure)
-    paramError("should_solve_momentum",
-               "Pressure correction requires solving the momentum equations.");
   if (_should_solve_momentum && !_should_solve_pressure)
     paramError("should_solve_pressure",
                "Solving momentum without a pressure corrector is not supported.");
@@ -225,13 +227,17 @@ LinearAssemblySegregatedSolve::LinearAssemblySegregatedSolve(Executioner & ex)
     paramError("should_solve_solid_energy",
                "Solid energy solve cannot be enabled when the fluid energy solve is disabled.");
 
-  // We fetch the systems and their numbers for the momentum equations only if we solve them
-  if (_should_solve_momentum)
+  // Even when the explicit momentum predictor solve is disabled, the pressure
+  // corrector still needs the assembled momentum operator to build HbyA, rAU, and the transient
+  // projection. So we always fetch the momentum systems when the pressure solve is active, but
+  // only add them to the solve list if we actually execute the predictor solve.
+  if (_should_solve_momentum || _should_solve_pressure)
     for (auto system_i : index_range(_momentum_system_names))
     {
       _momentum_system_numbers.push_back(_problem.linearSysNum(_momentum_system_names[system_i]));
       _momentum_systems.push_back(&_problem.getLinearSystem(_momentum_system_numbers[system_i]));
-      _systems_to_solve.push_back(_momentum_systems.back());
+      if (_should_solve_momentum)
+        _systems_to_solve.push_back(_momentum_systems.back());
     }
 
   if (_should_solve_pressure)
@@ -337,7 +343,7 @@ LinearAssemblySegregatedSolve::LinearAssemblySegregatedSolve(Executioner & ex)
 void
 LinearAssemblySegregatedSolve::linkRhieChowUserObject()
 {
-  if (!_should_solve_momentum)
+  if (_momentum_systems.empty())
     return;
 
   _rc_uo =
@@ -367,6 +373,9 @@ LinearAssemblySegregatedSolve::solveMomentumPredictor()
   // Solve the momentum equations.
   // TO DO: These equations are VERY similar. If we can store the differences (things coming from
   // BCs for example) separately, it is enough to construct one matrix.
+  if (_rc_uo)
+    _rc_uo->clearMomentumPredictorOperatorCache();
+
   for (const auto system_i : index_range(_momentum_systems))
   {
     _problem.setCurrentLinearSystem(_momentum_system_numbers[system_i]);
@@ -408,9 +417,9 @@ LinearAssemblySegregatedSolve::solveMomentumPredictor()
     if (system_i == 0)
       momentum_solver.reuse_preconditioner(true);
 
-    // Save the normalized residual
+    // Save the normalized post-solve residual for outer residual control.
     its_normalized_residuals.push_back(
-        std::make_pair(its_resid_pair.first, momentum_solver.get_initial_residual() / norm_factor));
+        std::make_pair(its_resid_pair.first, its_resid_pair.second / norm_factor));
 
     if (_print_fields)
     {
@@ -421,7 +430,7 @@ LinearAssemblySegregatedSolve::solveMomentumPredictor()
       _console << " velocity solution component " << system_i << std::endl;
       solution.print();
       _console << "Norm factor " << norm_factor << std::endl;
-      _console << Moose::stringify(momentum_solver.get_initial_residual()) << std::endl;
+      _console << Moose::stringify(its_resid_pair.second) << std::endl;
     }
 
     // Printing residuals
@@ -454,6 +463,69 @@ LinearAssemblySegregatedSolve::solveMomentumPredictor()
   ++_momentum_pc_solve_counter;
 
   return its_normalized_residuals;
+}
+
+LinearAssemblySegregatedSolve::MomentumPredictorAssembly
+LinearAssemblySegregatedSolve::assembleMomentumPredictorOperator(const unsigned int system_i,
+                                                                 const bool prepare_without_solve)
+{
+  _problem.setCurrentLinearSystem(_momentum_system_numbers[system_i]);
+
+  auto & momentum_system =
+      libMesh::cast_ref<LinearImplicitSystem &>(_momentum_systems[system_i]->system());
+  auto & solution = *(momentum_system.solution);
+  auto & rhs = *(momentum_system.rhs);
+  auto & mmat = *(momentum_system.matrix);
+
+  auto diff_diagonal = solution.zero_clone();
+
+  if (prepare_without_solve)
+  {
+    momentum_system.update();
+    momentum_system.current_local_solution->close();
+    solution.close();
+    _momentum_systems[system_i]->solutionOld().close();
+    if (auto * previous_newton = _momentum_systems[system_i]->solutionPreviousNewton())
+      previous_newton->close();
+    rhs.close();
+  }
+
+  if (_rc_uo && _rc_uo->splitMomentumPredictorOperator())
+    _rc_uo->beginFVSplitMomentumPredictorOperatorAssembly(system_i);
+
+  try
+  {
+    _problem.computeLinearSystemSys(momentum_system, mmat, rhs, /*compute_grads*/ true);
+  }
+  catch (...)
+  {
+    if (_rc_uo && _rc_uo->splitMomentumPredictorOperator())
+      _rc_uo->clearMomentumPredictorOperatorCache();
+    throw;
+  }
+
+  if (prepare_without_solve)
+    rhs.close();
+
+  if (_rc_uo && _rc_uo->splitMomentumPredictorOperator())
+    _rc_uo->cacheFVSplitMomentumPredictorOperatorAssembly(system_i, mmat, rhs);
+
+  if (_rc_uo && _rc_uo->splitMomentumPredictorOperator())
+    _rc_uo->completeFVSplitMomentumPredictorOperatorAssembly(
+        system_i, _momentum_equation_relaxation, _force_momentum_diagonal_dominance);
+
+  applyMomentumEquationRelaxation(mmat, rhs, solution, *diff_diagonal);
+
+  if (_rc_uo && _rc_uo->splitMomentumPredictorOperator())
+    addMomentumPredictorExplicitForcing(system_i, rhs);
+
+  return {&momentum_system, &solution, &rhs, &mmat};
+}
+
+void
+LinearAssemblySegregatedSolve::addMomentumPredictorExplicitForcing(const unsigned int /*system_i*/,
+                                                                   NumericVector<Number> & /*rhs*/)
+{
 }
 
 void
@@ -527,8 +599,10 @@ LinearAssemblySegregatedSolve::solvePressureCorrector()
 
   _pressure_system.setSolution(current_local_solution);
 
-  const auto residuals =
-      std::make_pair(its_res_pair.first, pressure_solver.get_initial_residual() / norm_factor);
+  if (_rc_uo)
+    _rc_uo->cachePressureEquationFlux();
+
+  const auto residuals = std::make_pair(its_res_pair.first, its_res_pair.second / norm_factor);
 
   _console << " Pressure equation: " << COLOR_GREEN << residuals.second << COLOR_DEFAULT
            << " Linear its: " << residuals.first << std::endl;
@@ -740,6 +814,74 @@ LinearAssemblySegregatedSolve::solveAdvectedSystem(const unsigned int system_num
   return residuals;
 }
 
+void
+LinearAssemblySegregatedSolve::preSolveSetup(const SolverParams & /* solver_params */)
+{
+}
+
+void
+LinearAssemblySegregatedSolve::addIterationResiduals(ResidualStorage & residual_storage)
+{
+  residual_storage.converged = residual_storage.ns_residuals.empty();
+}
+
+void
+LinearAssemblySegregatedSolve::initializeSolveLoop(const SolverParams & /* solver_params */)
+{
+}
+
+void
+LinearAssemblySegregatedSolve::preMomentumPressureIteration(
+    ResidualStorage & /* residual_storage */, const SolverParams & /* solver_params */)
+{
+}
+
+bool
+LinearAssemblySegregatedSolve::shouldCopyMomentumNonlinearSolutionHistory() const
+{
+  return true;
+}
+
+bool
+LinearAssemblySegregatedSolve::shouldAssembleMomentumPredictorWithoutSolve() const
+{
+  return false;
+}
+
+void
+LinearAssemblySegregatedSolve::assembleMomentumPredictorWithoutSolve()
+{
+  if (_momentum_systems.empty())
+    return;
+
+  if (_rc_uo)
+    _rc_uo->clearMomentumPredictorOperatorCache();
+
+  for (const auto system_i : index_range(_momentum_systems))
+  {
+    const auto assembly =
+        assembleMomentumPredictorOperator(system_i, /* prepare_without_solve = */ true);
+    assembly.system->update();
+  }
+
+  auto & momentum_system_0 =
+      libMesh::cast_ref<LinearImplicitSystem &>(_momentum_systems[0]->system());
+  auto & momentum_solver =
+      libMesh::cast_ref<PetscLinearSolver<Real> &>(*momentum_system_0.get_linear_solver());
+  momentum_solver.reuse_preconditioner(false);
+}
+
+bool
+LinearAssemblySegregatedSolve::shouldSolveActiveScalarsAfterFlowLoop() const
+{
+  return true;
+}
+
+void
+LinearAssemblySegregatedSolve::finalizeSolve(const bool /* converged */)
+{
+}
+
 bool
 LinearAssemblySegregatedSolve::solve()
 {
@@ -753,6 +895,8 @@ LinearAssemblySegregatedSolve::solve()
   SolverParams solver_params;
   solver_params._type = Moose::SolveType::ST_LINEAR;
   solver_params._line_search = Moose::LineSearchType::LS_NONE;
+
+  preSolveSetup(solver_params);
 
   // Initialize the SIMPLE iteration counter
   unsigned int simple_iteration_counter = 0;
@@ -768,6 +912,7 @@ LinearAssemblySegregatedSolve::solve()
 
   // We set up the residual storage and the corresponding tolerances.
   ResidualStorage residual_storage = setupResidualStorage();
+  addIterationResiduals(residual_storage);
   auto & ns_residuals = residual_storage.ns_residuals;
   auto & ns_abs_tols = residual_storage.ns_abs_tols;
   const auto & momentum_indices = residual_storage.momentum_indices;
@@ -784,9 +929,14 @@ LinearAssemblySegregatedSolve::solve()
   if (_cht.enabled() && _should_solve_energy)
     _cht.initializeCHTCouplingFields();
 
+  initializeSolveLoop(solver_params);
+
   while (simple_iteration_counter < _num_iterations && !converged)
   {
     simple_iteration_counter++;
+    _current_outer_iteration = simple_iteration_counter;
+
+    preMomentumPressureIteration(residual_storage, solver_params);
 
     // We set the preconditioner/controllable parameters through petsc options. Linear
     // tolerances will be overridden within the solver. In case of a segregated momentum
@@ -803,7 +953,7 @@ LinearAssemblySegregatedSolve::solve()
     if (_should_solve_momentum && _should_solve_pressure)
       _rc_uo->prepareMomentumPredictor();
 
-    _console << "Iteration " << simple_iteration_counter << " Initial residual norms:" << std::endl;
+    _console << "Iteration " << simple_iteration_counter << " Residual norms:" << std::endl;
 
     // Solve the momentum predictor step
     if (_should_solve_momentum)
@@ -812,6 +962,8 @@ LinearAssemblySegregatedSolve::solve()
       for (const auto system_i : index_range(momentum_residual))
         ns_residuals[momentum_indices[system_i]] = momentum_residual[system_i];
     }
+    else if (shouldAssembleMomentumPredictorWithoutSolve())
+      assembleMomentumPredictorWithoutSolve();
 
     // Now we correct the velocity, this function depends on the method, it differs for
     // SIMPLE/PIMPLE, this returns the pressure errors
@@ -893,7 +1045,8 @@ LinearAssemblySegregatedSolve::solve()
     // If we have active scalar equations, solve them here in case they depend on temperature
     // or they affect the fluid properties such that they must be solved concurrently with
     // pressure and velocity
-    if (_has_active_scalar_systems && _should_solve_active_scalars)
+    if (_has_active_scalar_systems && _should_solve_active_scalars &&
+        shouldSolveActiveScalarsAfterFlowLoop())
     {
       _problem.execute(EXEC_NONLINEAR);
 
@@ -950,7 +1103,7 @@ LinearAssemblySegregatedSolve::solve()
     unsigned int ps_iteration_counter = 0;
 
     _console << "Passive scalar iteration " << ps_iteration_counter
-             << " Initial residual norms:" << std::endl;
+             << " Residual norms:" << std::endl;
 
     while (ps_iteration_counter < _num_iterations && !passive_scalar_converged)
     {
@@ -982,6 +1135,8 @@ LinearAssemblySegregatedSolve::solve()
   }
 
   converged = _continue_on_max_its ? true : converged;
+
+  finalizeSolve(converged);
 
   return converged;
 }

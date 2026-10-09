@@ -9,6 +9,7 @@
 
 #include "LinearWCNSFVMomentumFlux.h"
 #include "MooseLinearVariableFV.h"
+#include "NSFVUtils.h"
 #include "NS.h"
 #include "RhieChowMassFlux.h"
 #include "LinearFVBoundaryCondition.h"
@@ -23,12 +24,19 @@ LinearWCNSFVMomentumFlux::validParams()
   InputParameters params = LinearFVFluxKernel::validParams();
   params.addClassDescription("Represents the matrix and right hand side contributions of the "
                              "stress and advection terms of the momentum equation.");
-  params.addRequiredParam<SolverVariableName>("u", "The velocity in the x direction.");
-  params.addParam<SolverVariableName>("v", "The velocity in the y direction.");
-  params.addParam<SolverVariableName>("w", "The velocity in the z direction.");
+  NS::addLinearFVVelocityVariableParams(params);
   params.addRequiredParam<UserObjectName>(
       "rhie_chow_user_object",
       "The rhie-chow user-object which is used to determine the face velocity.");
+  params.addParam<MooseFunctorName>(
+      "mass_flux_functor",
+      "Optional face-centered mass-flux functor used for momentum advection. When supplied, "
+      "this overrides the Rhie-Chow user object's live face-mass-flux query.");
+  params.addParam<bool>(
+      "mass_flux_is_integrated",
+      false,
+      "Whether the supplied mass_flux_functor already includes the face area. When true, the "
+      "kernel divides by face area before applying its standard finite-volume face-area factor.");
   params.addRequiredParam<MooseFunctorName>(NS::mu, "The diffusion coefficient.");
   MooseEnum momentum_component("x=0 y=1 z=2");
   params.addRequiredParam<MooseEnum>(
@@ -42,17 +50,18 @@ LinearWCNSFVMomentumFlux::validParams()
   params.addParam<bool>(
       "use_deviatoric_terms", false, "If deviatoric terms in the stress terms need to be used.");
 
-  params.addRequiredParam<InterpolationMethodName>(
-      "advected_interp_method_name",
-      "Name of the FVInterpolationMethod to use for the advected velocity.");
+  params += Moose::FV::advectedInterpolationParameter();
   return params;
 }
 
 LinearWCNSFVMomentumFlux::LinearWCNSFVMomentumFlux(const InputParameters & params)
   : LinearFVFluxKernel(params),
-    FVInterpolationMethodInterface(this),
     _dim(_subproblem.mesh().dimension()),
     _mass_flux_provider(getUserObject<RhieChowMassFlux>("rhie_chow_user_object")),
+    _mass_flux_functor(params.isParamValid("mass_flux_functor")
+                           ? &getFunctor<Real>("mass_flux_functor")
+                           : nullptr),
+    _mass_flux_is_integrated(getParam<bool>("mass_flux_is_integrated")),
     _mu(getFunctor<Real>(getParam<MooseFunctorName>(NS::mu))),
     _use_nonorthogonal_correction(getParam<bool>("use_nonorthogonal_correction")),
     _use_deviatoric_terms(getParam<bool>("use_deviatoric_terms")),
@@ -136,17 +145,13 @@ LinearWCNSFVMomentumFlux::computeNeighborMatrixContribution()
 Real
 LinearWCNSFVMomentumFlux::computeElemRightHandSideContribution()
 {
-  return (computeInternalStressRHSContribution() +
-          _adv_interp_result.rhs_face_value * _face_mass_flux) *
-         _current_face_area;
+  return computeInternalStressRHSContribution() * _current_face_area;
 }
 
 Real
 LinearWCNSFVMomentumFlux::computeNeighborRightHandSideContribution()
 {
-  return -(computeInternalStressRHSContribution() +
-           _adv_interp_result.rhs_face_value * _face_mass_flux) *
-         _current_face_area;
+  return -computeInternalStressRHSContribution() * _current_face_area;
 }
 
 Real
@@ -173,13 +178,13 @@ LinearWCNSFVMomentumFlux::computeBoundaryRHSContribution(const LinearFVBoundaryC
 Real
 LinearWCNSFVMomentumFlux::computeInternalAdvectionElemMatrixContribution()
 {
-  return _adv_interp_result.weights_matrix.first * _face_mass_flux;
+  return _advected_interp_coeffs.first * _face_mass_flux;
 }
 
 Real
 LinearWCNSFVMomentumFlux::computeInternalAdvectionNeighborMatrixContribution()
 {
-  return _adv_interp_result.weights_matrix.second * _face_mass_flux;
+  return _advected_interp_coeffs.second * _face_mass_flux;
 }
 
 Real
@@ -337,13 +342,11 @@ LinearWCNSFVMomentumFlux::computeStressBoundaryRHSContribution(
   {
     // We support internal boundaries as well. In that case we have to decide on which side
     // of the boundary we are on.
-    const auto elem_info = (_current_face_type == FaceInfo::VarFaceNeighbors::ELEM)
-                               ? _current_face_info->elemInfo()
-                               : _current_face_info->neighborInfo();
+    const auto & elem_info = NS::linearFVFaceSideElemInfo(*_current_face_info, _current_face_type);
 
     // Unit vector to the boundary. Unfortunately, we have to recompute it because the value
     // stored in the face info is only correct for external boundaries
-    const auto e_Cf = _current_face_info->faceCentroid() - elem_info->centroid();
+    const auto e_Cf = _current_face_info->faceCentroid() - elem_info.centroid();
     const auto correction_vector =
         _current_face_info->normal() - 1 / (_current_face_info->normal() * e_Cf) * e_Cf;
 
@@ -358,9 +361,7 @@ LinearWCNSFVMomentumFlux::computeStressBoundaryRHSContribution(
   {
     // We might be on a face which is an internal boundary so we want to make sure we
     // get the gradient from the right side.
-    const auto elem_info = (_current_face_type == FaceInfo::VarFaceNeighbors::ELEM)
-                               ? _current_face_info->elemInfo()
-                               : _current_face_info->neighborInfo();
+    const auto & elem_info = NS::linearFVFaceSideElemInfo(*_current_face_info, _current_face_type);
 
     const auto state_arg = determineState();
 
@@ -378,7 +379,7 @@ LinearWCNSFVMomentumFlux::computeStressBoundaryRHSContribution(
     {
       const auto & radial_var = velocityVar(_rz_radial_coord);
       const Real elem_value =
-          radial_var.getElemValue(*elem_info, state_arg) / elem_info->centroid()(_rz_radial_coord);
+          radial_var.getElemValue(elem_info, state_arg) / elem_info.centroid()(_rz_radial_coord);
       trace_elem += elem_value;
     }
 
@@ -423,16 +424,18 @@ LinearWCNSFVMomentumFlux::setupFaceData(const FaceInfo * face_info)
 
   // Caching the mass flux on the face which will be reused in the advection term's matrix and
   // right hand side contributions
-  _face_mass_flux = _mass_flux_provider.getMassFlux(*face_info);
-
-  if (_current_face_type == FaceInfo::VarFaceNeighbors::BOTH)
+  if (_mass_flux_functor)
   {
     const auto state = determineState();
-    const auto & elem_info = *_current_face_info->elemInfo();
-    const auto & neighbor_info = *_current_face_info->neighborInfo();
-
-    const Real elem_value = _var.getElemValue(elem_info, state);
-    const Real neighbor_value = _var.getElemValue(neighbor_info, state);
+    const Moose::FaceArg face_arg = (_current_face_type == FaceInfo::VarFaceNeighbors::BOTH)
+                                        ? makeCDFace(*_current_face_info)
+                                        : singleSidedFaceArg(_current_face_info);
+    _face_mass_flux = (*_mass_flux_functor)(face_arg, state);
+    if (_mass_flux_is_integrated)
+      _face_mass_flux = _current_face_area > 0.0 ? _face_mass_flux / _current_face_area : 0.0;
+  }
+  else
+    _face_mass_flux = _mass_flux_provider.getMassFlux(*face_info);
 
     if (_adv_interp_method.needsGradients())
     {
@@ -442,13 +445,6 @@ LinearWCNSFVMomentumFlux::setupFaceData(const FaceInfo * face_info)
       _neighbor_grad_storage = _advected_gradient_field->gradient(neighbor_info);
     }
 
-    _adv_interp_result = _adv_interp_method.advectedInterpolate(*_current_face_info,
-                                                                elem_value,
-                                                                neighbor_value,
-                                                                &_elem_grad_storage,
-                                                                &_neighbor_grad_storage,
-                                                                _face_mass_flux);
-  }
 
   // We'll have to set this to zero to make sure that we don't accumulate values over multiple
   // faces. The matrix contribution should be fine.

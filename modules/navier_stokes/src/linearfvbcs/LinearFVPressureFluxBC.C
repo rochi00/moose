@@ -10,6 +10,8 @@
 #include "LinearFVPressureFluxBC.h"
 #include "NS.h"
 
+#include "NSFVUtils.h"
+
 registerMooseObject("NavierStokesApp", LinearFVPressureFluxBC);
 
 InputParameters
@@ -39,6 +41,15 @@ LinearFVPressureFluxBC::validParams()
 
 LinearFVPressureFluxBC::LinearFVPressureFluxBC(const InputParameters & parameters)
   : LinearFVAdvectionDiffusionBC(parameters),
+    _pressure_predictor_flux(
+        getParam<MooseFunctorName>("pressure_predictor_flux").empty()
+            ? nullptr
+            : &getFunctor<Real>(getParam<MooseFunctorName>("pressure_predictor_flux"))),
+    _constrained_pressure_normal_gradient(
+        getParam<MooseFunctorName>("constrained_pressure_normal_gradient").empty()
+            ? nullptr
+            : &getFunctor<Real>(
+                  getParam<MooseFunctorName>("constrained_pressure_normal_gradient"))),
     _HbyA_flux(getFunctor<Real>("HbyA_flux")),
     _Ainv(getFunctor<RealVectorValue>("Ainv")),
     _dim(_subproblem.mesh().dimension()),
@@ -112,7 +123,7 @@ LinearFVPressureFluxBC::computeBoundaryAinv() const
 }
 
 Real
-LinearFVPressureFluxBC::computeBoundaryValue() const
+LinearFVPressureFluxBC::computeBoundaryNormalAinv() const
 {
   const auto state = determineState();
   const auto elem_info = _current_face_type == FaceInfo::VarFaceNeighbors::ELEM
