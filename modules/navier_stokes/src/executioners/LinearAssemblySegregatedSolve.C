@@ -954,7 +954,7 @@ LinearAssemblySegregatedSolve::solve()
     if (_should_solve_momentum && _should_solve_pressure)
       _rc_uo->prepareMomentumPredictor();
 
-    _console << "Iteration " << simple_iteration_counter << " Residual norms:" << std::endl;
+    _console << "Iteration " << simple_iteration_counter << " Initial residual norms:" << std::endl;
 
     // Solve the momentum predictor step
     if (_should_solve_momentum)
@@ -1104,7 +1104,7 @@ LinearAssemblySegregatedSolve::solve()
     unsigned int ps_iteration_counter = 0;
 
     _console << "Passive scalar iteration " << ps_iteration_counter
-             << " Residual norms:" << std::endl;
+             << " Initial residual norms:" << std::endl;
 
     while (ps_iteration_counter < _num_iterations && !passive_scalar_converged)
     {
