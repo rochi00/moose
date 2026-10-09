@@ -43,8 +43,6 @@ protected:
   void addMomentumGravityKernels() override;
   void addMomentumFrictionKernels() override;
   void addMomentumBoussinesqKernels() override;
-  virtual void addMomentumConditioningKernels() {}
-  virtual void addMomentumReducedPressureKernels() {}
 
   void addInletBC() override;
   void addOutletBC() override;
@@ -59,15 +57,10 @@ protected:
 
   unsigned short getNumberAlgebraicGhostingLayersNeeded() const override;
 
-  virtual void addAdditionalUserObjects() {}
-  virtual bool useMomentumContinuityErrorSink() const { return false; }
   virtual bool shouldAddMomentumPressureKernels() const { return true; }
-  virtual bool shouldAddMomentumReducedPressureKernels() const { return false; }
   virtual MooseFunctorName pressureDiffusionTensorName() const { return "Ainv"; }
   virtual MooseFunctorName pressureDivergenceFluxName() const { return "HbyA"; }
   virtual bool pressureDivergenceFluxIsIntegrated() const { return false; }
-  virtual std::string momentumTimeKernelType() const { return "LinearFVTimeDerivative"; }
-  virtual std::string momentumTimeDensityParameterName() const { return "factor"; }
   virtual void setMomentumTimeKernelParams(InputParameters & params) const;
   void setVelocitySolverVariableParams(InputParameters & params) const;
   void setVelocityVariableParams(InputParameters & params) const;
@@ -76,7 +69,6 @@ protected:
   virtual bool isCompatibleRhieChowUserObject(const UserObject & obj) const;
   virtual void checkIncompatibleRhieChowUserObject(const RhieChowMassFlux & rc_obj) const;
   virtual void setRhieChowUserObjectParams(InputParameters & params) const;
-  virtual std::string momentumFluxKernelType() const { return "LinearWCNSFVMomentumFlux"; }
   virtual MooseFunctorName momentumFluxMassFluxFunctorName() const { return ""; }
   virtual bool momentumFluxMassFluxFunctorIsIntegrated() const { return false; }
   virtual std::string momentumOutletBCType(const BoundaryName & boundary,

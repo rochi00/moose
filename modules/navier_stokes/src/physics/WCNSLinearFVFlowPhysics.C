@@ -164,9 +164,6 @@ WCNSLinearFVFlowPhysics::addFVKernels()
     addMomentumTimeKernels();
 
   addMomentumFluxKernels();
-  if (isTransient() && useMomentumContinuityErrorSink())
-    addMomentumConditioningKernels();
-
   if (shouldAddMomentumPressureKernels())
     addMomentumPressureKernels();
 
@@ -174,9 +171,6 @@ WCNSLinearFVFlowPhysics::addFVKernels()
     addMomentumFrictionKernels();
 
   addMomentumGravityKernels();
-
-  if (shouldAddMomentumReducedPressureKernels())
-    addMomentumReducedPressureKernels();
 
   if (getParam<bool>("boussinesq_approximation"))
     addMomentumBoussinesqKernels();
@@ -216,12 +210,12 @@ WCNSLinearFVFlowPhysics::addPressureCorrectionKernels()
 void
 WCNSLinearFVFlowPhysics::addMomentumTimeKernels()
 {
-  const std::string kernel_type = momentumTimeKernelType();
+  const std::string kernel_type = "LinearFVTimeDerivative";
   const std::string kernel_name = prefix() + "ins_momentum_time";
 
   InputParameters params = getFactory().getValidParams(kernel_type);
   assignBlocks(params, _blocks);
-  params.set<MooseFunctorName>(momentumTimeDensityParameterName()) = _density_name;
+  params.set<MooseFunctorName>("factor") = _density_name;
   setMomentumTimeKernelParams(params);
 
   for (const auto d : make_range(dimension()))
@@ -277,7 +271,7 @@ WCNSLinearFVFlowPhysics::setRhieChowUserObjectParams(InputParameters & /* params
 void
 WCNSLinearFVFlowPhysics::addMomentumFluxKernels()
 {
-  const std::string kernel_type = momentumFluxKernelType();
+  const std::string kernel_type = "LinearWCNSFVMomentumFlux";
   const std::string kernel_name = prefix() + "ins_momentum_flux_";
 
   InputParameters params = getFactory().getValidParams(kernel_type);
@@ -685,7 +679,6 @@ WCNSLinearFVFlowPhysics::addWallsBC()
 void
 WCNSLinearFVFlowPhysics::addUserObjects()
 {
-  addAdditionalUserObjects();
   addRhieChowUserObjects();
 }
 
