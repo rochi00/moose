@@ -1933,7 +1933,7 @@ RhieChowMassFlux::buildMomentumPredictorFaceState(
 
       if (ainv_reader)
       {
-        interpolate(Moose::FV::InterpMethod::Average,
+        interpolate(_pressure_diffusion_interp_method,
                     state.face_density_weighted_ainv(dim_i),
                     elem_rho * (*ainv_reader)[dim_i](elem_dof),
                     neighbor_rho * (*ainv_reader)[dim_i](neighbor_dof),
