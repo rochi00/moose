@@ -9,6 +9,9 @@
 [Problem]
   nl_sys_names = 'u_sys'
   linear_sys_names = 'v_sys'
+  # The host LinearFVSource couples the linear FV system to the FE variable u, which no Kokkos
+  # linear FV object can do yet
+  allow_mixed_kokkos_linear_fv = true
 []
 
 [Variables]

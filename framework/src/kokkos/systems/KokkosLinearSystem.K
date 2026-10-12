@@ -92,6 +92,46 @@ LinearSystem::initialSetupKokkosLinearFV()
 
   for (auto * kernel : flux_kernels)
     kernel->initialSetup();
+
+  // A system with Kokkos linear FV objects must not also contain host linear FV objects: those
+  // force the host assembly loops over every element and face to run in addition to the Kokkos
+  // assembly. Unless explicitly allowed, refuse such systems instead of silently running slower.
+  std::vector<MooseObject *> host_objects;
+  for (const auto & system :
+       {"LinearFVElementalKernel", "LinearFVFluxKernel", "LinearFVBoundaryCondition"})
+  {
+    std::vector<MooseObject *> objects;
+    _fe_problem.theWarehouse()
+        .query()
+        .template condition<AttribSysNum>(number())
+        .template condition<AttribSystem>(system)
+        .template condition<AttribKokkos>(false)
+        .template condition<AttribThread>(0)
+        .queryInto(objects);
+    host_objects.insert(host_objects.end(), objects.begin(), objects.end());
+  }
+
+  const bool has_kokkos_objects =
+      !elemental_kernels.empty() || !flux_kernels.empty() || !bcs.empty();
+
+  if (has_kokkos_objects && !host_objects.empty() &&
+      !_fe_problem.getParam<bool>("allow_mixed_kokkos_linear_fv"))
+  {
+    std::string list;
+    for (const auto * object : host_objects)
+      list += "\n  '" + object->name() + "' (type '" + object->type() + "')";
+    mooseError("Linear system '",
+               name(),
+               "' contains Kokkos linear finite volume objects together with the following "
+               "non-Kokkos linear finite volume objects:",
+               list,
+               "\nMixing requires the host assembly loops to run alongside the Kokkos assembly at "
+               "every evaluation. Replace them with Kokkos objects, or set "
+               "'Problem/allow_mixed_kokkos_linear_fv = true' to accept the slower mixed "
+               "assembly.");
+  }
+
+  _all_linear_fv_objects_kokkos = has_kokkos_objects && host_objects.empty();
 }
 
 void
@@ -168,13 +208,16 @@ LinearSystem::computeKokkosLinearSystem(const std::set<TagID> & vector_tags,
     needed_solution_vector_tags.insert(tag._id);
 
   auto & kokkos_systems = _fe_problem.getKokkosSystems();
-  for (auto & system : kokkos_systems.constructedEntries())
   {
-    system.setActiveSolutionTags(needed_solution_vector_tags);
-    system.sync(Moose::Kokkos::MemcpyType::HOST_TO_DEVICE);
-  }
+    TIME_SECTION("KokkosFVSyncToDevice", 2);
+    for (auto & system : kokkos_systems.constructedEntries())
+    {
+      system.setActiveSolutionTags(needed_solution_vector_tags);
+      system.sync(Moose::Kokkos::MemcpyType::HOST_TO_DEVICE);
+    }
 
-  kokkos_systems.copyToDevice();
+    kokkos_systems.copyToDevice();
+  }
 
   std::unordered_set<unsigned int> value_bc_vars;
   std::unordered_set<unsigned int> normal_gradient_bc_vars;
@@ -187,26 +230,45 @@ LinearSystem::computeKokkosLinearSystem(const std::set<TagID> & vector_tags,
       normal_gradient_bc_vars.insert(kernel->variable().var());
   }
 
-  for (auto bc : bcs)
+  // Every Kokkos dispatch is followed by a fence, so these sections measure execution time
   {
-    const auto bc_var = bc->variable().var();
-    if (value_bc_vars.count(bc_var))
-      bc->computeBoundaryValueData();
-    if (normal_gradient_bc_vars.count(bc_var))
-      bc->computeBoundaryNormalGradientData();
+    TIME_SECTION("KokkosFVBoundaryData", 2);
+    for (auto bc : bcs)
+    {
+      const auto bc_var = bc->variable().var();
+      if (value_bc_vars.count(bc_var))
+        bc->computeBoundaryValueData();
+      if (normal_gradient_bc_vars.count(bc_var))
+        bc->computeBoundaryNormalGradientData();
+    }
   }
 
-  for (auto kernel : elemental_for_matrix_tags)
-    kernel->computeMatrix();
-  for (auto kernel : flux_for_matrix_tags)
-    kernel->computeMatrix();
-  for (auto kernel : elemental_for_vector_tags)
-    kernel->computeRightHandSide();
-  for (auto kernel : flux_for_vector_tags)
-    kernel->computeRightHandSide();
+  {
+    TIME_SECTION("KokkosFVElementalMatrix", 2);
+    for (auto kernel : elemental_for_matrix_tags)
+      kernel->computeMatrix();
+  }
+  {
+    TIME_SECTION("KokkosFVFluxMatrix", 2);
+    for (auto kernel : flux_for_matrix_tags)
+      kernel->computeMatrix();
+  }
+  {
+    TIME_SECTION("KokkosFVElementalRHS", 2);
+    for (auto kernel : elemental_for_vector_tags)
+      kernel->computeRightHandSide();
+  }
+  {
+    TIME_SECTION("KokkosFVFluxRHS", 2);
+    for (auto kernel : flux_for_vector_tags)
+      kernel->computeRightHandSide();
+  }
 
-  for (auto & system : kokkos_systems.constructedEntries())
-    system.sync(Moose::Kokkos::MemcpyType::DEVICE_TO_HOST);
+  {
+    TIME_SECTION("KokkosFVSyncToHost", 2);
+    for (auto & system : kokkos_systems.constructedEntries())
+      system.sync(Moose::Kokkos::MemcpyType::DEVICE_TO_HOST);
+  }
 
   our_kokkos_system.clearActiveResidualTags();
   our_kokkos_system.clearActiveMatrixTags();

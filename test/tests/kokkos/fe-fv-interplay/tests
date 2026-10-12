@@ -11,10 +11,20 @@
     max_threads = 1 # linear FV doesn't support threading
   []
   [mixing_fe_fv]
-    requirement = 'The system shall support mixing Kokkos and non-Kokkos assembly objects within both finite volume and finite element systems and shall permit fixed point iteration coupling between the two systems.'
+    requirement = 'The system shall support mixing Kokkos and non-Kokkos assembly objects within both finite volume and finite element systems, when mixing in a linear finite volume system is explicitly allowed, and shall permit fixed point iteration coupling between the two systems.'
     type = CSVDiff
     input = multisystem.i
     csvdiff = multisystem_csv.csv
+    capabilities = 'kokkos'
+    compute_devices = 'cpu cuda xpu'
+    max_threads = 1 # linear FV doesn't support threading
+  []
+  [mixing_linear_fv_error]
+    requirement = 'The system shall error if a linear finite volume system contains both Kokkos and non-Kokkos linear finite volume objects and mixing has not been explicitly allowed.'
+    type = RunException
+    input = multisystem.i
+    cli_args = 'Problem/allow_mixed_kokkos_linear_fv=false'
+    expect_err = "Linear system 'v_sys' contains Kokkos linear finite volume objects together with the following non-Kokkos linear finite volume objects:\s+'coupled' \(type 'LinearFVSource'\)"
     capabilities = 'kokkos'
     compute_devices = 'cpu cuda xpu'
     max_threads = 1 # linear FV doesn't support threading

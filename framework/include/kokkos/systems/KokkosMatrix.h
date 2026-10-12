@@ -98,6 +98,12 @@ public:
     return _val[idx];
   }
   /**
+   * Get an entry by its position in the nonzero storage, avoiding the column search
+   * @param idx The index into the nonzero values, see System::getMatrixSlot()
+   * @returns The reference of the element
+   */
+  KOKKOS_FUNCTION PetscScalar & valueAt(PetscInt idx) const { return _val[idx]; }
+  /**
    * Assign a scalar value uniformly
    * @param scalar The scalar value to be assigned
    */

@@ -331,6 +331,24 @@ public:
   {
     return _matrices[tag](row, col);
   }
+  /**
+   * Get an entry of a tagged matrix by its position in the nonzero storage
+   * @param slot The position from getMatrixSlot()
+   * @param tag The matrix tag
+   * @returns The entry from the tagged matrix
+   */
+  KOKKOS_FUNCTION Real & getMatrixValueAtSlot(PetscInt slot, TagID tag) const
+  {
+    return _matrices[tag].valueAt(slot);
+  }
+  /**
+   * Get the position of a nonzero in the matrix value storage, which every matrix tag of this
+   * system shares because they are built from the same sparsity pattern. Host only.
+   * @param row The row index local to this process
+   * @param col The global column index
+   * @returns The position, or -1 if the entry is not in the sparsity pattern
+   */
+  PetscInt getMatrixSlot(dof_id_type row, dof_id_type col) const;
 
 #endif
 

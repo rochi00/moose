@@ -28,6 +28,7 @@ public:
 
   virtual void computeRightHandSide() override;
   virtual void computeMatrix() override;
+  virtual void initialSetup() override;
 
   /**
    * Right-hand side dispatch loop body; accumulates the elemental RHS contribution
@@ -45,6 +46,11 @@ public:
    */
   template <typename Derived>
   KOKKOS_FUNCTION void operator()(MatrixLoop, const ThreadID tid, const Derived & kernel) const;
+
+protected:
+  /// Matrix nonzero position of the diagonal of each block element, indexed like the dispatch
+  /// thread, so the matrix loop does not search the sparsity pattern
+  Array<PetscInt> _diagonal_matrix_slots;
 };
 
 template <typename Derived>
@@ -69,13 +75,8 @@ LinearFVElementalKernel::operator()(MatrixLoop, const ThreadID tid, const Derive
   const auto elem = kokkosBlockElementID(tid);
   FVDatum datum(elem, libMesh::invalid_uint, kokkosMesh());
   KOKKOS_ASSERT(_var.components() == 1);
-  const auto & sys = kokkosSystem(_var.sys());
-  const auto var_num = _var.var();
-  const auto row = sys.getElemLocalDofIndex(elem, 0, var_num);
-  kernel.template accumulateTaggedMatrix<AccumulationMode::NonAtomic>(
-      kernel.template computeMatrixContribution<Derived>(datum),
-      row,
-      sys.getElemGlobalDofIndex(elem, 0, var_num));
+  kernel.template accumulateTaggedMatrixAtSlot<AccumulationMode::NonAtomic>(
+      kernel.template computeMatrixContribution<Derived>(datum), _diagonal_matrix_slots[tid]);
 }
 
 } // namespace Moose::Kokkos

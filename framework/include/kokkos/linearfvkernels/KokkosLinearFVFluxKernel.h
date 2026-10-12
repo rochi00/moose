@@ -171,6 +171,11 @@ protected:
   Array<FaceID> _internal_face_ids;
   /// Directed boundary element sides with active Kokkos boundary data
   Array<BoundaryFaceID> _boundary_face_ids;
+  /// Matrix nonzero positions of the internal-face contributions: entry 2 * i is the diagonal of
+  /// directed side i and entry 2 * i + 1 its neighbor column
+  Array<PetscInt> _internal_matrix_slots;
+  /// Matrix nonzero positions (diagonal) of the boundary-face contributions
+  Array<PetscInt> _boundary_matrix_slots;
 
   std::unique_ptr<DispatcherBase> _internal_rhs_dispatcher;
   std::unique_ptr<DispatcherBase> _boundary_rhs_dispatcher;
@@ -326,16 +331,12 @@ LinearFVFluxKernel::operator()(InternalMatrixLoop, const ThreadID tid, const Der
   KOKKOS_ASSERT(hasFaceNeighbor(datum));
 
   KOKKOS_ASSERT(_var.components() == 1);
-  const auto var_num = _var.var();
-  const auto & sys = kokkosSystem(_var.sys());
-  const auto row = sys.getElemLocalDofIndex(elem, 0, var_num);
-  kernel.accumulateTaggedMatrix(kernel.template computeInternalMatrixContribution<Derived>(datum),
-                                row,
-                                sys.getElemGlobalDofIndex(elem, 0, var_num));
-  kernel.accumulateTaggedMatrix(
+  kernel.accumulateTaggedMatrixAtSlot(
+      kernel.template computeInternalMatrixContribution<Derived>(datum),
+      _internal_matrix_slots[2 * tid]);
+  kernel.accumulateTaggedMatrixAtSlot(
       kernel.template computeInternalNeighborMatrixContribution<Derived>(datum),
-      row,
-      sys.getElemGlobalDofIndex(datum.neighborID(), 0, var_num));
+      _internal_matrix_slots[2 * tid + 1]);
 }
 
 template <typename Derived>
@@ -347,13 +348,9 @@ LinearFVFluxKernel::operator()(BoundaryMatrixLoop, const ThreadID tid, const Der
   KOKKOS_ASSERT(hasBoundaryData(datum, bc_index));
 
   KOKKOS_ASSERT(_var.components() == 1);
-  const auto var_num = _var.var();
-  const auto & sys = kokkosSystem(_var.sys());
-  const auto row = sys.getElemLocalDofIndex(elem, 0, var_num);
-  kernel.accumulateTaggedMatrix(
+  kernel.accumulateTaggedMatrixAtSlot(
       kernel.template computeBoundaryMatrixContribution<Derived>(datum, bc_index, bc_face_index),
-      row,
-      sys.getElemGlobalDofIndex(elem, 0, var_num));
+      _boundary_matrix_slots[tid]);
 }
 
 } // namespace Moose::Kokkos

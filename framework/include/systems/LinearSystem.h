@@ -201,6 +201,10 @@ protected:
                                  const std::set<TagID> & matrix_tags);
 #endif
 
+  /// Whether every linear FV kernel and boundary condition of this system is a Kokkos object, in
+  /// which case the host linear FV assembly loops have nothing to compute and are skipped
+  bool _all_linear_fv_objects_kokkos = false;
+
   /// Base class reference to the libmesh system
   System & _sys;
 

@@ -27,8 +27,11 @@ MooseInit::initKokkos()
 {
   Kokkos::InitializationSettings settings;
 
-  // Explicitly set the number of threads consistently with MOOSE
-  settings.set_num_threads(libMesh::n_threads());
+  // Explicitly set the number of threads consistently with MOOSE, unless the user requested a
+  // Kokkos thread count through the environment. The override lets the host (OpenMP) backend run
+  // threaded for objects that require a single MOOSE thread, such as linear FV variables.
+  if (!std::getenv("KOKKOS_NUM_THREADS"))
+    settings.set_num_threads(libMesh::n_threads());
 
   // Only print warnings on the head process
   if (comm().rank())

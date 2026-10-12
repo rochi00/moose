@@ -292,6 +292,18 @@ System::setupSparsity()
   _sparsity.row_ptr = row_ptr;
 }
 
+PetscInt
+System::getMatrixSlot(const dof_id_type row, const dof_id_type col) const
+{
+  const PetscInt * const cols = _sparsity.col_idx.data();
+  const auto begin = cols + _sparsity.row_ptr[row];
+  const auto end = cols + _sparsity.row_ptr[row + 1];
+  // The columns of each row are sorted, as Matrix::find() relies on
+  const auto it = std::lower_bound(begin, end, static_cast<PetscInt>(col));
+
+  return (it != end && *it == static_cast<PetscInt>(col)) ? it - cols : -1;
+}
+
 void
 System::buildCooIndices(std::vector<PetscInt> & coo_i, std::vector<PetscInt> & coo_j) const
 {

@@ -390,6 +390,16 @@ FEProblemBase::validParams()
       "you wish to continually restore the matrix to the originally preallocated sparsity pattern "
       "computed by relationship managers.");
 
+#ifdef MOOSE_KOKKOS_ENABLED
+  params.addParam<bool>(
+      "allow_mixed_kokkos_linear_fv",
+      false,
+      "Allow a linear system to contain both Kokkos and non-Kokkos linear finite volume kernels "
+      "and boundary conditions. By default this is an error: the non-Kokkos objects force the "
+      "host assembly loops to run alongside the Kokkos assembly at every linear system "
+      "evaluation.");
+#endif
+
   params.addParamNamesToGroup(
       "skip_nl_system_check kernel_coverage_check kernel_coverage_block_list "
       "boundary_restricted_node_integrity_check "

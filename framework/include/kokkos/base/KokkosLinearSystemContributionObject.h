@@ -92,6 +92,10 @@ protected:
   KOKKOS_FUNCTION void accumulateTaggedVector(Real value, dof_id_type row) const;
   template <AccumulationMode mode = AccumulationMode::Atomic>
   KOKKOS_FUNCTION void accumulateTaggedMatrix(Real value, dof_id_type row, dof_id_type col) const;
+  /// Accumulate into all tagged matrices at a precomputed nonzero position (see
+  /// System::getMatrixSlot()), which avoids searching the row for the column
+  template <AccumulationMode mode = AccumulationMode::Atomic>
+  KOKKOS_FUNCTION void accumulateTaggedMatrixAtSlot(Real value, PetscInt slot) const;
 
   /// Reference to the finite element problem
   FEProblemBase & _fe_problem;
@@ -163,6 +167,31 @@ LinearSystemContributionObject::accumulateTaggedMatrix(const Real value,
         ::Kokkos::atomic_add(&sys.getMatrixValue(row, col, tag), value);
       else
         sys.getMatrixValue(row, col, tag) += value;
+    }
+  }
+}
+
+template <LinearSystemContributionObject::AccumulationMode mode>
+KOKKOS_FUNCTION inline void
+LinearSystemContributionObject::accumulateTaggedMatrixAtSlot(const Real value,
+                                                             const PetscInt slot) const
+{
+  if (!value)
+    return;
+
+  KOKKOS_ASSERT(slot >= 0);
+  KOKKOS_ASSERT(_var.components() == 1);
+  auto & sys = kokkosSystem(_var.sys());
+  const MOOSE_KOKKOS_INDEX_TYPE tags_size = _matrix_tags.size();
+  for (MOOSE_KOKKOS_INDEX_TYPE index = 0; index < tags_size; ++index)
+  {
+    const auto tag = _matrix_tags[index];
+    if (sys.isMatrixTagActive(tag))
+    {
+      if constexpr (mode == AccumulationMode::Atomic)
+        ::Kokkos::atomic_add(&sys.getMatrixValueAtSlot(slot, tag), value);
+      else
+        sys.getMatrixValueAtSlot(slot, tag) += value;
     }
   }
 }

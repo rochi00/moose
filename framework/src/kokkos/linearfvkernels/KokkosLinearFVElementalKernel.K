@@ -26,8 +26,29 @@ LinearFVElementalKernel::LinearFVElementalKernel(const InputParameters & paramet
 }
 
 LinearFVElementalKernel::LinearFVElementalKernel(const LinearFVElementalKernel & object)
-  : LinearFVKernel(object)
+  : LinearFVKernel(object), _diagonal_matrix_slots(object._diagonal_matrix_slots)
 {
+}
+
+void
+LinearFVElementalKernel::initialSetup()
+{
+  LinearFVKernel::initialSetup();
+
+  const auto & sys = kokkosSystem(_var.sys());
+  const auto var_num = _var.var();
+  std::vector<PetscInt> slots(numKokkosBlockElements());
+  for (const auto tid : index_range(slots))
+  {
+    const auto elem = kokkosBlockElementID(tid);
+    slots[tid] = sys.getMatrixSlot(sys.getElemLocalDofIndex(elem, 0, var_num),
+                                   sys.getElemGlobalDofIndex(elem, 0, var_num));
+    if (slots[tid] < 0)
+      mooseError("Kokkos linear FV kernel '",
+                 name(),
+                 "': a diagonal matrix entry is missing from the sparsity pattern.");
+  }
+  _diagonal_matrix_slots = slots;
 }
 
 void

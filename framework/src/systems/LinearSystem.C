@@ -264,31 +264,35 @@ LinearSystem::computeLinearSystemInternal(const std::set<TagID> & vector_tags,
     computeKokkosLinearSystem(vector_tags, matrix_tags);
 #endif
 
-  // linear contributions from the domain
-  PARALLEL_TRY
+  // linear contributions from the domain; when every linear FV object of this system is a Kokkos
+  // object there is nothing for the host loops to compute
+  if (!_all_linear_fv_objects_kokkos)
   {
-    TIME_SECTION("LinearFVKernels_FullSystem", 3 /*, "Computing LinearFVKernels"*/);
+    PARALLEL_TRY
+    {
+      TIME_SECTION("LinearFVKernels_FullSystem", 3 /*, "Computing LinearFVKernels"*/);
 
-    using ElemInfoRange = StoredRange<MooseMesh::const_elem_info_iterator, const ElemInfo *>;
-    ElemInfoRange elem_info_range(_fe_problem.mesh().ownedElemInfoBegin(),
-                                  _fe_problem.mesh().ownedElemInfoEnd());
+      using ElemInfoRange = StoredRange<MooseMesh::const_elem_info_iterator, const ElemInfo *>;
+      ElemInfoRange elem_info_range(_fe_problem.mesh().ownedElemInfoBegin(),
+                                    _fe_problem.mesh().ownedElemInfoEnd());
 
-    using FaceInfoRange = StoredRange<MooseMesh::const_face_info_iterator, const FaceInfo *>;
-    FaceInfoRange face_info_range(_fe_problem.mesh().ownedFaceInfoBegin(),
-                                  _fe_problem.mesh().ownedFaceInfoEnd());
+      using FaceInfoRange = StoredRange<MooseMesh::const_face_info_iterator, const FaceInfo *>;
+      FaceInfoRange face_info_range(_fe_problem.mesh().ownedFaceInfoBegin(),
+                                    _fe_problem.mesh().ownedFaceInfoEnd());
 
-    ComputeLinearFVElementalThread elem_thread(
-        _fe_problem, this->number(), vector_tags, matrix_tags);
-    Threads::parallel_reduce(elem_info_range, elem_thread, this->numThreads());
+      ComputeLinearFVElementalThread elem_thread(
+          _fe_problem, this->number(), vector_tags, matrix_tags);
+      Threads::parallel_reduce(elem_info_range, elem_thread, this->numThreads());
 
-    ComputeLinearFVFaceThread face_thread(_fe_problem,
-                                          this->number(),
-                                          Moose::FV::LinearFVComputationMode::FullSystem,
-                                          vector_tags,
-                                          matrix_tags);
-    Threads::parallel_reduce(face_info_range, face_thread, this->numThreads());
+      ComputeLinearFVFaceThread face_thread(_fe_problem,
+                                            this->number(),
+                                            Moose::FV::LinearFVComputationMode::FullSystem,
+                                            vector_tags,
+                                            matrix_tags);
+      Threads::parallel_reduce(face_info_range, face_thread, this->numThreads());
+    }
+    PARALLEL_CATCH;
   }
-  PARALLEL_CATCH;
 
   closeTaggedMatrices(matrix_tags);
 

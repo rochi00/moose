@@ -40,7 +40,9 @@ LinearFVFluxKernel::LinearFVFluxKernel(const LinearFVFluxKernel & object)
     _bc_data(object._bc_data),
     _bc_index(object._bc_index),
     _internal_face_ids(object._internal_face_ids),
-    _boundary_face_ids(object._boundary_face_ids)
+    _boundary_face_ids(object._boundary_face_ids),
+    _internal_matrix_slots(object._internal_matrix_slots),
+    _boundary_matrix_slots(object._boundary_matrix_slots)
 {
 }
 
@@ -123,6 +125,9 @@ LinearFVFluxKernel::initialSetup()
 
   std::vector<FaceID> internal_face_ids;
   std::vector<BoundaryFaceID> boundary_face_ids;
+  // Contiguous neighbor of each internal face, taken from libMesh because the Kokkos mesh keeps
+  // its neighbor table on device only
+  std::map<FaceID, ContiguousElementID> face_neighbors;
 
   const auto * const variable = _var.mooseFieldVar();
   for (const auto block : blockIDs())
@@ -137,7 +142,11 @@ LinearFVFluxKernel::initialSetup()
         mooseAssert(!neighbor || neighbor != libMesh::remote_elem,
                     "We should have properly ghosted side neighbors for FV");
         if (neighbor && variable->activeOnSubdomain(neighbor->subdomain_id()))
+        {
           internal_face_ids.push_back({contiguous_elem, side});
+          face_neighbors.emplace(FaceID{contiguous_elem, side},
+                                 kokkos_mesh->getContiguousElementID(neighbor));
+        }
         else
         {
           const auto bc_face = bc_faces.find({contiguous_elem, side});
@@ -176,6 +185,37 @@ LinearFVFluxKernel::initialSetup()
 
   _internal_face_ids = internal_face_ids;
   _boundary_face_ids = boundary_face_ids;
+
+  // Precompute the matrix nonzero position of every contribution so the assembly loops do not
+  // search the sparsity pattern for each entry
+  const auto & sys = kokkosSystem(sys_num);
+  auto matrix_slot = [&](const ContiguousElementID row_elem, const ContiguousElementID col_elem)
+  {
+    const auto slot = sys.getMatrixSlot(sys.getElemLocalDofIndex(row_elem, 0, var_num),
+                                        sys.getElemGlobalDofIndex(col_elem, 0, var_num));
+    if (slot < 0)
+      mooseError("Kokkos linear FV flux kernel '",
+                 name(),
+                 "': a matrix entry of variable '",
+                 var_name,
+                 "' is missing from the sparsity pattern.");
+    return slot;
+  };
+
+  std::vector<PetscInt> internal_matrix_slots(2 * internal_face_ids.size());
+  for (const auto i : index_range(internal_face_ids))
+  {
+    const auto & face = internal_face_ids[i];
+    internal_matrix_slots[2 * i] = matrix_slot(face.first, face.first);
+    internal_matrix_slots[2 * i + 1] =
+        matrix_slot(face.first, libmesh_map_find(face_neighbors, face));
+  }
+  std::vector<PetscInt> boundary_matrix_slots(boundary_face_ids.size());
+  for (const auto i : index_range(boundary_face_ids))
+    boundary_matrix_slots[i] = matrix_slot(boundary_face_ids[i].elem, boundary_face_ids[i].elem);
+
+  _internal_matrix_slots = internal_matrix_slots;
+  _boundary_matrix_slots = boundary_matrix_slots;
 
 #ifndef NDEBUG
   _bc_index.copyToDevice();
