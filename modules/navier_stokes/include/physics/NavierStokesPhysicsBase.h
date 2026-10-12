@@ -50,7 +50,7 @@ protected:
       const LinearVariableName & variable,
       const std::string & kernel_name,
       const UserObjectName & rhie_chow_user_object,
-      const MooseEnum & advected_interp_method,
+      const InterpolationMethodName & advected_interp_method_name,
       const std::vector<SubdomainName> & blocks,
       const std::function<void(InputParameters &)> & extra_parameter_setup = {});
 

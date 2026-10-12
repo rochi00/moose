@@ -18,6 +18,9 @@ registerWCNSFVScalarTransportBaseTasks("NavierStokesApp",
                                        WCNSLinearFVConservativeDiffuseInterfaceVOFPhysics);
 registerMooseAction("NavierStokesApp",
                     WCNSLinearFVConservativeDiffuseInterfaceVOFPhysics,
+                    "add_interpolation_method_physics");
+registerMooseAction("NavierStokesApp",
+                    WCNSLinearFVConservativeDiffuseInterfaceVOFPhysics,
                     "add_material");
 registerMooseAction("NavierStokesApp",
                     WCNSLinearFVConservativeDiffuseInterfaceVOFPhysics,
@@ -131,8 +134,7 @@ WCNSLinearFVConservativeDiffuseInterfaceVOFPhysics::validParams()
   params.addRequiredParam<MooseFunctorName>("gas_dynamic_viscosity_name",
                                             "Gas-phase dynamic viscosity functor.");
 
-  params.addParamNamesToGroup("passive_scalar_names initial_scalar_variables "
-                              "passive_scalar_advection_interpolation compression_factor "
+  params.addParamNamesToGroup("compression_factor "
                               "interface_normal_functor confined_scalar_variables "
                               "confined_scalar_backflow_concentration confined_scalar_alpha_floor "
                               "confined_scalar_concentration_min "
@@ -313,11 +315,17 @@ WCNSLinearFVConservativeDiffuseInterfaceVOFPhysics::addUserObjects()
 void
 WCNSLinearFVConservativeDiffuseInterfaceVOFPhysics::addScalarAdvectionKernels()
 {
+  const auto method_name =
+      isParamValid("passive_scalar_advection_interpolation_method_name")
+          ? getParam<InterpolationMethodName>("passive_scalar_advection_interpolation_method_name")
+          : InterpolationMethodName(
+                std::string(getParam<MooseEnum>("passive_scalar_advection_interpolation")));
+
   addLinearFVScalarAdvectionKernel(
       _passive_scalar_names[0],
       prefix() + "alpha_advection",
       _flow_equations_physics->rhieChowUOName(),
-      getParam<MooseEnum>("passive_scalar_advection_interpolation"),
+      method_name,
       _blocks,
       [](InputParameters & params)
       { params.set<MooseFunctorName>("face_flux") = "vof_transport_phi"; });
