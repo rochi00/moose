@@ -152,6 +152,10 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::validParams()
       "Rhie-Chow face-flux provider with additional reduced-pressure predictor functors for "
       "large-density-ratio diffuse-interface coupling.");
 
+  // The interface this provider is built for carries a large density jump, and it maintains its
+  // own corrected volumetric flux and rho_phi, so the consistent mass-momentum weighting applies.
+  params.set<MooseEnum>("predictor_mass_flux_interpolation") = "momentum";
+
   params.addParam<MooseFunctorName>(
       "vof_rho_phi_functor",
       "rho_phi",
@@ -496,7 +500,6 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::freezeVOFTransportState(
         use_previous_timestep_flux
             ? libmesh_map_find(_previous_timestep_corrected_face_phi, fi->id())
             : libmesh_map_find(_corrected_face_phi, fi->id());
-
 }
 
 void
@@ -702,7 +705,6 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::buildDiffuseFaceRawAinvReaders
     raw_ainv_readers.emplace_back(raw_ainv);
   }
 }
-
 
 ConservativeDiffuseInterfaceRhieChowMassFluxBase::DiffuseFaceOperatorState
 ConservativeDiffuseInterfaceRhieChowMassFluxBase::buildDiffuseFaceOperatorState(
@@ -1087,8 +1089,7 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::updateAdditionalPressureFluxFu
 
     const Real face_measure = faceMeasure(*fi);
     const Real predictor_operator_volumetric_flux = predictor_state.face_hbya * fi->normal();
-    const auto state =
-        buildDiffuseFaceOperatorState(fi, time_arg, raw_ainv_readers);
+    const auto state = buildDiffuseFaceOperatorState(fi, time_arg, raw_ainv_readers);
     const RealVectorValue pressure_face_raw_ainv = state.face_raw_ainv;
     const Real normal_pressure_ainv =
         computeFaceNormalAinv(pressure_face_raw_ainv, state.face_normal);

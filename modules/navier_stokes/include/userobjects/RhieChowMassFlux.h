@@ -291,7 +291,6 @@ protected:
   /// Accessor for the cached set of flow faces used by this Rhie-Chow object.
   const std::vector<const FaceInfo *> & flowFaceInfo() const { return _flow_face_info; }
 
-
   /// Compute the cell volumes on the mesh
   void setupMeshInformation();
 
@@ -522,6 +521,17 @@ protected:
 
   /// Enumerator for the method used for pressure projection
   const MooseEnum _pressure_projection_method;
+
+  /**
+   * Whether this provider maintains its own volumetric face flux rather than recovering one by
+   * dividing the mass flux by a single face density. Only such a provider may interpolate the
+   * density-velocity product, because that product does not factor into a face density times a
+   * face volumetric flux.
+   */
+  virtual bool tracksOwnVolumetricFaceFlux() const { return false; }
+
+  /// Whether the predictor mass flux interpolates the density-velocity product on internal faces
+  const bool _momentum_interpolated_predictor_mass_flux;
 
   /// Interpolation method used for the pressure diffusion coefficient on faces
   const Moose::FV::InterpMethod _pressure_diffusion_interp_method;

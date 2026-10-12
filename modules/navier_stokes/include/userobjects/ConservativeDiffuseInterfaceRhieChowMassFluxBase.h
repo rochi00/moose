@@ -127,10 +127,10 @@ protected:
   void buildDiffuseFaceRawAinvReaders(
       std::vector<std::unique_ptr<NumericVector<Number>>> & owned_raw_ainv,
       std::vector<PetscVectorReader> & raw_ainv_readers) const;
-  DiffuseFaceOperatorState buildDiffuseFaceOperatorState(
-      const FaceInfo * fi,
-      const Moose::StateArg & time_arg,
-      const std::vector<PetscVectorReader> & raw_ainv_readers) const;
+  DiffuseFaceOperatorState
+  buildDiffuseFaceOperatorState(const FaceInfo * fi,
+                                const Moose::StateArg & time_arg,
+                                const std::vector<PetscVectorReader> & raw_ainv_readers) const;
 
   Real evaluateFaceScalarFunctor(const Moose::Functor<Real> * functor,
                                  const FaceInfo * fi,
@@ -178,6 +178,9 @@ protected:
   virtual RealVectorValue
   reconstructPressureCoupledCellVelocityDelta(const ElemInfo * elem_info,
                                               const Moose::StateArg & time_arg) const;
+  /// This provider tracks _corrected_face_phi and its own rho_phi, so it may interpolate momentum.
+  bool tracksOwnVolumetricFaceFlux() const override { return true; }
+
   bool useConstrainedBoundaryPredictorState(const FaceInfo * fi) const override;
   FaceScalarField _corrected_face_phi;
   FaceScalarField _previous_timestep_corrected_face_phi;

@@ -116,6 +116,14 @@ RhieChowMassFlux::validParams()
                              "The method to use in the pressure projection for Ainv - "
                              "standard (SIMPLE) or consistent (SIMPLEC)");
   params.addParam<MooseEnum>(
+      "predictor_mass_flux_interpolation",
+      MooseEnum("velocity momentum", "velocity"),
+      "How the face density weights the predictor mass flux on internal faces. 'velocity' "
+      "multiplies the interpolated predictor velocity by the interpolated face density, which is "
+      "the usual Rhie-Chow form. 'momentum' interpolates the density-velocity product instead, "
+      "for the consistent mass-momentum transport wanted at large density ratios; it requires a "
+      "provider that tracks its own volumetric face flux.");
+  params.addParam<MooseEnum>(
       "pressure_diffusion_interpolation",
       MooseEnum("average harmonic", "average"),
       "The face interpolation method for Ainv in the pressure correction diffusion term.");
@@ -167,6 +175,8 @@ RhieChowMassFlux::RhieChowMassFlux(const InputParameters & params)
     _base_pressure_gradient_field(nullptr),
     _global_pressure_system_number(0),
     _pressure_projection_method(getParam<MooseEnum>("pressure_projection_method")),
+    _momentum_interpolated_predictor_mass_flux(
+        getParam<MooseEnum>("predictor_mass_flux_interpolation") == "momentum"),
     _pressure_diffusion_interp_method(getParam<MooseEnum>("pressure_diffusion_interpolation") ==
                                               "harmonic"
                                           ? Moose::FV::InterpMethod::HarmonicAverage
@@ -565,6 +575,14 @@ RhieChowMassFlux::initPressureGradient()
 void
 RhieChowMassFlux::initialSetup()
 {
+  if (_momentum_interpolated_predictor_mass_flux && !tracksOwnVolumetricFaceFlux())
+    paramError("predictor_mass_flux_interpolation",
+               "'momentum' is only supported by a provider that tracks its own volumetric face "
+               "flux. This one recovers the volumetric flux by dividing the mass flux by a single "
+               "face density, which the interpolated density-velocity product does not factor "
+               "into, so the volumetric flux handed to scalar transport would not match the mass "
+               "flux used by momentum transport.");
+
   // We fetch the pressure diffusion kernel to ensure that the face flux correction
   // is consistent with the pressure discretization in the Poisson equation.
   std::vector<LinearFVFluxKernel *> flux_kernel;
@@ -1931,12 +1949,20 @@ RhieChowMassFlux::buildMomentumPredictorFaceState(
                   hbya_reader[dim_i](neighbor_dof),
                   *fi,
                   true);
-      interpolate(Moose::FV::InterpMethod::Average,
-                  state.density_weighted_face_hbya(dim_i),
-                  elem_rho * hbya_reader[dim_i](elem_dof),
-                  neighbor_rho * hbya_reader[dim_i](neighbor_dof),
-                  *fi,
-                  true);
+      // With a variable density the two weightings differ. The velocity form keeps the mass flux
+      // factorable as (face density) * (face volumetric flux), which is what getVolumetricFaceFlux
+      // inverts. The momentum form interpolates the product, which is the consistent
+      // mass-momentum transport wanted across a large density jump, and is only available to a
+      // provider that tracks its own volumetric face flux.
+      if (_momentum_interpolated_predictor_mass_flux)
+        interpolate(Moose::FV::InterpMethod::Average,
+                    state.density_weighted_face_hbya(dim_i),
+                    elem_rho * hbya_reader[dim_i](elem_dof),
+                    neighbor_rho * hbya_reader[dim_i](neighbor_dof),
+                    *fi,
+                    true);
+      else
+        state.density_weighted_face_hbya(dim_i) = state.face_rho * state.face_hbya(dim_i);
 
       if (ainv_reader)
       {
