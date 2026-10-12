@@ -970,7 +970,11 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::updateAdditionalPressureFluxFu
                                         /* use_boundary_velocity_values = */ true);
 
     const Real face_measure = faceMeasure(*fi);
-    const Real predictor_operator_volumetric_flux = predictor_state.face_hbya * fi->normal();
+    // FaceMomentumPredictorState carries H/A with the sign it is stored in, so that the velocity
+    // u = -(H/A) - Ainv grad(p). The reduced-pressure predictor flux is a velocity, and the
+    // bookkeeping below negates it once more when forming the base flux, so convert here rather
+    // than asking the shared producer to hold a second sign convention for this consumer alone.
+    const Real predictor_operator_volumetric_flux = -(predictor_state.face_hbya * fi->normal());
     const auto state = buildDiffuseFaceOperatorState(fi, time_arg, raw_ainv_readers);
     const RealVectorValue pressure_face_raw_ainv = state.face_raw_ainv;
     const Real normal_pressure_ainv =

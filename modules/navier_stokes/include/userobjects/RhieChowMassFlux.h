@@ -231,6 +231,8 @@ protected:
   struct FaceMomentumPredictorState
   {
     Real face_rho = 0.0;
+    /// H/A on the face, with the sign it is stored in: u = -(H/A) - Ainv grad(p). A consumer that
+    /// wants the physical predictor velocity negates it at the point of use.
     RealVectorValue face_hbya;
     RealVectorValue density_weighted_face_hbya;
     RealVectorValue face_density_weighted_ainv;
