@@ -142,9 +142,6 @@ protected:
                                                        const DiffuseFaceOperatorState & state);
   Real computeFaceNormalDensityGradient(const FaceInfo * fi,
                                         const Moose::StateArg & time_arg) const;
-  Real computeFaceNormalScalarGradient(const Moose::Functor<Real> & functor,
-                                       const FaceInfo * fi,
-                                       const Moose::StateArg & time_arg) const;
   Real computeFaceNormalPressureGradient(const FaceInfo * fi,
                                          const Moose::StateArg & time_arg) const;
   bool useExplicitHydrostaticPredictorForce() const;
@@ -152,13 +149,10 @@ protected:
   computeDiscreteHydrostaticPredictorFaceNormalForceDensity(const FaceInfo * fi,
                                                             const Moose::StateArg & time_arg) const;
   bool surfaceTensionEnabled() const;
-  Real computeLeastSquaresFaceScalarValue(const Moose::Functor<Real> & functor,
-                                          const FaceInfo * fi,
-                                          const Elem * elem,
-                                          const Moose::StateArg & time_arg) const;
-  RealVectorValue computeLeastSquaresCellGradient(const Moose::Functor<Real> & functor,
-                                                  const ElemInfo & elem_info,
-                                                  const Moose::StateArg & time_arg) const;
+  /// Binds the least-squares cell gradient operator to this object's mesh and coupled domain.
+  RealVectorValue leastSquaresCellGradient(const Moose::Functor<Real> & functor,
+                                           const ElemInfo & elem_info,
+                                           const Moose::StateArg & time_arg) const;
   Real computeLeastSquaresCellInterfaceCurvature(const ElemInfo & elem_info,
                                                  const Moose::StateArg & time_arg) const;
   RealVectorValue

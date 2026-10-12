@@ -8,6 +8,7 @@
 //* https://www.gnu.org/licenses/lgpl-2.1.html
 
 #include "ConservativeDiffuseInterfaceRhieChowMassFluxBase.h"
+#include "NSFVLeastSquares.h"
 
 #include "LinearFVAdvectionDiffusionBC.h"
 #include "LinearFVPressureInletOutletMomentumBC.h"
@@ -34,26 +35,6 @@ namespace
 {
 constexpr Real pressure_writeback_face_ainv_relative_tolerance = 1e-4;
 constexpr Real surface_tension_normal_regularization = 1e-14;
-
-const FaceInfo *
-faceInfoForElementSide(const MooseMesh & moose_mesh,
-                       const Elem * const elem,
-                       const unsigned int side)
-{
-  if (!elem)
-    return nullptr;
-
-  const Elem * const loc_neighbor = elem->neighbor_ptr(side);
-  if (loc_neighbor == libMesh::remote_elem)
-    return nullptr;
-
-  const bool elem_has_fi = Moose::FV::elemHasFaceInfo(*elem, loc_neighbor);
-  if (!elem_has_fi && !loc_neighbor)
-    return nullptr;
-
-  return moose_mesh.faceInfo(elem_has_fi ? elem : loc_neighbor,
-                             elem_has_fi ? side : loc_neighbor->which_neighbor_am_i(elem));
-}
 
 template <typename FaceNormalScalar>
 RealVectorValue
@@ -771,49 +752,12 @@ Real
 ConservativeDiffuseInterfaceRhieChowMassFluxBase::computeFaceNormalDensityGradient(
     const FaceInfo * fi, const Moose::StateArg & time_arg) const
 {
-  return computeFaceNormalScalarGradient(_rho, fi, time_arg);
-}
-
-Real
-ConservativeDiffuseInterfaceRhieChowMassFluxBase::computeFaceNormalScalarGradient(
-    const Moose::Functor<Real> & functor,
-    const FaceInfo * fi,
-    const Moose::StateArg & time_arg) const
-{
   if (!fi)
     return 0.0;
 
-  if (_vel[0]->isInternalFace(*fi))
-  {
-    const Real elem_value = functor(makeElemArg(fi->elemPtr()), time_arg);
-    const Real neighbor_value = functor(makeElemArg(fi->neighborPtr()), time_arg);
-    const Point delta = fi->dCN();
-    const Real delta_mag = delta.norm();
-
-    if (delta_mag <= libMesh::TOLERANCE)
-      return 0.0;
-
-    const Real value_jump = neighbor_value - elem_value;
-    const Real non_orth_delta_coeff = 1.0 / std::max(fi->normal() * delta, 0.05 * delta_mag);
-    const Real base_part = non_orth_delta_coeff * value_jump;
-
-    const Point non_orth_correction_vector = fi->normal() - delta * non_orth_delta_coeff;
-    const RealVectorValue elem_grad =
-        MetaPhysicL::raw_value(functor.gradient(makeElemArg(fi->elemPtr()), time_arg));
-    const RealVectorValue neighbor_grad =
-        MetaPhysicL::raw_value(functor.gradient(makeElemArg(fi->neighborPtr()), time_arg));
-
-    RealVectorValue face_grad = 0;
-    Moose::FV::interpolate(
-        Moose::FV::InterpMethod::Average, face_grad, elem_grad, neighbor_grad, *fi, true);
-    return base_part + non_orth_correction_vector * face_grad;
-  }
-
-  // On uncoupled boundary patches the explicit non-orthogonal correction is zero and the
-  // operative snGrad comes from the boundary patch field.
-  return MetaPhysicL::raw_value(
-             functor.gradient(makeCenteredFaceArg(fi, boundaryElemInfo(fi).elem()), time_arg)) *
-         fi->normal();
+  const bool internal = _vel[0]->isInternalFace(*fi);
+  return NS::faceNormalScalarGradient(
+      _rho, *fi, internal ? nullptr : boundaryElemInfo(fi).elem(), internal, time_arg);
 }
 
 Real
@@ -884,81 +828,19 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::surfaceTensionEnabled() const
   return _surface_tension_coefficient && _surface_tension_volume_fraction;
 }
 
-Real
-ConservativeDiffuseInterfaceRhieChowMassFluxBase::computeLeastSquaresFaceScalarValue(
-    const Moose::Functor<Real> & functor,
-    const FaceInfo * fi,
-    const Elem * elem,
-    const Moose::StateArg & time_arg) const
-{
-  if (!fi || !elem)
-    return 0.0;
-
-  if (_vel[0]->isInternalFace(*fi))
-  {
-    const Real elem_value = functor(makeElemArg(fi->elemPtr()), time_arg);
-    const Real neighbor_value = functor(makeElemArg(fi->neighborPtr()), time_arg);
-    Real face_value = 0.0;
-    Moose::FV::interpolate(
-        Moose::FV::InterpMethod::Average, face_value, elem_value, neighbor_value, *fi, true);
-    return face_value;
-  }
-
-  return functor(makeCenteredFaceArg(fi, elem), time_arg);
-}
-
 RealVectorValue
-ConservativeDiffuseInterfaceRhieChowMassFluxBase::computeLeastSquaresCellGradient(
+ConservativeDiffuseInterfaceRhieChowMassFluxBase::leastSquaresCellGradient(
     const Moose::Functor<Real> & functor,
     const ElemInfo & elem_info,
     const Moose::StateArg & time_arg) const
 {
-  const Elem * const elem = elem_info.elem();
-  if (!elem)
-    return RealVectorValue();
-
-  const Real cell_value = functor(makeElemArg(elem), time_arg);
-  std::vector<Point> offsets;
-  std::vector<Real> increments;
-  offsets.reserve(elem->n_sides());
-  increments.reserve(elem->n_sides());
-
-  for (const auto side : make_range(elem->n_sides()))
-  {
-    const FaceInfo * const fi_loc = faceInfoForElementSide(_moose_mesh, elem, side);
-    if (!fi_loc)
-      continue;
-
-    const Point offset = fi_loc->faceCentroid() - elem_info.centroid();
-    if (offset.norm() <= libMesh::TOLERANCE)
-      continue;
-
-    offsets.push_back(offset);
-    increments.push_back(computeLeastSquaresFaceScalarValue(functor, fi_loc, elem, time_arg) -
-                         cell_value);
-  }
-
-  if (offsets.size() < _dim)
-    return RealVectorValue();
-
-  DenseMatrix<Real> matrix(offsets.size(), _dim);
-  DenseVector<Real> rhs(offsets.size());
-  DenseVector<Real> solution(_dim);
-
-  for (const auto row : index_range(offsets))
-  {
-    rhs(row) = increments[row];
-    for (const auto dim_i : make_range(_dim))
-      matrix(row, dim_i) = offsets[row](dim_i);
-  }
-
-  matrix.svd_solve(rhs, solution);
-
-  RealVectorValue gradient;
-  for (const auto dim_i : make_range(_dim))
-    gradient(dim_i) = solution(dim_i);
-
-  return gradient;
+  return NS::leastSquaresCellGradient(
+      functor,
+      elem_info,
+      _moose_mesh,
+      _dim,
+      [this](const FaceInfo & fi) { return _vel[0]->isInternalFace(fi); },
+      time_arg);
 }
 
 Real
@@ -977,12 +859,12 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::computeLeastSquaresCellInterfa
     return 0.0;
 
   const RealVectorValue elem_gradient =
-      computeLeastSquaresCellGradient(*_surface_tension_volume_fraction, elem_info, time_arg);
+      leastSquaresCellGradient(*_surface_tension_volume_fraction, elem_info, time_arg);
 
   Real interface_normal_flux = 0.0;
   for (const auto side : make_range(elem->n_sides()))
   {
-    const FaceInfo * const fi_loc = faceInfoForElementSide(_moose_mesh, elem, side);
+    const FaceInfo * const fi_loc = NS::faceInfoForElementSide(_moose_mesh, elem, side);
     if (!fi_loc)
       continue;
 
@@ -991,8 +873,8 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::computeLeastSquaresCellInterfa
     {
       const ElemInfo * const neighbor_info =
           fi_loc->elemPtr() == elem ? fi_loc->neighborInfo() : fi_loc->elemInfo();
-      const RealVectorValue neighbor_gradient = computeLeastSquaresCellGradient(
-          *_surface_tension_volume_fraction, *neighbor_info, time_arg);
+      const RealVectorValue neighbor_gradient =
+          leastSquaresCellGradient(*_surface_tension_volume_fraction, *neighbor_info, time_arg);
       Moose::FV::interpolate(Moose::FV::InterpMethod::Average,
                              face_gradient,
                              elem_gradient,
@@ -1028,7 +910,7 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::computeLeastSquaresCellSurface
     return RealVectorValue();
 
   const RealVectorValue alpha_gradient =
-      computeLeastSquaresCellGradient(*_surface_tension_volume_fraction, elem_info, time_arg);
+      leastSquaresCellGradient(*_surface_tension_volume_fraction, elem_info, time_arg);
   const Real curvature = computeLeastSquaresCellInterfaceCurvature(elem_info, time_arg);
 
   return sigma * curvature * alpha_gradient;
