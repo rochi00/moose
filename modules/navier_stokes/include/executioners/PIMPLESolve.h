@@ -42,7 +42,6 @@ protected:
   correctVelocity(const bool recompute_face_mass_flux, const SolverParams & solver_params) override;
 
   virtual void preparePressureCorrectorState(const bool subtract_updated_pressure);
-  virtual void postPreparePressureCorrectorState(const bool) {}
   virtual std::pair<unsigned int, Real>
   applyPressureCorrectionStage(const bool recompute_face_mass_flux,
                                const bool publish_pressure_corrected_state,

@@ -674,6 +674,10 @@ LinearAssemblySegregatedSolve::correctVelocity(const bool recompute_face_mass_fl
   // gradient captured before the current momentum predictor was assembled.
   _rc_uo->computeHbyA(_print_fields);
 
+  // Whatever pressure-equation sources a derived solve owns have to be refreshed here, against
+  // the H/A just computed, or the pressure corrector is assembled without them.
+  postPreparePressureCorrectorState(true);
+
   // We set the preconditioner/controllable parameters for the pressure equations through
   // petsc options. Linear tolerances will be overridden within the solver.
   Moose::PetscSupport::petscSetOptions(_pressure_petsc_options, solver_params);

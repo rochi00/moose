@@ -58,6 +58,15 @@ protected:
   assembleMomentumPredictorOperator(const unsigned int system_i,
                                     const bool prepare_without_solve = false);
 
+  /**
+   * Lets a derived solve refresh whatever pressure-equation sources it owns once H/A has been
+   * computed and before the pressure corrector is assembled. The reduced-pressure diffuse
+   * interface solve publishes its surface-tension, hydrostatic and transient-projection face
+   * fluxes here; they are part of the pressure equation, so they have to be rebuilt for every
+   * corrector rather than only at startup.
+   */
+  virtual void postPreparePressureCorrectorState(const bool) {}
+
   /// Computes new velocity field based on computed pressure gradients
   /// @param recompute_face_mass_flux If we want to recompute the face flux too
   /// @param solver_params Dummy solver parameter object for the linear solve
