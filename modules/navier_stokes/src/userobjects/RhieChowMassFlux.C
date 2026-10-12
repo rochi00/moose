@@ -115,6 +115,12 @@ RhieChowMassFlux::validParams()
                              MooseEnum("standard consistent", "standard"),
                              "The method to use in the pressure projection for Ainv - "
                              "standard (SIMPLE) or consistent (SIMPLEC)");
+  params.addParam<GradientMethodName>(
+      "pressure_gradient_method",
+      "The registered pressure gradient method supplying the coupling gradient. Only read when "
+      "'split_momentum_predictor_operator' is set, because without it the coupling gradient is "
+      "taken from the momentum pressure kernels, which guarantees the momentum equations and this "
+      "object share one gradient. Defaults to the pressure variable's own method.");
   params.addParam<MooseEnum>(
       "predictor_mass_flux_interpolation",
       MooseEnum("velocity momentum", "velocity"),
@@ -237,178 +243,205 @@ RhieChowMassFlux::linkMomentumPressureSystems(
                _pressure_system->name(),
                "' must be a MooseLinearVariableFVReal.");
 
-  // For each momentum system, find the LinearFVMomentumPressure kernels applicable to this RC
-  // object, i.e. those whose blocks overlap the blocks this RC object handles. Kernels entirely
-  // outside our blocks are irrelevant and ignored; multiple applicable kernels per system are
-  // allowed as long as they partition our blocks without overlapping (checked below).
-  std::vector<std::vector<const LinearFVMomentumPressure *>> applicable_kernels(
-      momentum_systems.size());
-  for (const auto system_index : index_range(momentum_systems))
+  // A split predictor operator carries no explicit pressure term, so there is no
+  // LinearFVMomentumPressure kernel to read the coupling gradient off. The provider adds that
+  // force itself, through addMomentumPredictorExplicitForcing, and so states the gradient here
+  // instead of inferring it.
+  if (_split_momentum_predictor_operator)
   {
-    std::vector<LinearFVElementalKernel *> kernels;
-    _fe_problem.theWarehouse()
-        .query()
-        .template condition<AttribThread>(_tid)
-        .template condition<AttribSystem>("LinearFVElementalKernel")
-        .template condition<AttribSysNum>(momentum_system_numbers[system_index])
-        .queryInto(kernels);
+    const auto & coupling_reader =
+        isParamValid("pressure_gradient_method")
+            ? pressure_var->requestCellGradients(
+                  getParam<GradientMethodName>("pressure_gradient_method"))
+            : pressure_var->requestCellGradients();
 
-    for (const auto * const kernel : kernels)
+    _pressure_gradient_field = &coupling_reader;
+
+    if (usingReconstructedPressureGradientMethod())
     {
-      const auto * const candidate = dynamic_cast<const LinearFVMomentumPressure *>(kernel);
-      if (candidate && MooseUtils::setsIntersect(candidate->blockIDs(), blockIDs()))
-        applicable_kernels[system_index].push_back(candidate);
+      reconstructedGradientMethod().linkFlowSystem(*this, coupling_reader);
+      _base_pressure_gradient_field = &pressure_var->requestCellGradients(
+          reconstructedGradientMethod().baseGradientMethodName());
     }
-  }
-
-  for (const auto system_index : index_range(momentum_systems))
-  {
-    const auto & kernels = applicable_kernels[system_index];
-    const auto & system_name = momentum_systems[system_index]->name();
-
-    // Coverage: the applicable kernels must together cover every block this RC object handles.
-    std::set<SubdomainID> covered_blocks;
-    for (const auto * const kernel : kernels)
-      covered_blocks.insert(kernel->blockIDs().begin(), kernel->blockIDs().end());
-
-    std::set<SubdomainID> missing_blocks;
-    std::set_difference(blockIDs().begin(),
-                        blockIDs().end(),
-                        covered_blocks.begin(),
-                        covered_blocks.end(),
-                        std::inserter(missing_blocks, missing_blocks.end()));
-
-    if (!missing_blocks.empty())
-      mooseError("RhieChowMassFlux '",
-                 name(),
-                 "' found no applicable LinearFVMomentumPressure kernel for momentum system '",
-                 system_name,
-                 "' on block(s) ",
-                 Moose::stringify(missing_blocks),
-                 ".");
-
-    // Component and pairwise block-overlap checks among the applicable kernels for this system.
-    for (const auto i : index_range(kernels))
-    {
-      if (kernels[i]->momentumComponent() != system_index)
-        mooseError("LinearFVMomentumPressure kernel '",
-                   kernels[i]->name(),
-                   "' declares momentum component ",
-                   kernels[i]->momentumComponent(),
-                   " but is linked to momentum system '",
-                   system_name,
-                   "' (component ",
-                   system_index,
-                   ") through RhieChowMassFlux '",
-                   name(),
-                   "'.");
-
-      for (const auto j : make_range(i + 1, kernels.size()))
-      {
-        std::set<SubdomainID> overlap;
-        for (const auto block : kernels[i]->blockIDs())
-          if (hasBlocks(block) && kernels[j]->blockIDs().count(block))
-            overlap.insert(block);
-        if (!overlap.empty())
-          mooseError("Momentum system '",
-                     system_name,
-                     "' has more than one LinearFVMomentumPressure kernel contributing a "
-                     "pressure source on the same block(s) for RhieChowMassFlux '",
-                     name(),
-                     "': '",
-                     kernels[i]->name(),
-                     "' and '",
-                     kernels[j]->name(),
-                     "' overlap on block(s) ",
-                     Moose::stringify(overlap),
-                     ".");
-      }
-    }
-  }
-
-  // Flatten every system's applicable kernels into one list spanning the whole RC object. Even
-  // kernels on disjoint blocks/components must share one coupling-gradient field, because H/A
-  // has a single field source for this RC object.
-  std::vector<const LinearFVMomentumPressure *> momentum_pressure_kernels;
-  for (auto & kernels : applicable_kernels)
-    momentum_pressure_kernels.insert(
-        momentum_pressure_kernels.end(), kernels.begin(), kernels.end());
-
-  const auto * const coupling_kernel = momentum_pressure_kernels.front();
-  const auto & coupling_reader = coupling_kernel->pressureGradientField();
-
-  if (dynamic_cast<const FVReconstructedPressureGradient *>(&coupling_reader.method()) &&
-      coupling_kernel->pressureVariableNumber() != _p->number())
-    mooseError("FVReconstructedPressureGradient can only be used for the pressure variable "
-               "registered on RhieChowMassFlux '",
-               name(),
-               "'.");
-
-  for (const auto * const kernel : momentum_pressure_kernels)
-  {
-    const auto & reader = kernel->pressureGradientField();
-
-    if (&reader.system() != &coupling_reader.system() ||
-        reader.systemNumber() != coupling_reader.systemNumber())
-      mooseError("RhieChowMassFlux '",
-                 name(),
-                 "': momentum pressure kernels '",
-                 coupling_kernel->name(),
-                 "' (block(s) ",
-                 Moose::stringify(coupling_kernel->blockIDs()),
-                 ") and '",
-                 kernel->name(),
-                 "' (block(s) ",
-                 Moose::stringify(kernel->blockIDs()),
-                 ") must use pressure gradients from the same system.");
-
-    if (reader.variableNumber() != coupling_reader.variableNumber())
-      mooseError("RhieChowMassFlux '",
-                 name(),
-                 "': momentum pressure kernels '",
-                 coupling_kernel->name(),
-                 "' (pressure variable number ",
-                 coupling_reader.variableNumber(),
-                 ") and '",
-                 kernel->name(),
-                 "' (pressure variable number ",
-                 reader.variableNumber(),
-                 ") must use the same pressure variable.");
-
-    if (&reader.method() != &coupling_reader.method())
-      mooseError("RhieChowMassFlux '",
-                 name(),
-                 "': momentum pressure kernels '",
-                 coupling_kernel->name(),
-                 "' and '",
-                 kernel->name(),
-                 "' must use the same pressure gradient method.");
-
-    if (&reader.components() != &coupling_reader.components())
-      mooseError("RhieChowMassFlux '",
-                 name(),
-                 "': momentum pressure kernels '",
-                 coupling_kernel->name(),
-                 "' and '",
-                 kernel->name(),
-                 "' must share the same registered pressure gradient field.");
-  }
-
-  _pressure_gradient_field = &coupling_reader;
-
-  if (usingReconstructedPressureGradientMethod())
-  {
-    reconstructedGradientMethod().linkFlowSystem(*this, coupling_reader);
-    const auto & base_reader =
-        pressure_var->requestCellGradients(reconstructedGradientMethod().baseGradientMethodName());
-    _base_pressure_gradient_field = &base_reader;
-
-    mooseAssert(_base_pressure_gradient_field != _pressure_gradient_field,
-                "Reconstructed and base pressure gradient readers must be distinct when "
-                "FVReconstructedPressureGradient is active.");
+    else
+      _base_pressure_gradient_field = _pressure_gradient_field;
   }
   else
-    _base_pressure_gradient_field = _pressure_gradient_field;
+  {
+
+    // For each momentum system, find the LinearFVMomentumPressure kernels applicable to this RC
+    // object, i.e. those whose blocks overlap the blocks this RC object handles. Kernels entirely
+    // outside our blocks are irrelevant and ignored; multiple applicable kernels per system are
+    // allowed as long as they partition our blocks without overlapping (checked below).
+    std::vector<std::vector<const LinearFVMomentumPressure *>> applicable_kernels(
+        momentum_systems.size());
+    for (const auto system_index : index_range(momentum_systems))
+    {
+      std::vector<LinearFVElementalKernel *> kernels;
+      _fe_problem.theWarehouse()
+          .query()
+          .template condition<AttribThread>(_tid)
+          .template condition<AttribSystem>("LinearFVElementalKernel")
+          .template condition<AttribSysNum>(momentum_system_numbers[system_index])
+          .queryInto(kernels);
+
+      for (const auto * const kernel : kernels)
+      {
+        const auto * const candidate = dynamic_cast<const LinearFVMomentumPressure *>(kernel);
+        if (candidate && MooseUtils::setsIntersect(candidate->blockIDs(), blockIDs()))
+          applicable_kernels[system_index].push_back(candidate);
+      }
+    }
+
+    for (const auto system_index : index_range(momentum_systems))
+    {
+      const auto & kernels = applicable_kernels[system_index];
+      const auto & system_name = momentum_systems[system_index]->name();
+
+      // Coverage: the applicable kernels must together cover every block this RC object handles.
+      std::set<SubdomainID> covered_blocks;
+      for (const auto * const kernel : kernels)
+        covered_blocks.insert(kernel->blockIDs().begin(), kernel->blockIDs().end());
+
+      std::set<SubdomainID> missing_blocks;
+      std::set_difference(blockIDs().begin(),
+                          blockIDs().end(),
+                          covered_blocks.begin(),
+                          covered_blocks.end(),
+                          std::inserter(missing_blocks, missing_blocks.end()));
+
+      if (!missing_blocks.empty())
+        mooseError("RhieChowMassFlux '",
+                   name(),
+                   "' found no applicable LinearFVMomentumPressure kernel for momentum system '",
+                   system_name,
+                   "' on block(s) ",
+                   Moose::stringify(missing_blocks),
+                   ".");
+
+      // Component and pairwise block-overlap checks among the applicable kernels for this system.
+      for (const auto i : index_range(kernels))
+      {
+        if (kernels[i]->momentumComponent() != system_index)
+          mooseError("LinearFVMomentumPressure kernel '",
+                     kernels[i]->name(),
+                     "' declares momentum component ",
+                     kernels[i]->momentumComponent(),
+                     " but is linked to momentum system '",
+                     system_name,
+                     "' (component ",
+                     system_index,
+                     ") through RhieChowMassFlux '",
+                     name(),
+                     "'.");
+
+        for (const auto j : make_range(i + 1, kernels.size()))
+        {
+          std::set<SubdomainID> overlap;
+          for (const auto block : kernels[i]->blockIDs())
+            if (hasBlocks(block) && kernels[j]->blockIDs().count(block))
+              overlap.insert(block);
+          if (!overlap.empty())
+            mooseError("Momentum system '",
+                       system_name,
+                       "' has more than one LinearFVMomentumPressure kernel contributing a "
+                       "pressure source on the same block(s) for RhieChowMassFlux '",
+                       name(),
+                       "': '",
+                       kernels[i]->name(),
+                       "' and '",
+                       kernels[j]->name(),
+                       "' overlap on block(s) ",
+                       Moose::stringify(overlap),
+                       ".");
+        }
+      }
+    }
+
+    // Flatten every system's applicable kernels into one list spanning the whole RC object. Even
+    // kernels on disjoint blocks/components must share one coupling-gradient field, because H/A
+    // has a single field source for this RC object.
+    std::vector<const LinearFVMomentumPressure *> momentum_pressure_kernels;
+    for (auto & kernels : applicable_kernels)
+      momentum_pressure_kernels.insert(
+          momentum_pressure_kernels.end(), kernels.begin(), kernels.end());
+
+    const auto * const coupling_kernel = momentum_pressure_kernels.front();
+    const auto & coupling_reader = coupling_kernel->pressureGradientField();
+
+    if (dynamic_cast<const FVReconstructedPressureGradient *>(&coupling_reader.method()) &&
+        coupling_kernel->pressureVariableNumber() != _p->number())
+      mooseError("FVReconstructedPressureGradient can only be used for the pressure variable "
+                 "registered on RhieChowMassFlux '",
+                 name(),
+                 "'.");
+
+    for (const auto * const kernel : momentum_pressure_kernels)
+    {
+      const auto & reader = kernel->pressureGradientField();
+
+      if (&reader.system() != &coupling_reader.system() ||
+          reader.systemNumber() != coupling_reader.systemNumber())
+        mooseError("RhieChowMassFlux '",
+                   name(),
+                   "': momentum pressure kernels '",
+                   coupling_kernel->name(),
+                   "' (block(s) ",
+                   Moose::stringify(coupling_kernel->blockIDs()),
+                   ") and '",
+                   kernel->name(),
+                   "' (block(s) ",
+                   Moose::stringify(kernel->blockIDs()),
+                   ") must use pressure gradients from the same system.");
+
+      if (reader.variableNumber() != coupling_reader.variableNumber())
+        mooseError("RhieChowMassFlux '",
+                   name(),
+                   "': momentum pressure kernels '",
+                   coupling_kernel->name(),
+                   "' (pressure variable number ",
+                   coupling_reader.variableNumber(),
+                   ") and '",
+                   kernel->name(),
+                   "' (pressure variable number ",
+                   reader.variableNumber(),
+                   ") must use the same pressure variable.");
+
+      if (&reader.method() != &coupling_reader.method())
+        mooseError("RhieChowMassFlux '",
+                   name(),
+                   "': momentum pressure kernels '",
+                   coupling_kernel->name(),
+                   "' and '",
+                   kernel->name(),
+                   "' must use the same pressure gradient method.");
+
+      if (&reader.components() != &coupling_reader.components())
+        mooseError("RhieChowMassFlux '",
+                   name(),
+                   "': momentum pressure kernels '",
+                   coupling_kernel->name(),
+                   "' and '",
+                   kernel->name(),
+                   "' must share the same registered pressure gradient field.");
+    }
+
+    _pressure_gradient_field = &coupling_reader;
+
+    if (usingReconstructedPressureGradientMethod())
+    {
+      reconstructedGradientMethod().linkFlowSystem(*this, coupling_reader);
+      const auto & base_reader = pressure_var->requestCellGradients(
+          reconstructedGradientMethod().baseGradientMethodName());
+      _base_pressure_gradient_field = &base_reader;
+
+      mooseAssert(_base_pressure_gradient_field != _pressure_gradient_field,
+                  "Reconstructed and base pressure gradient readers must be distinct when "
+                  "FVReconstructedPressureGradient is active.");
+    }
+    else
+      _base_pressure_gradient_field = _pressure_gradient_field;
+  }
 
   _global_momentum_system_numbers.clear();
   _momentum_implicit_systems.clear();
