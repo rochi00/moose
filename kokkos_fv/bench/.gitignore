@@ -1,0 +1,9 @@
+meshes/*.fvd
+meshes/*.bin
+meshes/*.bin.info
+miniapp/build/
+__pycache__/
+# The MOOSE root .gitignore excludes these types; keep the recorded results and the build file
+!results/*.csv
+!results/*.json
+!miniapp/CMakeLists.txt

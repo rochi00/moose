@@ -1,0 +1,18 @@
+[
+  {
+    "mat_bad_rows_boundary": 91,
+    "mat_bad_rows_interior": 0,
+    "rhs_bad_boundary": 148,
+    "rhs_bad_interior": 0,
+    "ok": false,
+    "rows": 216,
+    "nnz_ref": 1296,
+    "nnz_test": 1296,
+    "mat_max_abs": 0.012732297781782975,
+    "mat_max_rel": 0.008177240327166328,
+    "mat_bad": 91,
+    "rhs_max_abs": 0.027586645193863335,
+    "rhs_bad": 148,
+    "case": "HEX8 n=6 skew=0.3 np=1"
+  }
+]

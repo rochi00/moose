@@ -1,0 +1,8 @@
+variant,elem_type,skew,n,cells,np,threads,rep,steps,dt,step_ms,assembly_ms,ksp_ms,kokkos_ms,host_fv_loop_ms,host_gradients_ms,ksp_its_mean,u_avg_final,petsc_args,label,traj_diff_first,traj_diff_last,traj_diff_max
+cpu,HEX8,0.0,64,0,1,1,0,20,0.01,1452.8879646999999,338.92236460000004,1113.8844292,0.0,292.6825105,85.29881245,234.65,2.1249799898832,-vec_type kokkos -u_sys_mat_type aijkokkos,petsc_kokkos,,,
+kokkos,HEX8,0.0,64,0,1,1,0,20,0.01,1327.7485812500001,193.1292083,1134.5428416999998,174.4274104,18.534018749999998,0.0,234.65,2.1249799898832,-vec_type kokkos -u_sys_mat_type aijkokkos,petsc_kokkos,,,
+kokkos,HEX8,0.0,64,0,1,4,0,20,0.01,738.6593832,86.27796244999999,652.28943335,66.97028549999999,19.16238555,0.0,234.65,2.1249799898832,-vec_type kokkos -u_sys_mat_type aijkokkos,petsc_kokkos,,,
+kokkos,HEX8,0.0,64,0,1,8,0,20,0.01,699.5263748499999,72.47130625000001,626.97379575,53.861039600000005,18.426325050000003,0.0,234.65,2.1249799898832,-vec_type kokkos -u_sys_mat_type aijkokkos,petsc_kokkos,,,
+kokkos_vs_cpu,,,64,,1,1,0,,,,,,,,,,,,,0.0,9.058001175838768e-16,1.0623684986878883e-15
+kokkos_vs_cpu,,,64,,1,4,0,,,,,,,,,,,,,4.692458911652665e-16,9.058001175838768e-16,1.0623684986878883e-15
+kokkos_vs_cpu,,,64,,1,8,0,,,,,,,,,,,,,6.256611882203554e-16,9.058001175838768e-16,9.106015703039043e-16
