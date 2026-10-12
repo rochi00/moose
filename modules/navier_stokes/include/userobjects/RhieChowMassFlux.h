@@ -112,13 +112,13 @@ public:
                                      bool subtract_mesh_velocity) const override;
 
   /// Initialize the container for face velocities
-  virtual void initFaceMassFlux();
+  void initFaceMassFlux();
   /// Initialize the coupling fields (HbyA and Ainv)
   void initCouplingField();
   /// Cache the pressure-equation face flux from the current solved pressure field.
   virtual void cachePressureEquationFlux();
   /// Maximum face-flux Courant number over active flow cells for the supplied timestep.
-  virtual Real maxCourant(const Real dt) const;
+  Real maxCourant(const Real dt) const;
   /// Update the values of the face velocities in the containers
   virtual void computeFaceMassFlux();
   /// Update the cell values of the velocity variables
@@ -145,7 +145,7 @@ public:
   /// Update boundary pressure gradients from the current predictor and boundary velocity state.
   void updatePressureBoundaryNormalGradients(const bool apply_pressure_flux_adjustment);
   /// Refresh boundary-face velocity values from the active FV velocity BC objects.
-  virtual void updateVelocityBoundaryState();
+  void updateVelocityBoundaryState();
 
   /// Whether the registered pressure gradient field is produced by the reconstructed method.
   bool usingReconstructedPressureGradientMethod() const;
@@ -234,7 +234,7 @@ protected:
   };
 
   /// Predictor-side face flux entering the pressure equation. Defaults to the HbyA contribution.
-  virtual Real pressurePredictorFlux(const FaceInfo * fi) const;
+  Real pressurePredictorFlux(const FaceInfo * fi) const;
   /// Populate the explicit face state used by the pressure corrector.
   void updatePressurePredictorFaceState();
   /// Optional per-face adjustment added to the predictor flux for reference-pressure compatibility.
@@ -284,7 +284,7 @@ protected:
   bool isAdjustablePressureBoundaryFace(const FaceInfo * fi) const;
   /// Compute the face flux contributed by the solved pressure equation in the
   /// native pressure-correction space used by this Rhie-Chow object.
-  virtual Real computeDiscretePressureFaceFlux(const FaceInfo * fi) const;
+  Real computeDiscretePressureFaceFlux(const FaceInfo * fi) const;
   /// Optional extension point after boundary velocity state has been refreshed.
   virtual void postUpdateVelocityBoundaryState() {}
 
