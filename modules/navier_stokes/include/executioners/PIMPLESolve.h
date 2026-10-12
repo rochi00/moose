@@ -41,16 +41,13 @@ protected:
   virtual std::pair<unsigned int, Real>
   correctVelocity(const bool recompute_face_mass_flux, const SolverParams & solver_params) override;
 
-  virtual void preparePressureCorrectorState(const bool subtract_updated_pressure);
-  virtual std::pair<unsigned int, Real>
-  applyPressureCorrectionStage(const bool recompute_face_mass_flux,
-                               const bool publish_pressure_corrected_state,
-                               const SolverParams & solver_params);
-  virtual void postPressureCorrectorSolve(const bool final_nonorthogonal_iteration);
-  virtual void publishPressureCorrectedState(const bool recompute_face_mass_flux);
-  virtual void postPublishPressureCorrectedState() {}
-  void storePressurePreviousOuterIterationState();
-  void relaxPressureFieldForNextPredictor();
+  /// PIMPLE carries the explicit non-orthogonal correction with extra pressure solves.
+  unsigned int numPressureNonorthogonalCorrectors() const override
+  {
+    return _num_pressure_nonorthogonal_correctors;
+  }
+
+  void postPressureCorrectorSolve(const bool final_nonorthogonal_corrector) override;
 
   void advanceSystemOuterIterationHistory(const std::vector<LinearSystem *> & systems) const;
   void advancePressureOuterIterationHistory() const;
@@ -59,7 +56,4 @@ protected:
   const unsigned int _num_piso_iterations;
   const unsigned int _num_pressure_nonorthogonal_correctors;
   unsigned int _current_piso_iteration = 0;
-
-private:
-  std::unique_ptr<NumericVector<Number>> _pressure_previous_outer_solution;
 };

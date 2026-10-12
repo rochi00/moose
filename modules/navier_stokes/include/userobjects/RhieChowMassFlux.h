@@ -121,7 +121,11 @@ public:
   Real maxCourant(const Real dt) const;
   /// Update the values of the face velocities in the containers
   virtual void computeFaceMassFlux();
-  /// Update the cell values of the velocity variables
+  /**
+   * Writes the pressure-corrected cell velocity. This is the seam the corrector goes through, so
+   * that a provider which reconstructs that velocity differently is given the chance to; the
+   * arithmetic for the ordinary case lives in updateCellVelocity.
+   */
   virtual void computeCellVelocity();
   /// Accessor for the current cell Ainv state.
   Real cellAinvRaw(const unsigned int system_i, const dof_id_type dof) const;

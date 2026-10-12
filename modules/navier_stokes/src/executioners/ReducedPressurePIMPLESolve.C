@@ -518,7 +518,8 @@ ReducedPressurePIMPLESolve::initializeStartupPressureField(const SolverParams & 
 }
 
 void
-ReducedPressurePIMPLESolve::postPreparePressureCorrectorState(const bool /*subtract_updated_pressure*/)
+ReducedPressurePIMPLESolve::postPreparePressureCorrectorState(
+    const bool /*subtract_updated_pressure*/)
 {
   if (auto * diffuse_rc = diffuseInterfaceRC())
     diffuse_rc->updateAdditionalPressureFluxFunctors(_print_fields);
@@ -676,9 +677,17 @@ ReducedPressurePIMPLESolve::correctStartupContinuityOnce(const SolverParams & so
   PressureStateGuard pressure_state(_pressure_system);
   DiffuseInterfaceStartupProjectionGuard projection_scope(diffuseInterfaceRC());
 
-  preparePressureCorrectorState(true);
+  // The startup repair is deliberately a reduced corrector: it solves continuity and rebuilds the
+  // face flux, but does not relax the pressure or publish a corrected velocity, because the guard
+  // above restores the physical p_rgh field immediately afterwards. So it runs the first stages of
+  // the corrector rather than the whole pipeline.
+  _rc_uo->computeHbyA(_print_fields);
+  postPreparePressureCorrectorState(true);
 
-  const auto residuals = applyPressureCorrectionStage(true, false, solver_params);
+  Moose::PetscSupport::petscSetOptions(_pressure_petsc_options, solver_params);
+
+  const auto residuals = solvePressureCorrector();
+  _rc_uo->computeFaceMassFlux();
 
   // Restore the user/equilibrium startup reduced-pressure field. Startup
   // continuity cleanup should repair phi, not overwrite the physical p_rgh field

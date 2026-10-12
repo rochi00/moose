@@ -47,8 +47,6 @@ std::pair<unsigned int, Real>
 PIMPLESolve::correctVelocity(const bool /*recompute_face_mass_flux*/,
                              const SolverParams & solver_params)
 {
-  storePressurePreviousOuterIterationState();
-
   std::pair<unsigned int, Real> residual;
   unsigned int piso_iteration_counter = 0;
   const bool reconstructed = _rc_uo && _rc_uo->usingReconstructedPressureGradientMethod();
@@ -78,103 +76,11 @@ PIMPLESolve::correctVelocity(const bool /*recompute_face_mass_flux*/,
 }
 
 void
-PIMPLESolve::preparePressureCorrectorState(const bool subtract_updated_pressure)
+PIMPLESolve::postPressureCorrectorSolve(const bool /*final_nonorthogonal_corrector*/)
 {
-  _rc_uo->computeHbyA(_print_fields);
-  postPreparePressureCorrectorState(subtract_updated_pressure);
-}
-
-std::pair<unsigned int, Real>
-PIMPLESolve::applyPressureCorrectionStage(const bool recompute_face_mass_flux,
-                                          const bool publish_pressure_corrected_state,
-                                          const SolverParams & solver_params)
-{
-  Moose::PetscSupport::petscSetOptions(_pressure_petsc_options, solver_params);
-
-  std::pair<unsigned int, Real> residuals{0, std::numeric_limits<Real>::quiet_NaN()};
-  unsigned int total_linear_iterations = 0;
-
-  for (const auto nonorthogonal_iteration : make_range(_num_pressure_nonorthogonal_correctors + 1))
-  {
-    const bool final_nonorthogonal_iteration =
-        nonorthogonal_iteration == _num_pressure_nonorthogonal_correctors;
-
-    residuals = solvePressureCorrector();
-    total_linear_iterations += residuals.first;
-
-    postPressureCorrectorSolve(final_nonorthogonal_iteration);
-
-    if (!final_nonorthogonal_iteration)
-      continue;
-
-    if (publish_pressure_corrected_state)
-      publishPressureCorrectedState(recompute_face_mass_flux);
-    else if (recompute_face_mass_flux && _rc_uo)
-      _rc_uo->computeFaceMassFlux();
-  }
-
-  residuals.first = total_linear_iterations;
-
-  return residuals;
-}
-
-void
-PIMPLESolve::postPressureCorrectorSolve(const bool /*final_nonorthogonal_iteration*/)
-{
-  auto & pressure_current_solution = *(_pressure_system.system().current_local_solution.get());
-  _pressure_system.setSolution(pressure_current_solution);
-  _pressure_system.computeGradients();
-
-  if (_rc_uo)
-    _rc_uo->cachePressureEquationFlux();
-}
-
-void
-PIMPLESolve::publishPressureCorrectedState(const bool recompute_face_mass_flux)
-{
-  if (recompute_face_mass_flux && _rc_uo)
-    _rc_uo->computeFaceMassFlux();
-
-  relaxPressureFieldForNextPredictor();
-
-  if (_rc_uo)
-    _rc_uo->computeCellVelocity();
-
-  postPublishPressureCorrectedState();
-}
-
-void
-PIMPLESolve::storePressurePreviousOuterIterationState()
-{
-  auto & pressure_current_solution = *(_pressure_system.system().current_local_solution.get());
-  pressure_current_solution.close();
-
-  if (!_pressure_previous_outer_solution)
-    _pressure_previous_outer_solution = pressure_current_solution.zero_clone();
-
-  *_pressure_previous_outer_solution = pressure_current_solution;
-  _pressure_previous_outer_solution->close();
-}
-
-void
-PIMPLESolve::relaxPressureFieldForNextPredictor()
-{
-  auto & pressure_current_solution = *(_pressure_system.system().current_local_solution.get());
-  pressure_current_solution.close();
-
-  if (!_pressure_previous_outer_solution)
-    storePressurePreviousOuterIterationState();
-
-  NS::FV::relaxSolutionUpdate(
-      pressure_current_solution, *_pressure_previous_outer_solution, _pressure_variable_relaxation);
-
-  if (auto * pressure_old_solution = _pressure_system.solutionPreviousNewton())
-  {
-    *pressure_old_solution = pressure_current_solution;
-    pressure_old_solution->close();
-  }
-
-  _pressure_system.setSolution(pressure_current_solution);
+  // solvePressureCorrector has already installed the solution and cached the pressure-equation
+  // flux. What the next non-orthogonal pass additionally needs is the cell gradients of the
+  // pressure it just produced, since those carry the explicit correction.
   _pressure_system.computeGradients();
 }
 

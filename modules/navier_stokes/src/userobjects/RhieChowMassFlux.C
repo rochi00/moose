@@ -595,7 +595,9 @@ RhieChowMassFlux::finalizePressureCorrector()
   else
   {
     _pressure_system->computeGradients();
-    updateCellVelocity(pressureGradientComponents());
+    // Through the seam, not straight to the arithmetic: a provider that reconstructs the
+    // corrected velocity differently has to be given the chance to.
+    computeCellVelocity();
   }
 }
 
@@ -1106,22 +1108,7 @@ RhieChowMassFlux::computeFaceMassFlux()
 void
 RhieChowMassFlux::computeCellVelocity()
 {
-  const auto & pressure_gradient = pressureGradientComponents();
-
-  // We set the dof value in the solution vector the same logic applies:
-  // u_C = -(H/A)_C - (1/A)_C*grad(p)_C where C is the cell index
-  for (const auto system_i : index_range(_momentum_implicit_systems))
-  {
-    auto working_vector = _Ainv_raw[system_i]->clone();
-    working_vector->pointwise_mult(*working_vector, *pressure_gradient[system_i]);
-    working_vector->add(*_HbyA_raw[system_i]);
-    working_vector->scale(-1.0);
-    (*_momentum_implicit_systems[system_i]->solution) = *working_vector;
-    _momentum_implicit_systems[system_i]->update();
-    _momentum_systems[system_i]->setSolution(
-        *_momentum_implicit_systems[system_i]->current_local_solution);
-  }
-
+  updateCellVelocity(pressureGradientComponents());
   _velocity_boundary_state_valid = false;
 }
 

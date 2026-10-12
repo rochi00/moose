@@ -67,6 +67,33 @@ protected:
    */
   virtual void postPreparePressureCorrectorState(const bool) {}
 
+  /**
+   * How many extra pressure solves the corrector performs to carry the explicit non-orthogonal
+   * correction. Zero means one solve, which is the only thing a mesh without non-orthogonality
+   * needs.
+   */
+  virtual unsigned int numPressureNonorthogonalCorrectors() const { return 0; }
+
+  /**
+   * Installs whatever a derived solve needs between two non-orthogonal pressure solves, so the
+   * next pass sees the gradients of the pressure the previous pass produced.
+   * @param final_nonorthogonal_corrector whether this was the last pressure solve
+   */
+  virtual void postPressureCorrectorSolve(const bool final_nonorthogonal_corrector) {}
+
+  /**
+   * Relaxes the solved pressure towards the field the next momentum predictor will use. Runs
+   * after the provider has formed its unrelaxed-pressure candidate and before the provider
+   * publishes relaxed feedback, so the ordering around it is load bearing.
+   */
+  virtual void relaxPressureForNextPredictor();
+
+  /**
+   * Lets a derived solve refresh state that depends on the published corrected velocity, which is
+   * only valid once the corrector has written it.
+   */
+  virtual void postPublishPressureCorrectedState() {}
+
   /// Computes new velocity field based on computed pressure gradients
   /// @param recompute_face_mass_flux If we want to recompute the face flux too
   /// @param solver_params Dummy solver parameter object for the linear solve

@@ -666,52 +666,78 @@ LinearAssemblySegregatedSolve::solveSolidEnergy()
   return residuals;
 }
 
+void
+LinearAssemblySegregatedSolve::relaxPressureForNextPredictor()
+{
+  auto & pressure_current_solution = *(_pressure_system.system().current_local_solution.get());
+  auto & pressure_old_solution = *(_pressure_system.solutionPreviousNewton());
+
+  // With one corrector per outer iteration the previous Newton solution *is* the previous outer
+  // iterate, so relaxing against it is the outer-iteration relaxation. An algorithm that runs
+  // several correctors per outer iteration has to keep its own reference state instead, because
+  // relaxation is an outer-iteration device rather than a per-corrector one.
+  NS::FV::relaxSolutionUpdate(
+      pressure_current_solution, pressure_old_solution, _pressure_variable_relaxation);
+
+  pressure_old_solution = pressure_current_solution;
+  _pressure_system.setSolution(pressure_current_solution);
+}
+
 std::pair<unsigned int, Real>
 LinearAssemblySegregatedSolve::correctVelocity(const bool recompute_face_mass_flux,
                                                const SolverParams & solver_params)
 {
-  // Compute the coupling fields between the momentum and pressure equations using the pressure
+  // One pressure corrector, as an ordered sequence of named stages. Everything that differs
+  // between the segregated algorithms is either a loop count that defaults to zero or a stage a
+  // derived solve overrides, so with the defaults this is exactly the plain SIMPLE corrector.
+
+  // 1. The coupling fields between the momentum and pressure equations, built from the pressure
   // gradient captured before the current momentum predictor was assembled.
   _rc_uo->computeHbyA(_print_fields);
 
-  // Whatever pressure-equation sources a derived solve owns have to be refreshed here, against
-  // the H/A just computed, or the pressure corrector is assembled without them.
+  // 2. Whatever pressure-equation sources a derived solve owns, refreshed against the H/A just
+  // computed. Without this the pressure corrector is assembled without them.
   postPreparePressureCorrectorState(true);
 
   // We set the preconditioner/controllable parameters for the pressure equations through
   // petsc options. Linear tolerances will be overridden within the solver.
   Moose::PetscSupport::petscSetOptions(_pressure_petsc_options, solver_params);
 
-  // Solve the pressure corrector
-  const auto residuals = solvePressureCorrector();
+  // 3. Solve the pressure equation, repeating it where the mesh needs explicit non-orthogonal
+  // correction: each pass re-solves against the gradients the previous pass installed.
+  std::pair<unsigned int, Real> residuals{0, std::numeric_limits<Real>::quiet_NaN()};
+  unsigned int total_linear_iterations = 0;
+  const auto nonorthogonal_correctors = numPressureNonorthogonalCorrectors();
+  for (const auto corrector : make_range(nonorthogonal_correctors + 1))
+  {
+    residuals = solvePressureCorrector();
+    total_linear_iterations += residuals.first;
+    postPressureCorrectorSolve(corrector == nonorthogonal_correctors);
+  }
+  residuals.first = total_linear_iterations;
 
-  // Compute the face velocity which is used in the advection terms. In certain
-  // segregated solver algorithms (like PISO) this is only done on the last iteration.
+  // 4. The corrected face mass flux, which the advection terms consume. Some algorithms (PISO)
+  // only need it on the last corrector.
   if (recompute_face_mass_flux)
     _rc_uo->computeFaceMassFlux();
 
-  // Reconstructed gradients use the unrelaxed pressure and its conservative face flux to form
-  // the candidate pressure gradient that corrects cell velocity exactly. Relaxed feedback is
-  // published below after the relaxed pressure solution has been computed. Here,
+  // 5. Reconstructed gradients use the unrelaxed pressure and its conservative face flux to form
+  // the candidate pressure gradient that corrects cell velocity exactly. Here,
   // mdot = [(rhoHbyA)_f - (rho/A)_f grad(p)_face] dot normal * S. Only the unrelaxed pressure
-  // makes div(mdot) = 0; using a relaxed pressure would leave a continuity residual.
+  // makes div(mdot) = 0; using a relaxed pressure would leave a continuity residual. This is why
+  // the relaxation below sits between two provider stages rather than before both.
   _rc_uo->preparePressureRelaxation();
 
-  auto & pressure_current_solution = *(_pressure_system.system().current_local_solution.get());
-  auto & pressure_old_solution = *(_pressure_system.solutionPreviousNewton());
+  // 6. Relax the pressure for the next momentum predictor.
+  relaxPressureForNextPredictor();
 
-  // Relax the pressure update for the next momentum predictor
-  NS::FV::relaxSolutionUpdate(
-      pressure_current_solution, pressure_old_solution, _pressure_variable_relaxation);
-
-  // Overwrite old solution
-  pressure_old_solution = pressure_current_solution;
-  _pressure_system.setSolution(pressure_current_solution);
-
-  // Refresh other registered pressure gradients from the relaxed pressure, then publish relaxed
-  // reconstructed coupling feedback for the next momentum predictor. Without reconstruction,
-  // preserve the existing update of cell velocity from the relaxed pressure gradient.
+  // 7. Refresh other registered pressure gradients from the relaxed pressure, publish relaxed
+  // reconstructed coupling feedback for the next momentum predictor, and write the corrected cell
+  // velocity.
   _rc_uo->finalizePressureCorrector();
+
+  // 8. Any provider state that depends on the published corrected velocity.
+  postPublishPressureCorrectedState();
 
   return residuals;
 }
