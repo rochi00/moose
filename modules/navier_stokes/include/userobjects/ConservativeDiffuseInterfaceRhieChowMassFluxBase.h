@@ -149,18 +149,11 @@ protected:
   computeDiscreteHydrostaticPredictorFaceNormalForceDensity(const FaceInfo * fi,
                                                             const Moose::StateArg & time_arg) const;
   bool surfaceTensionEnabled() const;
-  /// Binds the least-squares cell gradient operator to this object's mesh and coupled domain.
-  RealVectorValue leastSquaresCellGradient(const Moose::Functor<Real> & functor,
-                                           const ElemInfo & elem_info,
-                                           const Moose::StateArg & time_arg) const;
-  Real computeLeastSquaresCellInterfaceCurvature(const ElemInfo & elem_info,
-                                                 const Moose::StateArg & time_arg) const;
-  RealVectorValue
-  computeLeastSquaresCellSurfaceTensionForceDensity(const ElemInfo & elem_info,
-                                                    const Moose::StateArg & time_arg) const;
-  Real
-  computeLeastSquaresSurfaceTensionFaceNormalForceDensity(const FaceInfo * fi,
-                                                          const Moose::StateArg & time_arg) const;
+  /// The published capillary force, zeroed while the startup projection suppresses flux sources.
+  RealVectorValue surfaceTensionForceDensity(const ElemInfo & elem_info,
+                                             const Moose::StateArg & time_arg) const;
+  Real surfaceTensionFaceNormalForceDensity(const FaceInfo * fi,
+                                            const Moose::StateArg & time_arg) const;
   void updatePressureCoupledVelocityCorrectionFaceField(const Moose::StateArg & time_arg);
   RealVectorValue
   reconstructFaceNormalScalarToCellVector(const ElemInfo * elem_info,
@@ -185,12 +178,10 @@ protected:
   const Point _reference_pressure_point;
 
   const MooseFunctorName _vof_rho_phi_name;
-  const MooseFunctorName _surface_tension_coefficient_name;
-  const MooseFunctorName _surface_tension_volume_fraction_name;
+  const MooseFunctorName _surface_tension_force_name;
 
   const Moose::Functor<Real> * _vof_rho_phi;
-  const Moose::Functor<Real> * _surface_tension_coefficient = nullptr;
-  const Moose::Functor<Real> * _surface_tension_volume_fraction = nullptr;
+  const Moose::Functor<RealVectorValue> * _surface_tension_force = nullptr;
   bool _corrected_face_phi_seeded = false;
   bool _suppress_explicit_hydrostatic_pressure_flux = false;
   bool _suppress_startup_pressure_predictor_flux_sources = false;

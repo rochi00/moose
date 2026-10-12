@@ -27,6 +27,14 @@ namespace NS
 const FaceInfo *
 faceInfoForElementSide(const MooseMesh & mesh, const Elem * elem, const unsigned int side);
 
+/// The measure of a face: its area times the coordinate factor, so it is a length in 2D Cartesian
+/// and an area in 3D, and carries the axisymmetric factor where one applies.
+inline Real
+faceMeasure(const FaceInfo & fi)
+{
+  return fi.faceArea() * fi.faceCoord();
+}
+
 /**
  * A functor's value on a face: a geometrically weighted average of the two cell values across an
  * internal face, and a one-sided evaluation on a boundary face.

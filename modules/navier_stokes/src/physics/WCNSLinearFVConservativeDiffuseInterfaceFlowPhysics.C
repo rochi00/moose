@@ -252,9 +252,8 @@ WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::setRhieChowUserObjectParams
                  "Surface tension requires the volume-fraction functor used by the least-squares "
                  "CSF curvature operator.");
 
-    params.set<MooseFunctorName>("surface_tension_coefficient") = surface_tension_coefficient;
-    params.set<MooseFunctorName>("surface_tension_volume_fraction_functor") =
-        volume_fraction_functor;
+    params.set<MooseFunctorName>("surface_tension_force_density_functor") =
+        generatedGeometryFunctorName("surface_tension_force_density");
   }
 }
 
@@ -269,6 +268,9 @@ void
 WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::addFunctorMaterials()
 {
   WCNSLinearFVFlowPhysics::addFunctorMaterials();
+
+  // Surface tension is independent of the geometry functors, so it is created either way.
+  addSurfaceTensionFunctorMaterial();
 
   if (!shouldCreateGeometryFunctorMaterial())
   {
@@ -302,6 +304,30 @@ WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::addFunctorMaterials()
   params.set<MooseFunctorName>("interface_unit_normal_name") =
       generatedGeometryFunctorName("interface_unit_normal_face");
   getProblem().addFunctorMaterial(class_name, prefix() + "diffuse_interface_geometry", params);
+}
+
+void
+WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::addSurfaceTensionFunctorMaterial()
+{
+  const auto surface_tension_coefficient =
+      getParam<MooseFunctorName>("surface_tension_coefficient");
+  if (surface_tension_coefficient.empty())
+    return;
+
+  const std::string class_name = "ConservativeDiffuseInterfaceSurfaceTensionFunctorMaterial";
+  auto params = getFactory().getValidParams(class_name);
+  assignBlocks(params, _blocks);
+
+  params.set<MooseFunctorName>("volume_fraction_functor") =
+      getParam<MooseFunctorName>("volume_fraction_functor");
+  params.set<MooseFunctorName>("surface_tension_coefficient") = surface_tension_coefficient;
+  params.set<MooseFunctorName>("interface_curvature_name") =
+      generatedGeometryFunctorName("interface_curvature");
+  params.set<MooseFunctorName>("surface_tension_force_density_name") =
+      generatedGeometryFunctorName("surface_tension_force_density");
+
+  getProblem().addFunctorMaterial(
+      class_name, prefix() + "diffuse_interface_surface_tension", params);
 }
 
 unsigned short

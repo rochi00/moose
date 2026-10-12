@@ -34,7 +34,6 @@
 namespace
 {
 constexpr Real pressure_writeback_face_ainv_relative_tolerance = 1e-4;
-constexpr Real surface_tension_normal_regularization = 1e-14;
 
 template <typename FaceNormalScalar>
 RealVectorValue
@@ -152,15 +151,11 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::validParams()
       Point(0, 0, 0),
       "Reference point used to compute the reduced-pressure head gh = g.(x-x_ref).");
   params.addParam<MooseFunctorName>(
-      "surface_tension_coefficient",
+      "surface_tension_force_density_functor",
       "",
-      "Optional surface-tension coefficient functor. When supplied together with "
-      "surface_tension_volume_fraction_functor, the diffuse-interface pressure coupling includes "
-      "the least-squares CSF capillary force sigma*kappa*grad(alpha).");
-  params.addParam<MooseFunctorName>("surface_tension_volume_fraction_functor",
-                                    "",
-                                    "Volume-fraction functor used to compute the least-squares "
-                                    "alpha gradient and curvature for surface tension.");
+      "Optional surface tension force density functor sigma*kappa*grad(alpha), as published by "
+      "ConservativeDiffuseInterfaceSurfaceTensionFunctorMaterial. When supplied, the "
+      "diffuse-interface pressure coupling carries the capillary force.");
   params.set<MooseEnum>("pressure_projection_method") =
       MooseEnum("standard consistent", "consistent");
 
@@ -179,9 +174,8 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::ConservativeDiffuseInterfaceRh
     _gravity(getParam<RealVectorValue>("gravity")),
     _reference_pressure_point(getParam<Point>("reference_pressure_point")),
     _vof_rho_phi_name(getParam<MooseFunctorName>("vof_rho_phi_functor")),
-    _surface_tension_coefficient_name(getParam<MooseFunctorName>("surface_tension_coefficient")),
-    _surface_tension_volume_fraction_name(
-        getParam<MooseFunctorName>("surface_tension_volume_fraction_functor")),
+    _surface_tension_force_name(
+        getParam<MooseFunctorName>("surface_tension_force_density_functor")),
     _vof_rho_phi(nullptr)
 {
   for (const auto tid : make_range(libMesh::n_threads()))
@@ -251,7 +245,7 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::reducedPressureMomentumPredict
         return true;
       });
 
-  force_density += computeLeastSquaresCellSurfaceTensionForceDensity(elem_info, time_arg);
+  force_density += surfaceTensionForceDensity(elem_info, time_arg);
 
   return force_density;
 }
@@ -504,20 +498,8 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::initialSetup()
     paramError("vof_rho_phi_functor",
                "The conservative diffuse-interface path requires the VOF-owned rhoPhi functor.");
 
-  const bool any_surface_tension_param =
-      !_surface_tension_coefficient_name.empty() || !_surface_tension_volume_fraction_name.empty();
-  const bool all_surface_tension_params =
-      !_surface_tension_coefficient_name.empty() && !_surface_tension_volume_fraction_name.empty();
-  if (any_surface_tension_param && !all_surface_tension_params)
-    paramError("surface_tension_coefficient",
-               "Surface tension requires both surface_tension_coefficient and "
-               "surface_tension_volume_fraction_functor.");
-
-  if (all_surface_tension_params)
-  {
-    _surface_tension_coefficient = &getFunctor<Real>(_surface_tension_coefficient_name);
-    _surface_tension_volume_fraction = &getFunctor<Real>(_surface_tension_volume_fraction_name);
-  }
+  if (!_surface_tension_force_name.empty())
+    _surface_tension_force = &getFunctor<RealVectorValue>(_surface_tension_force_name);
 }
 
 void
@@ -825,120 +807,35 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::
 bool
 ConservativeDiffuseInterfaceRhieChowMassFluxBase::surfaceTensionEnabled() const
 {
-  return _surface_tension_coefficient && _surface_tension_volume_fraction;
+  return _surface_tension_force;
 }
 
 RealVectorValue
-ConservativeDiffuseInterfaceRhieChowMassFluxBase::leastSquaresCellGradient(
-    const Moose::Functor<Real> & functor,
-    const ElemInfo & elem_info,
-    const Moose::StateArg & time_arg) const
+ConservativeDiffuseInterfaceRhieChowMassFluxBase::surfaceTensionForceDensity(
+    const ElemInfo & elem_info, const Moose::StateArg & time_arg) const
 {
-  return NS::leastSquaresCellGradient(
-      functor,
-      elem_info,
-      _moose_mesh,
-      _dim,
-      [this](const FaceInfo & fi) { return _vel[0]->isInternalFace(fi); },
-      time_arg);
+  // The force itself belongs to a functor material. What belongs here is only whether this
+  // corrector may use it, which is startup projection state no material can see.
+  if (!surfaceTensionEnabled() || _suppress_startup_pressure_predictor_flux_sources ||
+      !elem_info.elem())
+    return RealVectorValue();
+
+  return (*_surface_tension_force)(makeElemArg(elem_info.elem()), time_arg);
 }
 
 Real
-ConservativeDiffuseInterfaceRhieChowMassFluxBase::computeLeastSquaresCellInterfaceCurvature(
-    const ElemInfo & elem_info, const Moose::StateArg & time_arg) const
-{
-  if (!surfaceTensionEnabled())
-    return 0.0;
-
-  const Elem * const elem = elem_info.elem();
-  if (!elem)
-    return 0.0;
-
-  const Real cell_volume = elem_info.volume() * elem_info.coordFactor();
-  if (cell_volume <= libMesh::TOLERANCE)
-    return 0.0;
-
-  const RealVectorValue elem_gradient =
-      leastSquaresCellGradient(*_surface_tension_volume_fraction, elem_info, time_arg);
-
-  Real interface_normal_flux = 0.0;
-  for (const auto side : make_range(elem->n_sides()))
-  {
-    const FaceInfo * const fi_loc = NS::faceInfoForElementSide(_moose_mesh, elem, side);
-    if (!fi_loc)
-      continue;
-
-    RealVectorValue face_gradient = elem_gradient;
-    if (_vel[0]->isInternalFace(*fi_loc))
-    {
-      const ElemInfo * const neighbor_info =
-          fi_loc->elemPtr() == elem ? fi_loc->neighborInfo() : fi_loc->elemInfo();
-      const RealVectorValue neighbor_gradient =
-          leastSquaresCellGradient(*_surface_tension_volume_fraction, *neighbor_info, time_arg);
-      Moose::FV::interpolate(Moose::FV::InterpMethod::Average,
-                             face_gradient,
-                             elem_gradient,
-                             neighbor_gradient,
-                             *fi_loc,
-                             fi_loc->elemPtr() == elem);
-    }
-
-    const Real gradient_norm = face_gradient.norm();
-    const RealVectorValue interface_normal =
-        face_gradient / (gradient_norm + surface_tension_normal_regularization);
-    const Real orientation = fi_loc->elemPtr() == elem ? 1.0 : -1.0;
-    const RealVectorValue outward_normal = orientation * fi_loc->normal();
-    interface_normal_flux += faceMeasure(*fi_loc) * (interface_normal * outward_normal);
-  }
-
-  return -interface_normal_flux / cell_volume;
-}
-
-RealVectorValue
-ConservativeDiffuseInterfaceRhieChowMassFluxBase::computeLeastSquaresCellSurfaceTensionForceDensity(
-    const ElemInfo & elem_info, const Moose::StateArg & time_arg) const
-{
-  if (!surfaceTensionEnabled() || _suppress_startup_pressure_predictor_flux_sources)
-    return RealVectorValue();
-
-  const Elem * const elem = elem_info.elem();
-  if (!elem)
-    return RealVectorValue();
-
-  const Real sigma = (*_surface_tension_coefficient)(makeElemArg(elem), time_arg);
-  if (sigma == 0.0)
-    return RealVectorValue();
-
-  const RealVectorValue alpha_gradient =
-      leastSquaresCellGradient(*_surface_tension_volume_fraction, elem_info, time_arg);
-  const Real curvature = computeLeastSquaresCellInterfaceCurvature(elem_info, time_arg);
-
-  return sigma * curvature * alpha_gradient;
-}
-
-Real
-ConservativeDiffuseInterfaceRhieChowMassFluxBase::
-    computeLeastSquaresSurfaceTensionFaceNormalForceDensity(const FaceInfo * fi,
-                                                            const Moose::StateArg & time_arg) const
+ConservativeDiffuseInterfaceRhieChowMassFluxBase::surfaceTensionFaceNormalForceDensity(
+    const FaceInfo * fi, const Moose::StateArg & time_arg) const
 {
   if (!fi || !surfaceTensionEnabled() || _suppress_startup_pressure_predictor_flux_sources)
     return 0.0;
 
-  if (_vel[0]->isInternalFace(*fi))
-  {
-    const RealVectorValue elem_force =
-        computeLeastSquaresCellSurfaceTensionForceDensity(*fi->elemInfo(), time_arg);
-    const RealVectorValue neighbor_force =
-        computeLeastSquaresCellSurfaceTensionForceDensity(*fi->neighborInfo(), time_arg);
-    RealVectorValue face_force;
-    Moose::FV::interpolate(
-        Moose::FV::InterpMethod::Average, face_force, elem_force, neighbor_force, *fi, true);
-    return face_force * fi->normal();
-  }
-
-  const RealVectorValue cell_force =
-      computeLeastSquaresCellSurfaceTensionForceDensity(boundaryElemInfo(fi), time_arg);
-  return cell_force * fi->normal();
+  // An interior face averages the two cell forces; a boundary face names the side that owns the
+  // cell quantity, since there is no second cell to average with.
+  const bool internal = _vel[0]->isInternalFace(*fi);
+  const Moose::FaceArg face_arg =
+      makeCenteredFaceArg(fi, internal ? nullptr : boundaryElemInfo(fi).elem());
+  return (*_surface_tension_force)(face_arg, time_arg) * fi->normal();
 }
 
 void
@@ -996,7 +893,7 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::updateAdditionalPressureFluxFu
         hydrostatic_flux = -ghf * sn_grad_rho * normal_pressure_ainv;
       }
 
-      surface_tension_flux = computeLeastSquaresSurfaceTensionFaceNormalForceDensity(fi, time_arg) *
+      surface_tension_flux = surfaceTensionFaceNormalForceDensity(fi, time_arg) *
                              normal_pressure_ainv;
     }
 
