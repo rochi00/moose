@@ -378,24 +378,13 @@ LinearAssemblySegregatedSolve::solveMomentumPredictor()
 
   for (const auto system_i : index_range(_momentum_systems))
   {
-    _problem.setCurrentLinearSystem(_momentum_system_numbers[system_i]);
-
-    // We will need the right hand side and the solution of the next component
-    LinearImplicitSystem & momentum_system =
-        cast_ref<LinearImplicitSystem &>(_momentum_systems[system_i]->system());
-
-    NumericVector<Number> & solution = *(momentum_system.solution);
-    NumericVector<Number> & rhs = *(momentum_system.rhs);
-    SparseMatrix<Number> & mmat = *(momentum_system.matrix);
-
-    auto diff_diagonal = solution.zero_clone();
-
-    // We assemble the matrix and the right hand side
-    _problem.computeLinearSystemSys(momentum_system, mmat, rhs, /*compute_grads*/ true);
-
-    // Still need to relax the right hand side with the same vector
-    NS::FV::relaxMatrix(mmat, _momentum_equation_relaxation, *diff_diagonal);
-    NS::FV::relaxRightHandSide(rhs, solution, *diff_diagonal);
+    // Assemble and relax through the shared routine, so that a split predictor operator also
+    // receives its explicit pressure and body-force sources here.
+    const auto assembly = assembleMomentumPredictorOperator(system_i);
+    LinearImplicitSystem & momentum_system = *assembly.system;
+    NumericVector<Number> & solution = *assembly.solution;
+    NumericVector<Number> & rhs = *assembly.rhs;
+    SparseMatrix<Number> & mmat = *assembly.matrix;
 
     // The normalization factor depends on the right hand side so we need to recompute it for this
     // component
