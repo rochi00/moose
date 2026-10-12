@@ -47,7 +47,7 @@ tracer_patch_y = ${fparse 0.75 * dam_y}
 
 [Physics]
   [NavierStokes]
-    [ConservativeSharpInterfaceFlowSegregated]
+    [ConservativeDiffuseInterfaceFlowSegregated]
       [flow]
         velocity_variable = 'vel_x vel_y'
         pressure_variable = 'pressure'
@@ -74,7 +74,7 @@ tracer_patch_y = ${fparse 0.75 * dam_y}
         momentum_advection_interpolation = 'upwind'
       []
     []
-    [ConservativeSharpInterfaceVOFSegregated]
+    [ConservativeDiffuseInterfaceVOFSegregated]
       [vof]
         coupled_flow_physics = 'flow'
         passive_scalar_names = 'alpha'
