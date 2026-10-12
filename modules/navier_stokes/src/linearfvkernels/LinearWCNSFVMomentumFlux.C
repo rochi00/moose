@@ -42,6 +42,16 @@ LinearWCNSFVMomentumFlux::validParams()
   params.addParam<bool>(
       "use_deviatoric_terms", false, "If deviatoric terms in the stress terms need to be used.");
 
+  params.addParam<MooseFunctorName>(
+      "mass_flux_functor",
+      "An externally computed face mass flux to advect momentum with, in place of the one from the "
+      "Rhie-Chow object. Supply it to keep momentum advection consistent with a separately "
+      "advanced mass flux, as the diffuse-interface volume fraction transport does.");
+  params.addParam<bool>(
+      "mass_flux_is_integrated",
+      false,
+      "Whether the supplied mass_flux_functor already includes the face area. When true, the "
+      "kernel divides it by the current face area to recover a flux density.");
   params.addRequiredParam<InterpolationMethodName>(
       "advected_interp_method_name",
       "Name of the FVInterpolationMethod to use for the advected velocity.");
@@ -53,6 +63,9 @@ LinearWCNSFVMomentumFlux::LinearWCNSFVMomentumFlux(const InputParameters & param
     FVInterpolationMethodInterface(this),
     _dim(_subproblem.mesh().dimension()),
     _mass_flux_provider(getUserObject<RhieChowMassFlux>("rhie_chow_user_object")),
+    _mass_flux_functor(isParamValid("mass_flux_functor") ? &getFunctor<Real>("mass_flux_functor")
+                                                         : nullptr),
+    _mass_flux_is_integrated(getParam<bool>("mass_flux_is_integrated")),
     _mu(getFunctor<Real>(getParam<MooseFunctorName>(NS::mu))),
     _use_nonorthogonal_correction(getParam<bool>("use_nonorthogonal_correction")),
     _use_deviatoric_terms(getParam<bool>("use_deviatoric_terms")),
@@ -423,7 +436,18 @@ LinearWCNSFVMomentumFlux::setupFaceData(const FaceInfo * face_info)
 
   // Caching the mass flux on the face which will be reused in the advection term's matrix and
   // right hand side contributions
-  _face_mass_flux = _mass_flux_provider.getMassFlux(*face_info);
+  if (_mass_flux_functor)
+  {
+    const auto state = determineState();
+    const Moose::FaceArg face_arg = (_current_face_type == FaceInfo::VarFaceNeighbors::BOTH)
+                                        ? makeCDFace(*_current_face_info)
+                                        : singleSidedFaceArg(_current_face_info);
+    _face_mass_flux = (*_mass_flux_functor)(face_arg, state);
+    if (_mass_flux_is_integrated)
+      _face_mass_flux = _current_face_area > 0.0 ? _face_mass_flux / _current_face_area : 0.0;
+  }
+  else
+    _face_mass_flux = _mass_flux_provider.getMassFlux(*face_info);
 
   if (_current_face_type == FaceInfo::VarFaceNeighbors::BOTH)
   {
