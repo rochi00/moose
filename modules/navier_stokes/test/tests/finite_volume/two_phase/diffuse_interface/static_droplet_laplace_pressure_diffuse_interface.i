@@ -302,7 +302,4 @@ interface_width = 0.015625
   [csv]
     type = CSV
   []
-  [exodus]
-    type = Exodus
-  []
 []

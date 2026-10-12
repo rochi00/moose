@@ -301,7 +301,4 @@ c_alpha = 0.0
   [csv]
     type = CSV
   []
-  [exodus]
-    type = Exodus
-  []
 []

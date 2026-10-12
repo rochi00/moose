@@ -1,0 +1,3 @@
+time,alpha_max,alpha_min,inside_pressure_integral,inside_pressure_mean,inside_sample_volume,liquid_volume,liquid_volume_error,max_speed,outside_pressure_integral,outside_pressure_mean,outside_sample_volume,pressure_jump,pressure_jump_relative_error
+0,1,0,0,0,0.1279296875,0.1982421875,0.0096391702392111,0,0,0,0.716796875,0,1
+0.0001,1,0,0.40180917625285,3.1408595151368,0.1279296875,0.1982421875,0.0096391702392111,0.061765294106954,0.001180482618103,0.0016468858323399,0.716796875,3.1392126293044,0.2151968426739

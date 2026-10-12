@@ -1,0 +1,21 @@
+[Tests]
+  design = 'sharp_interface_dam_break_algorithm.md'
+  [static_droplet_laplace_pressure_diffuse]
+    type = CSVDiff
+    input = 'static_droplet_laplace_pressure_diffuse_interface.i'
+    csvdiff = 'static_droplet_laplace_pressure_diffuse_interface_csv.csv'
+    requirement = 'The system shall reproduce the Young-Laplace pressure jump across a static '
+                  'diffuse interface, hold the volume fraction within its physical bounds, and '
+                  'keep the parasitic velocity small, using the conservative diffuse-interface '
+                  'volume-of-fluid formulation.'
+    max_threads = 1 # see libmesh issue #3808
+  []
+  [static_droplet_laplace_pressure_sharp]
+    type = CSVDiff
+    input = 'static_droplet_laplace_pressure.i'
+    csvdiff = 'static_droplet_laplace_pressure_csv.csv'
+    requirement = 'The system shall generate a capillary pressure jump across a static interface '
+                  'initialized without a diffuse profile and without interface compression.'
+    max_threads = 1 # see libmesh issue #3808
+  []
+[]
