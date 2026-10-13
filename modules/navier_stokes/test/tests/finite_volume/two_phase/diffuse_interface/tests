@@ -37,4 +37,14 @@
                   'first moment at the analytic rate.'
     max_threads = 1 # see libmesh issue #3808
   []
+  [hydrostatic_interface]
+    type = CSVDiff
+    input = 'hydrostatic_interface.i'
+    csvdiff = 'hydrostatic_interface_csv.csv'
+    requirement = 'The system shall hold a flat horizontal interface between two fluids at rest '
+                  'under gravity, so that the reduced-pressure coupling cancels the buoyancy '
+                  'source and the spurious velocity decays by two orders of magnitude to a small '
+                  'residual floor.'
+    max_threads = 1 # see libmesh issue #3808
+  []
 []
