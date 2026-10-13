@@ -30,7 +30,10 @@ private:
   void addScalarAdvectionKernels() override;
   void addScalarDiffusionKernels() override {}
   void addScalarSourceKernels() override {}
-  void addScalarInletBC() override {}
+  /// A volume fraction prescribed at an inlet is the inherited fixed-value condition; the
+  /// diffuse-interface path needs nothing added to it. A wall carries no volume fraction
+  /// condition, so that one stays empty.
+  void addScalarInletBC() override { WCNSLinearFVScalarTransportPhysics::addScalarInletBC(); }
   void addScalarWallBC() override {}
   void addScalarOutletBC() override;
 

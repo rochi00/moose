@@ -28,4 +28,13 @@
                   'indicator cannot reproduce.'
     max_threads = 1 # see libmesh issue #3808
   []
+  [vof_advection]
+    type = CSVDiff
+    input = 'vof_advection.i'
+    csvdiff = 'vof_advection_csv.csv'
+    requirement = 'The system shall translate a volume fraction slab at the prescribed uniform '
+                  'velocity of a single-density flow, conserving its integral and advancing its '
+                  'first moment at the analytic rate.'
+    max_threads = 1 # see libmesh issue #3808
+  []
 []
