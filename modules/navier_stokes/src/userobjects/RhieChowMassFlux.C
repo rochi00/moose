@@ -163,16 +163,24 @@ RhieChowMassFlux::RhieChowMassFlux(const InputParameters & params)
                   "phiHbyA_flux",
                   [this](const FaceInfo & fi)
                   {
-                    return libmesh_map_find(_pressure_predictor_base_flux, fi.id()) -
-                           libmesh_map_find(_phig_flux, fi.id());
+                    // Total by construction: a face the predictor has not reached reads as zero,
+                    // which is what the stored field gave once zero-initialised.
+                    const auto at = [&fi](const auto & field)
+                    {
+                      const auto it = field.find(fi.id());
+                      return it == field.end() ? 0.0 : it->second;
+                    };
+                    return at(_pressure_predictor_base_flux) - at(_phig_flux);
                   }),
     _pressure_predictor_flux(_moose_mesh,
                              blockIDs(),
                              "pressure_predictor_flux",
                              [this](const FaceInfo & fi)
                              {
+                               const auto & adj = _pressure_predictor_flux_adjustment;
+                               const auto it = adj.find(fi.id());
                                return _phiHbyA_flux.evaluate(&fi) +
-                                      libmesh_map_find(_pressure_predictor_flux_adjustment, fi.id());
+                                      (it == adj.end() ? 0.0 : it->second);
                              }),
     _phig_flux(_moose_mesh, blockIDs(), "phig_flux"),
     _Ainv(_moose_mesh, blockIDs(), "Ainv"),

@@ -165,7 +165,10 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::validParams()
 ConservativeDiffuseInterfaceRhieChowMassFluxBase::ConservativeDiffuseInterfaceRhieChowMassFluxBase(
     const InputParameters & params)
   : RhieChowMassFlux(params),
-    _corrected_face_phi(_moose_mesh, blockIDs(), "corrected_face_phi"),
+    _corrected_face_phi(_moose_mesh,
+                        blockIDs(),
+                        "corrected_face_phi",
+                        [this](const FaceInfo & fi) { return correctedTransportPhi(fi); }),
     _previous_timestep_corrected_face_phi(
         _moose_mesh, blockIDs(), "previous_timestep_corrected_face_phi"),
     _vof_transport_phi(_moose_mesh, blockIDs(), "vof_transport_phi"),
@@ -207,12 +210,8 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::getMassFlux(const FaceInfo & f
 void
 ConservativeDiffuseInterfaceRhieChowMassFluxBase::commitAcceptedTimestepTransportHistory()
 {
-  if (!_corrected_face_phi_seeded)
-    cacheCurrentCorrectedVolumetricFlux();
-
   for (const auto * fi : flowFaceInfo())
-    _previous_timestep_corrected_face_phi[fi->id()] =
-        libmesh_map_find(_corrected_face_phi, fi->id());
+    _previous_timestep_corrected_face_phi[fi->id()] = _corrected_face_phi.evaluate(fi);
 }
 
 Real
@@ -263,7 +262,7 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::predictorVelocityComponent(
 Real
 ConservativeDiffuseInterfaceRhieChowMassFluxBase::getVolumetricFaceFlux(const FaceInfo & fi) const
 {
-  return libmesh_map_find(_corrected_face_phi, fi.id());
+  return _corrected_face_phi.evaluate(&fi);
 }
 
 void
@@ -272,14 +271,11 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::initializeAdditionalPressureFl
 {
   for (const auto * fi : _fe_problem.mesh().faceInfo())
   {
-    if (!preserve_corrected_face_phi)
-      _corrected_face_phi[fi->id()] = 0.0;
     _previous_timestep_corrected_face_phi[fi->id()] = 0.0;
     _vof_transport_phi[fi->id()] = 0.0;
     _pressure_coupled_cell_reconstruction_scalar[fi->id()] = 0.0;
   }
 
-  _corrected_face_phi_seeded = preserve_corrected_face_phi && _corrected_face_phi_seeded;
   _pressure_coupled_velocity_correction_valid = false;
 }
 
@@ -380,6 +376,39 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::pressureFaceNormalAinv(
   return computeFaceNormalAinv(pressure_face_rau, fi->normal());
 }
 
+Real
+ConservativeDiffuseInterfaceRhieChowMassFluxBase::correctedTransportPhi(const FaceInfo & fi) const
+{
+  // The corrected transport flux is the predictor flux plus whatever the pressure equation added,
+  // both of which the provider already holds. Expressing it rather than storing it means a
+  // consumer cannot read a value that was correct for an earlier predictor state: that staleness
+  // is what let a transient outlet backflow decision persist.
+  // A face the flux fields have not reached yet reads as no flux, which is what the stored field
+  // used to give once it had been zero-initialised. Keeping the definition total means the early
+  // calls during initialisation behave as they did.
+  const auto face_flux_of = [&fi](const auto & field)
+  {
+    const auto it = field.find(fi.id());
+    return it == field.end() ? 0.0 : it->second;
+  };
+
+  if (!_pressure_predictor_face_state_valid)
+  {
+    const Real face_rho = predictorFaceDensity(&fi, Moose::currentState());
+    return std::abs(face_rho) > libMesh::TOLERANCE ? face_flux_of(_face_mass_flux) / face_rho : 0.0;
+  }
+
+  const Real face_measure = faceMeasure(fi);
+  if (face_measure <= libMesh::TOLERANCE)
+    return 0.0;
+
+  // The diffuse pressure equation stores area-integrated phi; transport wants a flux density.
+  const Real predictor_phi = -_phiHbyA_flux.evaluate(&fi) / face_measure;
+  const Real pressure_equation_phi =
+      _pressure_equation_flux_valid ? face_flux_of(_pressure_equation_flux) / face_measure : 0.0;
+  return predictor_phi + pressure_equation_phi;
+}
+
 ConservativeDiffuseInterfaceRhieChowMassFluxBase::PressureVelocityFaceState
 ConservativeDiffuseInterfaceRhieChowMassFluxBase::pressureVelocityFaceState(
     const FaceInfo * fi,
@@ -391,6 +420,7 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::pressureVelocityFaceState(
     return state;
 
   state.predictor_valid = _pressure_predictor_face_state_valid;
+  state.corrected_transport_phi = correctedTransportPhi(*fi);
   if (state.predictor_valid)
   {
     const Real face_measure = faceMeasure(*fi);
@@ -408,21 +438,12 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::pressureVelocityFaceState(
     const Real phig_phi = integratedToVolumetricPhi(libmesh_map_find(_phig_flux, fi->id()));
     state.pressure_writeback_phi =
         _pressure_equation_flux_valid ? state.pressure_equation_phi + phig_phi : 0.0;
-    state.corrected_transport_phi = state.predictor_transport_phi + state.pressure_equation_phi;
-
     state.normal_pressure_ainv = pressureFaceNormalAinv(fi, time_arg);
     state.writeback_reconstruction_scalar =
         (std::isfinite(state.normal_pressure_ainv) &&
                  std::abs(state.normal_pressure_ainv) > degenerate_normal_pressure_ainv_tol
              ? state.pressure_writeback_phi / state.normal_pressure_ainv
              : 0.0);
-  }
-  else
-  {
-    const Real face_rho = predictorFaceDensity(fi, time_arg);
-    state.corrected_transport_phi = std::abs(face_rho) > libMesh::TOLERANCE
-                                        ? libmesh_map_find(_face_mass_flux, fi->id()) / face_rho
-                                        : 0.0;
   }
 
   return state;
@@ -456,24 +477,19 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::cacheCurrentCorrectedVolumetri
     // predictor flux plus the pressure-equation flux. This face flux is authoritative for
     // continuity/transport. The reconstructed cell velocity below is only the cell-centered
     // velocity writeback branch and is not projected back to overwrite this face flux.
-    _corrected_face_phi[fi->id()] = state.corrected_transport_phi;
     _pressure_coupled_cell_reconstruction_scalar[fi->id()] = state.writeback_reconstruction_scalar;
   }
-  _corrected_face_phi_seeded = true;
 }
 
 void
 ConservativeDiffuseInterfaceRhieChowMassFluxBase::freezeVOFTransportState(
     const bool use_previous_timestep_flux)
 {
-  if (!_corrected_face_phi_seeded)
-    cacheCurrentCorrectedVolumetricFlux();
-
   for (const auto * fi : flowFaceInfo())
     _vof_transport_phi[fi->id()] =
         use_previous_timestep_flux
             ? libmesh_map_find(_previous_timestep_corrected_face_phi, fi->id())
-            : libmesh_map_find(_corrected_face_phi, fi->id());
+            : _corrected_face_phi.evaluate(fi);
 }
 
 void
@@ -552,7 +568,7 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::computeFaceMassFlux()
     // Keep the pressure-corrected face flux as the source of truth. Do not reconstruct cell U and
     // project it back to faces here; that round trip is not an exact inverse.
     _face_mass_flux[fi->id()] = transportMassFluxDensityFromVolumetricPhi(
-        fi, libmesh_map_find(_corrected_face_phi, fi->id()), time_arg);
+        fi, _corrected_face_phi.evaluate(fi), time_arg);
   }
 }
 

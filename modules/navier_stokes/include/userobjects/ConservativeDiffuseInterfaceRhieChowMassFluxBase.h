@@ -106,6 +106,7 @@ protected:
 
   void initializeAdditionalPressureFluxStorage(const bool preserve_corrected_face_phi = false);
   void writePressureCorrectedVelocityToMomentumSolution(const Moose::StateArg & time_arg);
+  Real correctedTransportPhi(const FaceInfo & fi) const;
   void cacheCurrentCorrectedVolumetricFlux(const Real degenerate_normal_pressure_ainv_tol = 0.0);
   PressureVelocityFaceState
   pressureVelocityFaceState(const FaceInfo * fi,
@@ -168,7 +169,7 @@ protected:
   bool tracksOwnVolumetricFaceFlux() const override { return true; }
 
   bool useConstrainedBoundaryPredictorState(const FaceInfo * fi) const override;
-  FaceScalarField _corrected_face_phi;
+  DerivedFaceFunctor<Real> _corrected_face_phi;
   FaceScalarField _previous_timestep_corrected_face_phi;
   FaceScalarField _vof_transport_phi;
   FaceScalarField _pressure_coupled_cell_reconstruction_scalar;
@@ -181,7 +182,6 @@ protected:
 
   const Moose::Functor<Real> * _vof_rho_phi;
   const Moose::Functor<RealVectorValue> * _surface_tension_force = nullptr;
-  bool _corrected_face_phi_seeded = false;
   bool _suppress_explicit_hydrostatic_pressure_flux = false;
   bool _suppress_startup_pressure_predictor_flux_sources = false;
   bool _pressure_coupled_velocity_correction_valid = false;
