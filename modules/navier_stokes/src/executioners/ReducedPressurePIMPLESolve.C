@@ -647,13 +647,17 @@ ReducedPressurePIMPLESolve::runOneVolumeFractionSubcycle(
 
   // This path bounds alpha through the limited face fluxes instead of projecting the solved field.
   // Do not apply the inherited scalar lower limiter here.
-  const auto residual = solveAdvectedSystem(_active_scalar_system_numbers[i],
-                                            system,
-                                            _active_scalar_equation_relaxation[i],
-                                            _active_scalar_linear_control,
-                                            _active_scalar_l_abs_tol,
-                                            1.0,
-                                            std::numeric_limits<Real>::min());
+  const auto residual =
+      solveAdvectedSystem(_active_scalar_system_numbers[i],
+                          system,
+                          _active_scalar_equation_relaxation[i],
+                          _active_scalar_linear_control,
+                          _active_scalar_l_abs_tol,
+                          (_active_scalar_pc_solve_counter % _active_scalar_pc_recompute_frequency)
+                              != 0,
+                          /* field_relaxation = */ 1.0,
+                          /* min_value_limiter = */ std::numeric_limits<Real>::min());
+  ++_active_scalar_pc_solve_counter;
   system.computeGradients();
   corrector.applyCorrection(subcycle_dt, subcycle_dt / global_dt);
 
