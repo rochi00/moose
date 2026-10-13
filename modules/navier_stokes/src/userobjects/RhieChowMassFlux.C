@@ -1875,6 +1875,25 @@ RhieChowMassFlux::updatePressureBoundaryNormalGradients(const bool apply_pressur
     _pressure_boundary_normal_gradient[fi->id()] = -required_pressure_flux_density / normal_ainv;
   }
 
+  // _pressure_predictor_flux is assigned from three different expressions across this class and
+  // the diffuse-interface override, and the relation that ties them together is the whole contract
+  // the constrained pressure BCs rely on. State it here so a divergence fails loudly instead of
+  // propagating into the boundary gradient.
+#ifndef NDEBUG
+  for (const auto * fi : _flow_face_info)
+  {
+    const Real expected = _pressure_predictor_base_flux[fi->id()] - _phig_flux[fi->id()] +
+                          _pressure_predictor_flux_adjustment[fi->id()];
+    const Real scale = std::max({std::abs(_pressure_predictor_base_flux[fi->id()]),
+                                 std::abs(_phig_flux[fi->id()]),
+                                 1.0});
+    mooseAssert(MooseUtils::absoluteFuzzyEqual(
+                    _pressure_predictor_flux[fi->id()], expected, 1e-10 * scale),
+                "RhieChowMassFlux: the predictor flux must equal the base flux less the explicit "
+                "body force plus any boundary source adjustment.");
+  }
+#endif
+
   _pressure_boundary_normal_gradient_valid = true;
   ++_face_mass_flux_generation;
 }

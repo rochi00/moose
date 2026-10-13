@@ -905,6 +905,15 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::updateAdditionalPressureFluxFu
     _pressure_predictor_base_flux[fi->id()] = -pressure_predictor_base_flux;
     _phiHbyA_flux[fi->id()] = -(pressure_predictor_base_flux + phig_flux);
     _pressure_predictor_flux[fi->id()] = _phiHbyA_flux[fi->id()];
+
+    // phiHbyA is the predictor source without the explicit body force, which is what the base
+    // class rebuilds as base - phig. Keep the two publications in agreement.
+    mooseAssert(MooseUtils::absoluteFuzzyEqual(
+                    _phiHbyA_flux[fi->id()],
+                    _pressure_predictor_base_flux[fi->id()] - _phig_flux[fi->id()],
+                    1e-10 * std::max(std::abs(_phiHbyA_flux[fi->id()]), 1.0)),
+                "The published phiHbyA must equal the base predictor flux less the explicit body "
+                "force, which is how the base class rebuilds it.");
   }
 
   _pressure_predictor_face_state_valid = true;
