@@ -18,4 +18,14 @@
                   'initialized without a diffuse profile and without interface compression.'
     max_threads = 1 # see libmesh issue #3808
   []
+  [dam_break_coarse]
+    type = CSVDiff
+    input = 'dam_break_coarse.i'
+    csvdiff = 'dam_break_coarse_csv.csv'
+    requirement = 'The system shall transport a volume fraction through a collapsing column so '
+                  'that an interface of partially filled cells forms and grows, measured by the '
+                  'integral of alpha*(1-alpha), which a volume fraction left at its initial sharp '
+                  'indicator cannot reproduce.'
+    max_threads = 1 # see libmesh issue #3808
+  []
 []
