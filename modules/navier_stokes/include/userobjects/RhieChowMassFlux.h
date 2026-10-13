@@ -12,6 +12,7 @@
 #include "RhieChowFaceFluxProvider.h"
 #include "CellCenteredMapFunctor.h"
 #include "FaceCenteredMapFunctor.h"
+#include "DerivedFaceFunctor.h"
 #include "VectorComponentFunctor.h"
 #include "LinearFVElementalKernel.h"
 #include "LinearFVAnisotropicDiffusion.h"
@@ -385,7 +386,7 @@ protected:
    * pressure-correction sign convention. The accepted transport-face flux is therefore formed as
    * -_phiHbyA_flux + _pressure_equation_flux.
    */
-  FaceCenteredMapFunctor<Real, std::unordered_map<dof_id_type, Real>> _phiHbyA_flux;
+  DerivedFaceFunctor<Real> _phiHbyA_flux;
 
   /**
    * Predictor-side face flux in the same native pressure-correction space consumed by the
@@ -393,7 +394,7 @@ protected:
    * flux density; diffuse/conservative paths publish an area-integrated phi. It is
    * still a pressure-correction-space predictor quantity, not the accepted transport phi.
    */
-  FaceCenteredMapFunctor<Real, std::unordered_map<dof_id_type, Real>> _pressure_predictor_flux;
+  DerivedFaceFunctor<Real> _pressure_predictor_flux;
 
   /**
    * Explicit face-force contribution entering the pressure corrector.

@@ -158,8 +158,22 @@ RhieChowMassFlux::RhieChowMassFlux(const InputParameters & params)
         &UserObject::_subproblem.getVariable(0, getParam<VariableName>(NS::pressure)))),
     _vel(_dim, nullptr),
     _HbyA_flux(_moose_mesh, blockIDs(), "HbyA_flux"),
-    _phiHbyA_flux(_moose_mesh, blockIDs(), "phiHbyA_flux"),
-    _pressure_predictor_flux(_moose_mesh, blockIDs(), "pressure_predictor_flux"),
+    _phiHbyA_flux(_moose_mesh,
+                  blockIDs(),
+                  "phiHbyA_flux",
+                  [this](const FaceInfo & fi)
+                  {
+                    return libmesh_map_find(_pressure_predictor_base_flux, fi.id()) -
+                           libmesh_map_find(_phig_flux, fi.id());
+                  }),
+    _pressure_predictor_flux(_moose_mesh,
+                             blockIDs(),
+                             "pressure_predictor_flux",
+                             [this](const FaceInfo & fi)
+                             {
+                               return _phiHbyA_flux.evaluate(&fi) +
+                                      libmesh_map_find(_pressure_predictor_flux_adjustment, fi.id());
+                             }),
     _phig_flux(_moose_mesh, blockIDs(), "phig_flux"),
     _Ainv(_moose_mesh, blockIDs(), "Ainv"),
     _pressure_Ainv(_moose_mesh, blockIDs(), "pressure_Ainv"),
@@ -497,8 +511,6 @@ void
 RhieChowMassFlux::meshChanged()
 {
   _HbyA_flux.clear();
-  _phiHbyA_flux.clear();
-  _pressure_predictor_flux.clear();
   _phig_flux.clear();
   _Ainv.clear();
   _pressure_Ainv.clear();
@@ -698,7 +710,6 @@ RhieChowMassFlux::setupMeshInformation()
     _pressure_boundary_normal_gradient[fi->id()] = 0.0;
     _pressure_predictor_flux_adjustment[fi->id()] = 0.0;
     _pressure_predictor_base_flux[fi->id()] = 0.0;
-    _pressure_predictor_flux[fi->id()] = 0.0;
     _pressure_Ainv[fi->id()] = RealVectorValue();
   }
 }
@@ -744,12 +755,6 @@ RhieChowMassFlux::initialize()
 {
   for (const auto & pair : _HbyA_flux)
     _HbyA_flux[pair.first] = 0;
-
-  for (const auto & pair : _phiHbyA_flux)
-    _phiHbyA_flux[pair.first] = 0;
-
-  for (const auto & pair : _pressure_predictor_flux)
-    _pressure_predictor_flux[pair.first] = 0;
 
   for (const auto & pair : _phig_flux)
     _phig_flux[pair.first] = 0;
@@ -1085,8 +1090,7 @@ RhieChowMassFlux::updatePressurePredictorFaceState()
     const auto face_id = fi->id();
     _phig_flux[face_id] = 0.0;
     _pressure_predictor_base_flux[face_id] = pressurePredictorFlux(fi);
-    _phiHbyA_flux[face_id] = _pressure_predictor_base_flux[face_id];
-    _pressure_predictor_flux[face_id] = _pressure_predictor_base_flux[face_id];
+    _pressure_predictor_flux_adjustment[face_id] = 0.0;
   }
 
   _pressure_predictor_face_state_valid = true;
@@ -1102,7 +1106,8 @@ RhieChowMassFlux::computeFaceMassFlux()
     cachePressureEquationFlux();
 
   for (auto & fi : _flow_face_info)
-    _face_mass_flux[fi->id()] = -_phiHbyA_flux[fi->id()] + _pressure_equation_flux[fi->id()];
+    _face_mass_flux[fi->id()] =
+        -_phiHbyA_flux.evaluate(fi) + _pressure_equation_flux[fi->id()];
 }
 
 void
@@ -1795,8 +1800,6 @@ RhieChowMassFlux::updatePressureBoundaryNormalGradients(const bool apply_pressur
     // that the interior pressure equation sees. The diffuse-interface path stores
     // _pressure_predictor_base_flux with the internal sign, while _phig_flux is
     // the explicit body-force contribution, so internal phiHbyA is base - phig.
-    _pressure_predictor_flux[fi->id()] =
-        _pressure_predictor_base_flux[fi->id()] - _phig_flux[fi->id()];
     if (!_vel[0]->isInternalFace(*fi))
     {
       _pressure_boundary_normal_gradient[fi->id()] = 0.0;
@@ -1824,7 +1827,7 @@ RhieChowMassFlux::updatePressureBoundaryNormalGradients(const bool apply_pressur
       {
         const Real face_measure = faceMeasure(*fi);
         const Real required_pressure_flux =
-            _pressure_predictor_flux[fi->id()] + pressureBoundaryTargetFlux(fi, time_arg);
+            _pressure_predictor_flux.evaluate(fi) + pressureBoundaryTargetFlux(fi, time_arg);
         integrated_source_imbalance += pressureCorrectionFluxIsIntegrated()
                                            ? required_pressure_flux
                                            : required_pressure_flux * face_measure;
@@ -1843,7 +1846,6 @@ RhieChowMassFlux::updatePressureBoundaryNormalGradients(const bool apply_pressur
                                              ? uniform_source_adjustment_density * face_measure
                                              : uniform_source_adjustment_density;
           _pressure_predictor_flux_adjustment[fi->id()] = source_adjustment;
-          _pressure_predictor_flux[fi->id()] += source_adjustment;
         }
     }
   }
@@ -1861,7 +1863,7 @@ RhieChowMassFlux::updatePressureBoundaryNormalGradients(const bool apply_pressur
     }
 
     const Real required_pressure_flux =
-        _pressure_predictor_flux[fi->id()] + pressureBoundaryTargetFlux(fi, time_arg);
+        _pressure_predictor_flux.evaluate(fi) + pressureBoundaryTargetFlux(fi, time_arg);
     const Real face_measure = faceMeasure(*fi);
     if (pressureCorrectionFluxIsIntegrated() && face_measure <= libMesh::TOLERANCE)
     {
@@ -1874,25 +1876,6 @@ RhieChowMassFlux::updatePressureBoundaryNormalGradients(const bool apply_pressur
                                                     : required_pressure_flux;
     _pressure_boundary_normal_gradient[fi->id()] = -required_pressure_flux_density / normal_ainv;
   }
-
-  // _pressure_predictor_flux is assigned from three different expressions across this class and
-  // the diffuse-interface override, and the relation that ties them together is the whole contract
-  // the constrained pressure BCs rely on. State it here so a divergence fails loudly instead of
-  // propagating into the boundary gradient.
-#ifndef NDEBUG
-  for (const auto * fi : _flow_face_info)
-  {
-    const Real expected = _pressure_predictor_base_flux[fi->id()] - _phig_flux[fi->id()] +
-                          _pressure_predictor_flux_adjustment[fi->id()];
-    const Real scale = std::max({std::abs(_pressure_predictor_base_flux[fi->id()]),
-                                 std::abs(_phig_flux[fi->id()]),
-                                 1.0});
-    mooseAssert(MooseUtils::absoluteFuzzyEqual(
-                    _pressure_predictor_flux[fi->id()], expected, 1e-10 * scale),
-                "RhieChowMassFlux: the predictor flux must equal the base flux less the explicit "
-                "body force plus any boundary source adjustment.");
-  }
-#endif
 
   _pressure_boundary_normal_gradient_valid = true;
   ++_face_mass_flux_generation;
@@ -1908,7 +1891,6 @@ RhieChowMassFlux::initCouplingField()
   {
     _Ainv[fi->id()];
     _HbyA_flux[fi->id()];
-    _phiHbyA_flux[fi->id()];
     _phig_flux[fi->id()];
   }
 }

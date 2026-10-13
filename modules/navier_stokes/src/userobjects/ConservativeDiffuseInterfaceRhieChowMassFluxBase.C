@@ -277,7 +277,6 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::initializeAdditionalPressureFl
     _previous_timestep_corrected_face_phi[fi->id()] = 0.0;
     _vof_transport_phi[fi->id()] = 0.0;
     _pressure_coupled_cell_reconstruction_scalar[fi->id()] = 0.0;
-    _pressure_predictor_flux[fi->id()] = 0.0;
   }
 
   _corrected_face_phi_seeded = preserve_corrected_face_phi && _corrected_face_phi_seeded;
@@ -401,7 +400,7 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::pressureVelocityFaceState(
     // The diffuse pressure equation stores area-integrated phi. Convert back to the
     // normal-flux-density transport convention only at the publication/writeback boundary.
     state.predictor_transport_phi =
-        integratedToVolumetricPhi(-libmesh_map_find(_phiHbyA_flux, fi->id()));
+        integratedToVolumetricPhi(-_phiHbyA_flux.evaluate(fi));
     state.pressure_equation_phi =
         _pressure_equation_flux_valid
             ? integratedToVolumetricPhi(libmesh_map_find(_pressure_equation_flux, fi->id()))
@@ -903,17 +902,9 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::updateAdditionalPressureFluxFu
     _phig_flux[fi->id()] = phig_flux;
     _pressure_Ainv[fi->id()] = pressure_face_raw_ainv;
     _pressure_predictor_base_flux[fi->id()] = -pressure_predictor_base_flux;
-    _phiHbyA_flux[fi->id()] = -(pressure_predictor_base_flux + phig_flux);
-    _pressure_predictor_flux[fi->id()] = _phiHbyA_flux[fi->id()];
-
-    // phiHbyA is the predictor source without the explicit body force, which is what the base
-    // class rebuilds as base - phig. Keep the two publications in agreement.
-    mooseAssert(MooseUtils::absoluteFuzzyEqual(
-                    _phiHbyA_flux[fi->id()],
-                    _pressure_predictor_base_flux[fi->id()] - _phig_flux[fi->id()],
-                    1e-10 * std::max(std::abs(_phiHbyA_flux[fi->id()]), 1.0)),
-                "The published phiHbyA must equal the base predictor flux less the explicit body "
-                "force, which is how the base class rebuilds it.");
+    // The boundary source adjustment belongs to the pressure boundary pass that computes it, so a
+    // freshly published predictor state carries none of the previous one's.
+    _pressure_predictor_flux_adjustment[fi->id()] = 0.0;
   }
 
   _pressure_predictor_face_state_valid = true;

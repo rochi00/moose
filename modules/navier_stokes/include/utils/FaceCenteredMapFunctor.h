@@ -45,10 +45,13 @@ public:
   bool hasBlocks(SubdomainID sub_id) const override;
 
   /**
-   * Evaluate the face functor using a FaceInfo argument.
+   * Evaluate the face functor using a FaceInfo argument. This is the single point at which the
+   * stored map is consulted: every other evaluation, including the cell reconstruction, routes
+   * through here. A functor whose face values follow from other functors overrides this and
+   * inherits the rest.
    * @param fi The object containing the face information
    */
-  ValueType evaluate(const FaceInfo * const fi) const;
+  virtual ValueType evaluate(const FaceInfo * const fi) const;
 
   bool supportsFaceArg() const override final { return true; }
   bool supportsElemSideQpArg() const override final { return false; }
