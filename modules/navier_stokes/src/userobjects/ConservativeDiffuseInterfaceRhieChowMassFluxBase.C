@@ -171,7 +171,7 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::ConservativeDiffuseInterfaceRh
                         [this](const FaceInfo & fi) { return correctedTransportPhi(fi); }),
     _previous_timestep_corrected_face_phi(
         _moose_mesh, blockIDs(), "previous_timestep_corrected_face_phi"),
-    _vof_transport_phi(_moose_mesh, blockIDs(), "vof_transport_phi"),
+    _lagged_corrected_face_phi(_moose_mesh, blockIDs(), "lagged_corrected_face_phi"),
     _pressure_coupled_cell_reconstruction_scalar(
         _moose_mesh, blockIDs(), "pressure_coupled_cell_reconstruction_scalar"),
     _gravity(getParam<RealVectorValue>("gravity")),
@@ -186,7 +186,7 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::ConservativeDiffuseInterfaceRh
     UserObject::_subproblem.addFunctor("corrected_face_phi", _corrected_face_phi, tid);
     UserObject::_subproblem.addFunctor(
         "previous_timestep_corrected_face_phi", _previous_timestep_corrected_face_phi, tid);
-    UserObject::_subproblem.addFunctor("vof_transport_phi", _vof_transport_phi, tid);
+    UserObject::_subproblem.addFunctor("lagged_corrected_face_phi", _lagged_corrected_face_phi, tid);
     UserObject::_subproblem.addFunctor("pressure_coupled_cell_reconstruction_scalar",
                                        _pressure_coupled_cell_reconstruction_scalar,
                                        tid);
@@ -272,7 +272,7 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::initializeAdditionalPressureFl
   for (const auto * fi : _fe_problem.mesh().faceInfo())
   {
     _previous_timestep_corrected_face_phi[fi->id()] = 0.0;
-    _vof_transport_phi[fi->id()] = 0.0;
+    _lagged_corrected_face_phi[fi->id()] = 0.0;
     _pressure_coupled_cell_reconstruction_scalar[fi->id()] = 0.0;
   }
 
@@ -482,11 +482,11 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::cacheCurrentCorrectedVolumetri
 }
 
 void
-ConservativeDiffuseInterfaceRhieChowMassFluxBase::freezeVOFTransportState(
+ConservativeDiffuseInterfaceRhieChowMassFluxBase::freezeLaggedCorrectedFaceFlux(
     const bool use_previous_timestep_flux)
 {
   for (const auto * fi : flowFaceInfo())
-    _vof_transport_phi[fi->id()] =
+    _lagged_corrected_face_phi[fi->id()] =
         use_previous_timestep_flux
             ? libmesh_map_find(_previous_timestep_corrected_face_phi, fi->id())
             : _corrected_face_phi.evaluate(fi);
@@ -556,11 +556,6 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::computeFaceMassFlux()
 
   cacheCurrentCorrectedVolumetricFlux();
 
-  // The outlet pressure BC switches its backflow branch on the published corrected face flux, so
-  // the flux cached above was built from the pre-publication value. Re-cache it now that the
-  // corrected flux is published, otherwise a transient backflow decision stays baked into the
-  // stored pressure-equation flux and leaks into the cell-velocity writeback.
-  cachePressureEquationFlux();
 
   const auto time_arg = Moose::currentState();
   for (const auto * fi : flowFaceInfo())

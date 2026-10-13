@@ -126,7 +126,10 @@ WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::setMomentumOutletBCParams(
 
   setVelocitySolverVariableParams(params);
   params.set<MooseEnum>("momentum_component") = MooseEnum("x=0 y=1 z=2", NS::directions[component]);
-  params.set<MooseFunctorName>("face_flux") = "corrected_face_phi";
+  // Every outlet backflow switch reads the same flux, frozen once per corrector. Switching on the
+  // live corrected flux instead makes the boundary value depend on the pressure equation that
+  // evaluates it, which is a cycle that then has to be iterated.
+  params.set<MooseFunctorName>("face_flux") = "lagged_corrected_face_phi";
 }
 
 std::string
@@ -146,7 +149,10 @@ WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::setPressureOutletBCParams(
   params.set<RealVectorValue>("gravity") = getParam<RealVectorValue>("gravity");
   params.set<Point>("reference_pressure_point") = getParam<Point>("reference_pressure_point");
   setVelocitySolverVariableParams(params);
-  params.set<MooseFunctorName>("face_flux") = "corrected_face_phi";
+  // Every outlet backflow switch reads the same flux, frozen once per corrector. Switching on the
+  // live corrected flux instead makes the boundary value depend on the pressure equation that
+  // evaluates it, which is a cycle that then has to be iterated.
+  params.set<MooseFunctorName>("face_flux") = "lagged_corrected_face_phi";
 }
 
 void

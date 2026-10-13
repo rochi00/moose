@@ -57,7 +57,7 @@ private:
   void advanceOuterIterationHistories();
   void solveVolumeFractionBeforeFlowCorrection(ResidualStorage & residual_storage,
                                                const SolverParams & solver_params);
-  void prepareVOFTransportStateForOuterIteration() const;
+  void prepareLaggedCorrectedFaceFluxForOuterIteration() const;
   void
   storeActiveScalarResiduals(ResidualStorage & residual_storage,
                              const std::vector<std::pair<unsigned int, Real>> & vf_residuals) const;

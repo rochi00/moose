@@ -62,7 +62,7 @@ public:
   Real getVolumetricFaceFlux(const FaceInfo & fi) const override;
   using RhieChowMassFlux::getVolumetricFaceFlux;
   void commitAcceptedTimestepTransportHistory();
-  void freezeVOFTransportState(const bool use_previous_timestep_flux = false);
+  void freezeLaggedCorrectedFaceFlux(const bool use_previous_timestep_flux = false);
 
   /// Update the additional pressure-equation source-flux functors before the pressure solve.
   void updateAdditionalPressureFluxFunctors(const bool verbose);
@@ -171,7 +171,7 @@ protected:
   bool useConstrainedBoundaryPredictorState(const FaceInfo * fi) const override;
   DerivedFaceFunctor<Real> _corrected_face_phi;
   FaceScalarField _previous_timestep_corrected_face_phi;
-  FaceScalarField _vof_transport_phi;
+  FaceScalarField _lagged_corrected_face_phi;
   FaceScalarField _pressure_coupled_cell_reconstruction_scalar;
 
   const RealVectorValue _gravity;

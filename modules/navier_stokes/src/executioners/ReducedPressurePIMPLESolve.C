@@ -361,7 +361,7 @@ void
 ReducedPressurePIMPLESolve::solveVolumeFractionBeforeFlowCorrection(
     ResidualStorage & residual_storage, const SolverParams & solver_params)
 {
-  prepareVOFTransportStateForOuterIteration();
+  prepareLaggedCorrectedFaceFluxForOuterIteration();
 
   _problem.execute(EXEC_NONLINEAR);
   Moose::PetscSupport::petscSetOptions(_active_scalar_petsc_options, solver_params);
@@ -372,14 +372,14 @@ ReducedPressurePIMPLESolve::solveVolumeFractionBeforeFlowCorrection(
 }
 
 void
-ReducedPressurePIMPLESolve::prepareVOFTransportStateForOuterIteration() const
+ReducedPressurePIMPLESolve::prepareLaggedCorrectedFaceFluxForOuterIteration() const
 {
   const bool use_previous_timestep_transport_flux =
       _problem.timeStep() == 1 && _current_outer_iteration == 1;
 
   if (auto * diffuse_rc = diffuseInterfaceRC())
   {
-    diffuse_rc->freezeVOFTransportState(use_previous_timestep_transport_flux);
+    diffuse_rc->freezeLaggedCorrectedFaceFlux(use_previous_timestep_transport_flux);
   }
 }
 

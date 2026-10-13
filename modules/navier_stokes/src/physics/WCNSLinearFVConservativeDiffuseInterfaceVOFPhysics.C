@@ -254,7 +254,7 @@ WCNSLinearFVConservativeDiffuseInterfaceVOFPhysics::addUserObjects()
   const auto & alpha_name = _passive_scalar_names[0];
   params.set<SolverSystemName>("system_name") = getSolverSystem(alpha_name);
   params.set<VariableName>("variable") = alpha_name;
-  params.set<MooseFunctorName>("face_flux") = "vof_transport_phi";
+  params.set<MooseFunctorName>("face_flux") = "lagged_corrected_face_phi";
   params.set<MooseFunctorName>("compression_factor") =
       getParam<MooseFunctorName>("compression_factor");
   params.set<MooseFunctorName>("interface_normal") =
@@ -328,7 +328,7 @@ WCNSLinearFVConservativeDiffuseInterfaceVOFPhysics::addScalarAdvectionKernels()
       method_name,
       _blocks,
       [](InputParameters & params)
-      { params.set<MooseFunctorName>("face_flux") = "vof_transport_phi"; });
+      { params.set<MooseFunctorName>("face_flux") = "lagged_corrected_face_phi"; });
 }
 
 void
@@ -349,7 +349,7 @@ WCNSLinearFVConservativeDiffuseInterfaceVOFPhysics::addScalarOutletBC()
         getParam<bool>("volume_fraction_two_term_bc_expansion");
     params.set<MooseFunctorName>("backflow_value") =
         getParam<MooseFunctorName>("volume_fraction_outlet_backflow_functor");
-    params.set<MooseFunctorName>("face_flux") = "vof_transport_phi";
+    params.set<MooseFunctorName>("face_flux") = "lagged_corrected_face_phi";
     getProblem().addLinearFVBC(bc_type, prefix() + "alpha_outlet_" + outlet_bdy, params);
   }
 }
