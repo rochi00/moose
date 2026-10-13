@@ -541,6 +541,12 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::computeFaceMassFlux()
 
   cacheCurrentCorrectedVolumetricFlux();
 
+  // The outlet pressure BC switches its backflow branch on the published corrected face flux, so
+  // the flux cached above was built from the pre-publication value. Re-cache it now that the
+  // corrected flux is published, otherwise a transient backflow decision stays baked into the
+  // stored pressure-equation flux and leaks into the cell-velocity writeback.
+  cachePressureEquationFlux();
+
   const auto time_arg = Moose::currentState();
   for (const auto * fi : flowFaceInfo())
   {
