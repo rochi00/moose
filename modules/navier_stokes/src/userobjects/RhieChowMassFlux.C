@@ -1715,9 +1715,14 @@ RhieChowMassFlux::pressureBoundaryCondition(const FaceInfo * fi) const
 }
 
 Real
-RhieChowMassFlux::pressureDiffusionFaceArea(const FaceInfo * /*fi*/) const
+RhieChowMassFlux::pressureDiffusionFaceArea(const FaceInfo * fi) const
 {
-  return 1.0;
+  // The kernel's flux has to speak this provider's convention: an integrated flux carries the
+  // face measure, a flux density carries unit area.
+  if (!pressureCorrectionFluxIsIntegrated())
+    return 1.0;
+
+  return fi ? faceMeasure(*fi) : 0.0;
 }
 
 bool

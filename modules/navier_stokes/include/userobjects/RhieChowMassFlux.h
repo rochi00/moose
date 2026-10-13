@@ -252,7 +252,11 @@ protected:
   virtual Real pressureBoundaryNormalAinv(const FaceInfo * fi) const;
   /// Fetch and initialize the pressure boundary condition attached to a boundary face.
   LinearFVBoundaryCondition * pressureBoundaryCondition(const FaceInfo * fi) const;
-  /// Whether pressure-correction face fluxes include face area.
+  /**
+   * Whether this provider's pressure-correction face fluxes carry the face measure, rather than
+   * being flux densities. The same answer fixes the area handed to the pressure diffusion kernel,
+   * so pressureDiffusionFaceArea derives from it and the two cannot disagree.
+   */
   virtual bool pressureCorrectionFluxIsIntegrated() const { return false; }
   /// Whether a boundary face should use constrained boundary values for the predictor state.
   virtual bool useConstrainedBoundaryPredictorState(const FaceInfo * fi) const;
@@ -268,8 +272,8 @@ protected:
                                      const Moose::StateArg * limiter_state = nullptr) const;
   /// Geometric face measure used to convert between flux density and integrated flux.
   Real faceMeasure(const FaceInfo & fi) const;
-  /// Face area supplied to the pressure diffusion kernel when reconstructing pressure fluxes.
-  virtual Real pressureDiffusionFaceArea(const FaceInfo * fi) const;
+  /// Face area supplied to the pressure diffusion kernel, in this provider's flux convention.
+  Real pressureDiffusionFaceArea(const FaceInfo * fi) const;
   /// Evaluate or fetch the boundary face value for a velocity component.
   Real boundaryVelocityValue(const FaceInfo * fi,
                              const unsigned int component,

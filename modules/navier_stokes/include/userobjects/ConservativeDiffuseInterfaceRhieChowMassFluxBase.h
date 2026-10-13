@@ -101,7 +101,6 @@ protected:
                                   const Moose::StateArg & time_arg) const override;
   Real pressureBoundaryNormalAinv(const FaceInfo * fi) const override;
   bool pressureCorrectionFluxIsIntegrated() const override { return true; }
-  Real pressureDiffusionFaceArea(const FaceInfo * fi) const override;
   void postUpdateVelocityBoundaryState() override;
   Real pressureFaceNormalAinv(const FaceInfo * fi, const Moose::StateArg & time_arg) const;
 

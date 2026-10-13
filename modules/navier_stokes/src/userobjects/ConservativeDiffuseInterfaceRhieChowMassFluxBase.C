@@ -724,13 +724,6 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::computeDefaultTransientProject
 }
 
 Real
-ConservativeDiffuseInterfaceRhieChowMassFluxBase::pressureDiffusionFaceArea(
-    const FaceInfo * fi) const
-{
-  return fi ? faceMeasure(*fi) : 0.0;
-}
-
-Real
 ConservativeDiffuseInterfaceRhieChowMassFluxBase::computeFaceNormalDensityGradient(
     const FaceInfo * fi, const Moose::StateArg & time_arg) const
 {
