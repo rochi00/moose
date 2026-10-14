@@ -10,6 +10,7 @@
 #pragma once
 
 #include "RhieChowMassFlux.h"
+#include "DerivedFaceFunctor.h"
 #include "PetscVectorReader.h"
 
 class ElemInfo;
@@ -54,6 +55,7 @@ public:
   /// capillarity; H/A then comes from the operator as assembled, treating the boundary
   /// coefficients as OpenFOAM's fvMatrix::A() and H() do.
   bool splitMomentumPredictorOperator() const override { return true; }
+  void computeHbyA(const bool verbose) override;
   void cachePressureEquationFlux() override;
   void computeFaceMassFlux() override;
   void computeCellVelocity() override;
@@ -64,6 +66,12 @@ public:
 
   /// Update the additional pressure-equation source-flux functors before the pressure solve.
   void updateAdditionalPressureFluxFunctors(const bool verbose);
+  /// Update boundary pressure gradients from the current predictor and boundary velocity state.
+  void updatePressureBoundaryNormalGradients();
+  /// Refresh boundary-face velocity values from the active FV velocity BC objects.
+  void updateVelocityBoundaryState();
+  /// Maximum face-flux Courant number over active flow cells for the supplied timestep.
+  Real maxCourant(const Real dt) const;
 
   void computePressureCorrectedCellVelocity();
 
@@ -93,11 +101,23 @@ protected:
   const MomentumPredictorOperator *
   cachedMomentumPredictorOperator(const unsigned int system_i) const;
 
-  Real pressureBoundaryTargetFlux(const FaceInfo * fi,
-                                  const Moose::StateArg & time_arg) const override;
-  Real pressureBoundaryNormalAinv(const FaceInfo * fi) const override;
+  /// Target boundary flux of the pressure equation: the prescribed boundary volumetric flux
+  Real pressureBoundaryTargetFlux(const FaceInfo * fi, const Moose::StateArg & time_arg) const;
+  /// Normal diffusion coefficient of the pressure equation on a boundary face
+  Real pressureBoundaryNormalAinv(const FaceInfo * fi) const;
   bool pressureCorrectionFluxIsIntegrated() const override { return true; }
-  void postUpdateVelocityBoundaryState() override;
+  Real boundaryVelocityValue(const FaceInfo * fi,
+                             const unsigned int component,
+                             const Moose::StateArg & time_arg) const override;
+  /// Compute the target volumetric boundary flux U_b.n at a face.
+  Real boundaryVolumetricFluxTarget(const FaceInfo * fi, const Moose::StateArg & time_arg) const;
+  /// Compute the normal component of a face diagonal Ainv vector.
+  Real computeFaceNormalAinv(const RealVectorValue & face_ainv,
+                             const RealVectorValue & face_normal) const;
+  /// Interpolate per-component momentum-system cell readers to a face vector.
+  RealVectorValue
+  interpolateMomentumVectorReadersToFace(const FaceInfo * fi,
+                                         const std::vector<PetscVectorReader> & readers) const;
   Real pressureFaceNormalAinv(const FaceInfo * fi, const Moose::StateArg & time_arg) const;
 
   void initializeAdditionalPressureFluxStorage();
@@ -158,10 +178,33 @@ protected:
   virtual RealVectorValue
   reconstructPressureCoupledCellVelocityDelta(const ElemInfo * elem_info,
                                               const Moose::StateArg & time_arg) const;
-  /// This provider tracks _corrected_face_phi and its own rho_phi, so it may interpolate momentum.
-  bool tracksOwnVolumetricFaceFlux() const override { return true; }
-
   bool useConstrainedBoundaryPredictorState(const FaceInfo * fi) const override;
+
+  /**
+   * Explicit predictor-side face flux entering the pressure equation in the native
+   * pressure-correction sign convention. The accepted transport-face flux is therefore formed as
+   * -_phiHbyA_flux + _pressure_equation_flux.
+   */
+  DerivedFaceFunctor<Real> _phiHbyA_flux;
+  /// Explicit face-force contribution entering the pressure corrector.
+  FaceScalarField _phig_flux;
+  /// Face diffusion tensor of the pressure equation: the raw face rAUf.
+  FaceCenteredMapFunctor<RealVectorValue, std::unordered_map<dof_id_type, RealVectorValue>>
+      _pressure_Ainv;
+  /// Boundary-normal pressure gradient the fixed-flux pressure boundaries impose
+  FaceScalarField _pressure_boundary_normal_gradient;
+  /// Predictor-side face flux before the explicit face force is removed, stored in the internal
+  /// pressure-correction convention. The accepted transport flux uses the negated value.
+  std::unordered_map<dof_id_type, Real> _pressure_predictor_base_flux;
+  /// Boundary-face velocity values refreshed from the current FV velocity BCs.
+  std::vector<std::unordered_map<dof_id_type, Real>> _boundary_velocity_face_values;
+  /// Whether _boundary_velocity_face_values matches the latest cell-centered velocity.
+  bool _velocity_boundary_state_valid = false;
+  /// Whether _pressure_boundary_normal_gradient matches the latest predictor state.
+  bool _pressure_boundary_normal_gradient_valid = false;
+  /// Whether _phiHbyA_flux/_phig_flux match the latest predictor state.
+  bool _pressure_predictor_face_state_valid = false;
+
   DerivedFaceFunctor<Real> _corrected_face_phi;
   FaceScalarField _previous_timestep_corrected_face_phi;
   FaceScalarField _lagged_corrected_face_phi;

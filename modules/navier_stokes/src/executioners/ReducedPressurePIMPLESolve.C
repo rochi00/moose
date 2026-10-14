@@ -483,13 +483,14 @@ void
 ReducedPressurePIMPLESolve::postPreparePressureCorrectorState()
 {
   if (auto * diffuse_rc = diffuseInterfaceRC())
+  {
     diffuse_rc->updateAdditionalPressureFluxFunctors(_print_fields);
 
-  // Refresh the patch velocity / target-flux state from the latest momentum
-  // predictor before assembling the constrained pressure boundary gradient.
-  _rc_uo->updateVelocityBoundaryState();
-
-  _rc_uo->updatePressureBoundaryNormalGradients();
+    // Refresh the patch velocity / target-flux state from the latest momentum
+    // predictor before assembling the constrained pressure boundary gradient.
+    diffuse_rc->updateVelocityBoundaryState();
+    diffuse_rc->updatePressureBoundaryNormalGradients();
+  }
 }
 
 unsigned int
@@ -664,5 +665,6 @@ ReducedPressurePIMPLESolve::correctStartupContinuityOnce(const SolverParams & so
 void
 ReducedPressurePIMPLESolve::postPublishPressureCorrectedState()
 {
-  _rc_uo->updateVelocityBoundaryState();
+  if (auto * diffuse_rc = diffuseInterfaceRC())
+    diffuse_rc->updateVelocityBoundaryState();
 }
