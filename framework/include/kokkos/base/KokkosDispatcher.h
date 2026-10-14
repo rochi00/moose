@@ -38,6 +38,16 @@ public:
     mooseError("parallelFor() called for an instance that is not a dispatcher.");
   }
   /**
+   * Dispatch this functor with Kokkos parallel_for() given a Kokkos execution policy, without
+   * waiting for it to finish. Work dispatched this way runs in order on the default execution
+   * space instance; the caller must fence before host code reads its results.
+   * @param policy The Kokkos execution policy
+   */
+  virtual void parallelForAsync(const Policy & /* policy */)
+  {
+    mooseError("parallelForAsync() called for an instance that is not a dispatcher.");
+  }
+  /**
    * Dispatch this functor with Kokkos parallel_reduce() given a Kokkos execution policy and result
    * buffer
    * @param policy The Kokkos execution policy
@@ -80,8 +90,13 @@ public:
 
   void parallelFor(const Policy & policy) override final
   {
-    ::Kokkos::parallel_for(policy, *this);
+    parallelForAsync(policy);
     ::Kokkos::fence();
+  }
+
+  void parallelForAsync(const Policy & policy) override final
+  {
+    ::Kokkos::parallel_for(policy, *this);
   }
 
   /**
@@ -405,6 +420,14 @@ hasBoundaryLinearFVFluxMatrixContribution()
 }
 
 template <typename Object>
+bool
+hasLinearFVFluxFaceCoefficient()
+{
+  return &Object::template computeFaceCoefficient<Object> !=
+         Object::template defaultFaceCoefficient<Object>();
+}
+
+template <typename Object>
 void
 registerLinearFVKernelDispatchers(const std::string & objectname)
 {
@@ -416,11 +439,17 @@ registerLinearFVKernelDispatchers(const std::string & objectname)
         objectname);
     DispatcherRegistry::addDispatcher<typename Object::InternalMatrixLoop, Object>(objectname);
     DispatcherRegistry::addDispatcher<typename Object::BoundaryMatrixLoop, Object>(objectname);
+    DispatcherRegistry::addDispatcher<typename Object::InternalFaceCoefficientLoop, Object>(
+        objectname);
+    DispatcherRegistry::addDispatcher<typename Object::BoundaryFaceCoefficientLoop, Object>(
+        objectname);
 
     DispatcherRegistry::hasUserMethod<typename Object::InternalMatrixLoop>(
         objectname, hasInternalLinearFVFluxMatrixContribution<Object>());
     DispatcherRegistry::hasUserMethod<typename Object::BoundaryMatrixLoop>(
         objectname, hasBoundaryLinearFVFluxMatrixContribution<Object>());
+    DispatcherRegistry::hasUserMethod<typename Object::InternalFaceCoefficientLoop>(
+        objectname, hasLinearFVFluxFaceCoefficient<Object>());
   }
   else
   {

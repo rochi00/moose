@@ -20,8 +20,35 @@
 
 #include "libmesh/equation_systems.h"
 
+#include <algorithm>
+#include <optional>
 #include <set>
 #include <unordered_set>
+
+namespace
+{
+/// The linear finite volume kernels and boundary conditions of a system that are, or are not,
+/// Kokkos objects
+std::vector<MooseObject *>
+linearFVObjects(FEProblemBase & problem, const unsigned int sys_num, const bool kokkos)
+{
+  std::vector<MooseObject *> all_objects;
+  for (const auto & system :
+       {"LinearFVElementalKernel", "LinearFVFluxKernel", "LinearFVBoundaryCondition"})
+  {
+    std::vector<MooseObject *> objects;
+    problem.theWarehouse()
+        .query()
+        .template condition<AttribSysNum>(sys_num)
+        .template condition<AttribSystem>(system)
+        .template condition<AttribKokkos>(kokkos)
+        .template condition<AttribThread>(0)
+        .queryInto(objects);
+    all_objects.insert(all_objects.end(), objects.begin(), objects.end());
+  }
+  return all_objects;
+}
+}
 
 void
 LinearSystem::addKokkosKernel(const std::string & kernel_name,
@@ -48,6 +75,51 @@ LinearSystem::addKokkosBoundaryCondition(const std::string & bc_name,
   const auto & boundary_ids = bc->boundaryIDs();
   const auto * const bc_var = bc->variable().mooseFieldVar();
   _vars[0].addBoundaryVar(boundary_ids, bc_var);
+}
+
+void
+LinearSystem::selectKokkosPetscTypes()
+{
+  if (linearFVObjects(_fe_problem, number(), true).empty() ||
+      !linearFVObjects(_fe_problem, number(), false).empty())
+    return;
+
+  // Added as defaults to the problem PETSc options, which are applied to the existing vectors and
+  // matrices when the options are inserted before the first solve. A Kokkos matrix needs Kokkos
+  // vectors, so nothing is added if the input file (stored upper case) or the command line sets
+  // this system's matrix type or another vector type.
+  auto & options = _fe_problem.getPetscOptions().pairs;
+  auto user_value = [this, &options](const std::string & option) -> std::optional<std::string>
+  {
+    char value[256] = "";
+    PetscBool on_command_line = PETSC_FALSE;
+    LibmeshPetscCall(PetscOptionsGetString(
+        nullptr, nullptr, option.c_str(), value, sizeof(value), &on_command_line));
+    if (on_command_line)
+      return std::string(value);
+
+    for (const auto & [name, pair_value] : options)
+      if (MooseUtils::toLower(name) == option)
+        return pair_value;
+
+    return {};
+  };
+
+  // MOOSE applies matrix types only through options prefixed by the solver system name
+  const auto mat_type_option = "-" + name() + "_mat_type";
+  const auto vec_type = user_value("-vec_type");
+  if (user_value(mat_type_option) || (vec_type && *vec_type != "kokkos"))
+    return;
+
+  options.emplace_back(mat_type_option, "aijkokkos");
+  // Another Kokkos linear system may have added it already
+  if (!vec_type)
+    options.emplace_back("-vec_type", "kokkos");
+
+  _console << "Linear system '" << name()
+           << "' is assembled by Kokkos objects only; keeping its matrix and vectors in device "
+              "memory with the PETSc options: "
+           << mat_type_option << " aijkokkos -vec_type kokkos" << std::endl;
 }
 
 void
@@ -96,20 +168,7 @@ LinearSystem::initialSetupKokkosLinearFV()
   // A system with Kokkos linear FV objects must not also contain host linear FV objects: those
   // force the host assembly loops over every element and face to run in addition to the Kokkos
   // assembly. Unless explicitly allowed, refuse such systems instead of silently running slower.
-  std::vector<MooseObject *> host_objects;
-  for (const auto & system :
-       {"LinearFVElementalKernel", "LinearFVFluxKernel", "LinearFVBoundaryCondition"})
-  {
-    std::vector<MooseObject *> objects;
-    _fe_problem.theWarehouse()
-        .query()
-        .template condition<AttribSysNum>(number())
-        .template condition<AttribSystem>(system)
-        .template condition<AttribKokkos>(false)
-        .template condition<AttribThread>(0)
-        .queryInto(objects);
-    host_objects.insert(host_objects.end(), objects.begin(), objects.end());
-  }
+  const auto host_objects = linearFVObjects(_fe_problem, number(), false);
 
   const bool has_kokkos_objects =
       !elemental_kernels.empty() || !flux_kernels.empty() || !bcs.empty();
@@ -230,7 +289,10 @@ LinearSystem::computeKokkosLinearSystem(const std::set<TagID> & vector_tags,
       normal_gradient_bc_vars.insert(kernel->variable().var());
   }
 
-  // Every Kokkos dispatch is followed by a fence, so these sections measure execution time
+  // The boundary data and assembly loops are dispatched without fences. They run in order on the
+  // default execution space instance, so each loop sees the results of the loops before it. On a
+  // host backend the dispatches are synchronous and the sections below measure execution; on a
+  // device they measure launch, and KokkosFVWait the remaining execution.
   {
     TIME_SECTION("KokkosFVBoundaryData", 2);
     for (auto bc : bcs)
@@ -241,6 +303,12 @@ LinearSystem::computeKokkosLinearSystem(const std::set<TagID> & vector_tags,
       if (normal_gradient_bc_vars.count(bc_var))
         bc->computeBoundaryNormalGradientData();
     }
+  }
+
+  {
+    TIME_SECTION("KokkosFVFaceCoefficients", 2);
+    for (auto kernel : flux_kernels)
+      kernel->computeFaceCoefficients();
   }
 
   {
@@ -262,6 +330,12 @@ LinearSystem::computeKokkosLinearSystem(const std::set<TagID> & vector_tags,
     TIME_SECTION("KokkosFVFluxRHS", 2);
     for (auto kernel : flux_for_vector_tags)
       kernel->computeRightHandSide();
+  }
+
+  {
+    TIME_SECTION("KokkosFVWait", 2);
+    // The only synchronization of the assembly: the results are read below
+    ::Kokkos::fence();
   }
 
   {

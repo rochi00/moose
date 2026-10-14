@@ -84,6 +84,14 @@ public:
   void addKokkosBoundaryCondition(const std::string & bc_name,
                                   const std::string & name,
                                   InputParameters & parameters);
+
+  /**
+   * Select the Kokkos PETSc matrix and vector types (aijkokkos and kokkos) when every linear
+   * finite volume object of this system is a Kokkos object, so that the assembled matrix and the
+   * solve stay in device memory. Types given in the input file or on the command line are kept.
+   * Must be called before the PETSc options are inserted for the first solve.
+   */
+  void selectKokkosPetscTypes();
 #endif
 
   // Overriding these to make sure the linear systems don't do anything during

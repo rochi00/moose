@@ -411,6 +411,17 @@ MooseApp::validParams()
   // unknown and we need to manage it with libmesh better
   params.setGlobalCommandLineParam("n_threads");
 
+#ifdef MOOSE_KOKKOS_ENABLED
+  params.addCommandLineParam<unsigned int>(
+      "kokkos_threads",
+      "--kokkos-threads=<n>",
+      "Sets the number of threads of the Kokkos host (OpenMP) backend, independently of "
+      "--n-threads. Defaults to the KOKKOS_NUM_THREADS environment variable if set, else to "
+      "--n-threads. Lets Kokkos objects run threaded where MOOSE threads are not supported, such "
+      "as with linear finite volume variables");
+  params.setGlobalCommandLineParam("kokkos_threads");
+#endif
+
   params.addCommandLineParam<bool>("allow_unused",
                                    "-w --allow-unused",
                                    "Warn about unused input file options instead of erroring");

@@ -140,7 +140,7 @@ LinearFVBoundaryCondition::computeBoundaryValueData()
   Policy policy(0, numKokkosBoundarySides());
   if (!_boundary_value_dispatcher)
     _boundary_value_dispatcher = DispatcherRegistry::build<BoundaryValueLoop>(this, type());
-  _boundary_value_dispatcher->parallelFor(policy);
+  _boundary_value_dispatcher->parallelForAsync(policy);
 }
 
 void
@@ -158,7 +158,7 @@ LinearFVBoundaryCondition::computeBoundaryNormalGradientData()
   if (!_boundary_normal_gradient_dispatcher)
     _boundary_normal_gradient_dispatcher =
         DispatcherRegistry::build<BoundaryNormalGradientLoop>(this, type());
-  _boundary_normal_gradient_dispatcher->parallelFor(policy);
+  _boundary_normal_gradient_dispatcher->parallelForAsync(policy);
 }
 
 } // namespace Moose::Kokkos

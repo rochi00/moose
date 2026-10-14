@@ -7155,6 +7155,12 @@ FEProblemBase::init()
   if (!_mortar_data->initialized())
     updateMortarMesh();
 
+#if defined(MOOSE_KOKKOS_ENABLED) && defined(MOOSE_ENABLE_KOKKOS_GPU)
+  // Adds PETSc options, so it must precede their insertion before the first solve
+  for (auto & sys : _linear_systems)
+    sys->selectKokkosPetscTypes();
+#endif
+
   {
     TIME_SECTION("EquationSystems::Init", 2, "Initializing Equation Systems");
     es().init();

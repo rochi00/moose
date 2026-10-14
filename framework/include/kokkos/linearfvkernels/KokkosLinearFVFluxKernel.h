@@ -40,6 +40,14 @@ public:
   /// Whether this kernel has nonzero internal-face RHS contributions
   virtual bool hasInternalRightHandSideContribution() const { return true; }
 
+  /**
+   * Evaluate the face coefficient of every side this kernel operates on, for kernels that define
+   * computeFaceCoefficient(). The matrix and right-hand side loops read it through
+   * faceCoefficient(), so the coefficient is evaluated once per side and assembly instead of once
+   * per contribution. The work is dispatched without waiting for it to finish.
+   */
+  void computeFaceCoefficients();
+
   /// Tag dispatch type for internal-face right-hand side computation
   struct InternalRightHandSideLoop
   {
@@ -54,6 +62,14 @@ public:
   };
   /// Tag dispatch type for boundary-face matrix computation
   struct BoundaryMatrixLoop
+  {
+  };
+  /// Tag dispatch type for internal-face coefficient evaluation
+  struct InternalFaceCoefficientLoop
+  {
+  };
+  /// Tag dispatch type for boundary-face coefficient evaluation
+  struct BoundaryFaceCoefficientLoop
   {
   };
 
@@ -73,6 +89,14 @@ public:
   KOKKOS_FUNCTION void
   operator()(BoundaryMatrixLoop, const ThreadID tid, const Derived & kernel) const;
 
+  template <typename Derived>
+  KOKKOS_FUNCTION void
+  operator()(InternalFaceCoefficientLoop, const ThreadID tid, const Derived & kernel) const;
+
+  template <typename Derived>
+  KOKKOS_FUNCTION void
+  operator()(BoundaryFaceCoefficientLoop, const ThreadID tid, const Derived & kernel) const;
+
   /**
    * Default methods to prevent compile errors when matrix/RHS contributions are not defined in the
    * derived class.
@@ -90,6 +114,13 @@ public:
   template <typename Derived>
   KOKKOS_FUNCTION Real computeBoundaryRightHandSideContribution(
       const FVDatum & datum, const int bc_index, const MOOSE_KOKKOS_INDEX_TYPE bc_face_index) const;
+  /**
+   * Optional hook evaluating a coefficient of a face, such as a material property, that the
+   * contribution hooks read through faceCoefficient(). Define it when a coefficient would otherwise
+   * be evaluated in several contribution hooks of the same side.
+   */
+  template <typename Derived>
+  KOKKOS_FUNCTION Real computeFaceCoefficient(const FVDatum & datum) const;
   ///@}
 
   /**
@@ -114,6 +145,12 @@ public:
   static auto defaultBoundaryMatrixContribution()
   {
     return &LinearFVFluxKernel::computeBoundaryMatrixContribution<Derived>;
+  }
+
+  template <typename Derived>
+  static auto defaultFaceCoefficient()
+  {
+    return &LinearFVFluxKernel::computeFaceCoefficient<Derived>;
   }
   ///@}
 
@@ -150,6 +187,13 @@ protected:
   KOKKOS_FUNCTION bool hasBoundaryData(const FVDatum & datum, const int bc_index) const;
 #endif
 
+  /// The coefficient of this face computed by computeFaceCoefficient() for the current assembly
+  KOKKOS_FUNCTION Real faceCoefficient(const FVDatum & datum) const
+  {
+    KOKKOS_ASSERT(_face_coefficients.isAlloc());
+    return _face_coefficients(datum.side(), datum.elemID());
+  }
+
   /// Boundary value coefficient for this boundary face
   KOKKOS_FUNCTION Real boundaryValueCoefficient(const int bc_index,
                                                 const MOOSE_KOKKOS_INDEX_TYPE bc_face_index) const;
@@ -176,11 +220,16 @@ protected:
   Array<PetscInt> _internal_matrix_slots;
   /// Matrix nonzero positions (diagonal) of the boundary-face contributions
   Array<PetscInt> _boundary_matrix_slots;
+  /// Face coefficients from computeFaceCoefficient() by (side, element), device only; allocated
+  /// only for kernels that define computeFaceCoefficient()
+  Array2D<Real> _face_coefficients;
 
   std::unique_ptr<DispatcherBase> _internal_rhs_dispatcher;
   std::unique_ptr<DispatcherBase> _boundary_rhs_dispatcher;
   std::unique_ptr<DispatcherBase> _internal_matrix_dispatcher;
   std::unique_ptr<DispatcherBase> _boundary_matrix_dispatcher;
+  std::unique_ptr<DispatcherBase> _internal_face_coefficient_dispatcher;
+  std::unique_ptr<DispatcherBase> _boundary_face_coefficient_dispatcher;
 };
 
 #ifndef NDEBUG
@@ -286,6 +335,38 @@ LinearFVFluxKernel::computeBoundaryRightHandSideContribution(const FVDatum &,
                   "sure you properly redefined this method in your class without typos.");
 
   return 0;
+}
+
+template <typename Derived>
+KOKKOS_FUNCTION Real
+LinearFVFluxKernel::computeFaceCoefficient(const FVDatum &) const
+{
+  ::Kokkos::abort("Default computeFaceCoefficient() should never be called. Make sure you properly "
+                  "redefined this method in your class without typos.");
+
+  return 0;
+}
+
+template <typename Derived>
+KOKKOS_FUNCTION void
+LinearFVFluxKernel::operator()(InternalFaceCoefficientLoop,
+                               const ThreadID tid,
+                               const Derived & kernel) const
+{
+  const auto [elem, side] = _internal_face_ids[tid];
+  FVDatum datum(elem, side, kokkosMesh());
+  _face_coefficients(side, elem) = kernel.template computeFaceCoefficient<Derived>(datum);
+}
+
+template <typename Derived>
+KOKKOS_FUNCTION void
+LinearFVFluxKernel::operator()(BoundaryFaceCoefficientLoop,
+                               const ThreadID tid,
+                               const Derived & kernel) const
+{
+  const auto & face = _boundary_face_ids[tid];
+  FVDatum datum(face.elem, face.side, kokkosMesh());
+  _face_coefficients(face.side, face.elem) = kernel.template computeFaceCoefficient<Derived>(datum);
 }
 
 template <typename Derived>

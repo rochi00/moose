@@ -114,9 +114,9 @@ public:
   /// Whether this boundary condition overrides the boundary normal gradient relation hook
   bool hasBoundaryNormalGradient() const;
 
-  /// Dispatch boundary value relation computation
+  /// Dispatch boundary value relation computation, without waiting for it to finish
   void computeBoundaryValueData();
-  /// Dispatch boundary normal gradient relation computation
+  /// Dispatch boundary normal gradient relation computation, without waiting for it to finish
   void computeBoundaryNormalGradientData();
 
   /**

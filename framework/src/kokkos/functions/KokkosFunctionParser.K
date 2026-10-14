@@ -319,6 +319,32 @@ RPNEvaluator::RPNEvaluator(const RPNEvaluator & evaluator)
     _num_properties(evaluator._num_properties),
     _num_functions(evaluator._num_functions)
 {
+  // An evaluator that reads only scalars shares the scalar storage of the evaluator it is copied
+  // from and refreshes the values that changed, so the copy made for each dispatch does not
+  // allocate and copy device memory
+  if (usesOnlyScalars())
+  {
+    _scalars = evaluator._scalars;
+
+    bool changed = false;
+    for (const auto i : index_range(evaluator._pointers))
+      if (evaluator._pointers[i] && _variables[i].first == VariableType::SCALAR)
+      {
+        const auto value = *static_cast<const Real *>(evaluator._pointers[i]);
+        auto & stored = _scalars[_variables[i].second];
+        if (stored != value)
+        {
+          stored = value;
+          changed = true;
+        }
+      }
+
+    if (changed)
+      _scalars.copyToDevice();
+
+    return;
+  }
+
   _scalars.create(_num_scalars);
   _fields.create(_num_fields);
   _properties.create<false>(_num_properties);
@@ -402,6 +428,15 @@ RPNEvaluator::init(const RPNBuilder & builder)
   }
 
   _variables.copyToDevice();
+
+  if (usesOnlyScalars())
+  {
+    _scalars.create(_num_scalars);
+    for (const auto i : make_range(_variables.size()))
+      if (_pointers[i] && _variables[i].first == VariableType::SCALAR)
+        _scalars[_variables[i].second] = *static_cast<const Real *>(_pointers[i]);
+    _scalars.copyToDevice();
+  }
 
   _rpn.create(rpn.size());
 

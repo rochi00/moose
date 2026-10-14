@@ -10,4 +10,13 @@
     compute_devices = 'cpu cuda xpu'
     max_threads = 1
   []
+  [kokkos-threads-advection-diffusion-1d]
+    type = MMSTest
+    input = 'test.py'
+    test_case = TestKokkosLinearFVAdvectionDiffusion1DKokkosThreads
+    requirement = 'The system shall dispatch Kokkos linear finite volume advection and diffusion kernels with multiple host backend threads, set independently of the MOOSE thread count, and retain first-order convergence for a one-dimensional advection-diffusion problem.'
+    capabilities = 'kokkos'
+    compute_devices = 'cpu'
+    max_threads = 1
+  []
 []

@@ -11,6 +11,7 @@
 
 #include "MooseInit.h"
 
+#include "libmesh/libmesh.h"
 #include "libmesh/parallel_implementation.h"
 #include "libmesh/petsc_solver_exception.h"
 
@@ -27,10 +28,14 @@ MooseInit::initKokkos()
 {
   Kokkos::InitializationSettings settings;
 
-  // Explicitly set the number of threads consistently with MOOSE, unless the user requested a
-  // Kokkos thread count through the environment. The override lets the host (OpenMP) backend run
-  // threaded for objects that require a single MOOSE thread, such as linear FV variables.
-  if (!std::getenv("KOKKOS_NUM_THREADS"))
+  // Set the number of threads of the host backend from --kokkos-threads, else from the
+  // KOKKOS_NUM_THREADS environment variable (read by Kokkos), else consistently with MOOSE. The
+  // first two let the host (OpenMP) backend run threaded for objects that require a single MOOSE
+  // thread, such as linear FV variables.
+  if (const auto kokkos_threads = libMesh::command_line_value("--kokkos-threads", 0);
+      kokkos_threads > 0)
+    settings.set_num_threads(kokkos_threads);
+  else if (!std::getenv("KOKKOS_NUM_THREADS"))
     settings.set_num_threads(libMesh::n_threads());
 
   // Only print warnings on the head process

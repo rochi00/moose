@@ -68,9 +68,26 @@ LinearSystemContributionObject::LinearSystemContributionObject(
   // Tags may be added to the governing tag sets held by the TaggingInterface later than the time
   // that the primary constructor is run. So it's more robust to build our tag set, immediately
   // before being dispatched to device, from the governing TaggingInterface set instead of relying
-  // on copying the tag set from object's \p _vector_tags and \p _matrix_tags arrays
-  _vector_tags = object.getVectorTags({});
-  _matrix_tags = object.getMatrixTags({});
+  // on the tag sets at construction
+  object.updateTagArrays();
+  _vector_tags = object._vector_tags;
+  _matrix_tags = object._matrix_tags;
+}
+
+void
+LinearSystemContributionObject::updateTagArrays() const
+{
+  const auto & vector_tags = getVectorTags({});
+  const auto & matrix_tags = getMatrixTags({});
+
+  if (_tag_arrays_built && vector_tags == _vector_tag_set && matrix_tags == _matrix_tag_set)
+    return;
+
+  _vector_tags = vector_tags;
+  _matrix_tags = matrix_tags;
+  _vector_tag_set = vector_tags;
+  _matrix_tag_set = matrix_tags;
+  _tag_arrays_built = true;
 }
 
 } // namespace Moose::Kokkos

@@ -72,11 +72,13 @@ public:
   };
 
   /**
-   * Compute the right-hand side contributions of this object
+   * Compute the right-hand side contributions of this object. The work is dispatched without
+   * waiting for it to finish; the caller fences before reading the results.
    */
   virtual void computeRightHandSide() = 0;
   /**
-   * Compute the matrix contributions of this object
+   * Compute the matrix contributions of this object. The work is dispatched without waiting for
+   * it to finish; the caller fences before reading the results.
    */
   virtual void computeMatrix() = 0;
 
@@ -103,10 +105,12 @@ protected:
   /// Kokkos variable
   Variable _var;
 
-  /// Vector (residual) tags this object contributes to
-  Array<TagID> _vector_tags;
-  /// Matrix tags this object contributes to
-  Array<TagID> _matrix_tags;
+  /// Vector (residual) tags this object contributes to. The copies made for each dispatch share
+  /// the arrays of the object they are copied from, which rebuilds them only when its tag sets
+  /// change, so that dispatching does not allocate and copy device memory.
+  mutable Array<TagID> _vector_tags;
+  /// Matrix tags this object contributes to (shared with the dispatch copies, see _vector_tags)
+  mutable Array<TagID> _matrix_tags;
 
   /// Dispatcher for the right-hand side computation loop
   std::unique_ptr<DispatcherBase> _rhs_dispatcher;
@@ -120,6 +124,18 @@ protected:
   /// Current time
   Scalar<Real> _t;
   ///@}
+
+private:
+  /// Rebuild _vector_tags and _matrix_tags if the governing TaggingInterface tag sets changed
+  void updateTagArrays() const;
+
+  /// Tag sets that _vector_tags and _matrix_tags were last built from
+  ///@{
+  mutable std::set<TagID> _vector_tag_set;
+  mutable std::set<TagID> _matrix_tag_set;
+  ///@}
+  /// Whether _vector_tags and _matrix_tags have been built
+  mutable bool _tag_arrays_built = false;
 };
 
 template <LinearSystemContributionObject::AccumulationMode mode>

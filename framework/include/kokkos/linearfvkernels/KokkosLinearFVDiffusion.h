@@ -36,6 +36,8 @@ public:
   template <typename Derived>
   KOKKOS_FUNCTION Real computeBoundaryRightHandSideContribution(
       const FVDatum & datum, const int bc_index, const MOOSE_KOKKOS_INDEX_TYPE bc_face_index) const;
+  template <typename Derived>
+  KOKKOS_FUNCTION Real computeFaceCoefficient(const FVDatum & datum) const;
 
 private:
   /**
@@ -48,7 +50,7 @@ private:
    */
   KOKKOS_FUNCTION Real faceConductance(const FVDatum & datum) const;
 
-  /// Method for evaluating the face diffusion coefficient
+  /// Method for reading the face diffusion coefficient evaluated by computeFaceCoefficient()
   KOKKOS_FUNCTION Real faceDiffusionCoefficient(const FVDatum & datum) const;
 
   /// Diffusion coefficient
@@ -93,8 +95,15 @@ KokkosLinearFVDiffusion::faceConductance(const FVDatum & datum) const
   return faceDiffusionCoefficient(datum) * datum.faceArea() / datum.faceDCNMag();
 }
 
+template <typename Derived>
+KOKKOS_FUNCTION Real
+KokkosLinearFVDiffusion::computeFaceCoefficient(const FVDatum & datum) const
+{
+  return _diffusion_coeff->value(_t, datum.faceCentroid());
+}
+
 KOKKOS_FUNCTION inline Real
 KokkosLinearFVDiffusion::faceDiffusionCoefficient(const FVDatum & datum) const
 {
-  return _diffusion_coeff->value(_t, datum.faceCentroid());
+  return faceCoefficient(datum);
 }

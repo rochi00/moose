@@ -42,7 +42,8 @@ LinearFVFluxKernel::LinearFVFluxKernel(const LinearFVFluxKernel & object)
     _internal_face_ids(object._internal_face_ids),
     _boundary_face_ids(object._boundary_face_ids),
     _internal_matrix_slots(object._internal_matrix_slots),
-    _boundary_matrix_slots(object._boundary_matrix_slots)
+    _boundary_matrix_slots(object._boundary_matrix_slots),
+    _face_coefficients(object._face_coefficients)
 {
 }
 
@@ -217,6 +218,9 @@ LinearFVFluxKernel::initialSetup()
   _internal_matrix_slots = internal_matrix_slots;
   _boundary_matrix_slots = boundary_matrix_slots;
 
+  if (DispatcherRegistry::hasUserMethod<InternalFaceCoefficientLoop>(type()))
+    _face_coefficients.createDevice(max_sides, n_elems);
+
 #ifndef NDEBUG
   _bc_index.copyToDevice();
 #endif
@@ -256,6 +260,31 @@ LinearFVFluxKernel::initialSetup()
 }
 
 void
+LinearFVFluxKernel::computeFaceCoefficients()
+{
+  if (!DispatcherRegistry::hasUserMethod<InternalFaceCoefficientLoop>(type()))
+    return;
+
+  if (_internal_face_ids.size())
+  {
+    Policy policy(0, _internal_face_ids.size());
+    if (!_internal_face_coefficient_dispatcher)
+      _internal_face_coefficient_dispatcher =
+          DispatcherRegistry::build<InternalFaceCoefficientLoop>(this, type());
+    _internal_face_coefficient_dispatcher->parallelForAsync(policy);
+  }
+
+  if (_boundary_face_ids.size())
+  {
+    Policy policy(0, _boundary_face_ids.size());
+    if (!_boundary_face_coefficient_dispatcher)
+      _boundary_face_coefficient_dispatcher =
+          DispatcherRegistry::build<BoundaryFaceCoefficientLoop>(this, type());
+    _boundary_face_coefficient_dispatcher->parallelForAsync(policy);
+  }
+}
+
+void
 LinearFVFluxKernel::computeRightHandSide()
 {
   if (hasInternalRightHandSideContribution() && _internal_face_ids.size())
@@ -263,7 +292,7 @@ LinearFVFluxKernel::computeRightHandSide()
     Policy policy(0, _internal_face_ids.size());
     if (!_internal_rhs_dispatcher)
       _internal_rhs_dispatcher = DispatcherRegistry::build<InternalRightHandSideLoop>(this, type());
-    _internal_rhs_dispatcher->parallelFor(policy);
+    _internal_rhs_dispatcher->parallelForAsync(policy);
   }
 
   if (_boundary_face_ids.size())
@@ -271,7 +300,7 @@ LinearFVFluxKernel::computeRightHandSide()
     Policy policy(0, _boundary_face_ids.size());
     if (!_boundary_rhs_dispatcher)
       _boundary_rhs_dispatcher = DispatcherRegistry::build<BoundaryRightHandSideLoop>(this, type());
-    _boundary_rhs_dispatcher->parallelFor(policy);
+    _boundary_rhs_dispatcher->parallelForAsync(policy);
   }
 }
 
@@ -283,7 +312,7 @@ LinearFVFluxKernel::computeMatrix()
     Policy policy(0, _internal_face_ids.size());
     if (!_internal_matrix_dispatcher)
       _internal_matrix_dispatcher = DispatcherRegistry::build<InternalMatrixLoop>(this, type());
-    _internal_matrix_dispatcher->parallelFor(policy);
+    _internal_matrix_dispatcher->parallelForAsync(policy);
   }
 
   if (DispatcherRegistry::hasUserMethod<BoundaryMatrixLoop>(type()) && _boundary_face_ids.size())
@@ -291,7 +320,7 @@ LinearFVFluxKernel::computeMatrix()
     Policy policy(0, _boundary_face_ids.size());
     if (!_boundary_matrix_dispatcher)
       _boundary_matrix_dispatcher = DispatcherRegistry::build<BoundaryMatrixLoop>(this, type());
-    _boundary_matrix_dispatcher->parallelFor(policy);
+    _boundary_matrix_dispatcher->parallelForAsync(policy);
   }
 }
 

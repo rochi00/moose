@@ -57,7 +57,7 @@ LinearFVElementalKernel::computeRightHandSide()
   Policy policy(0, numKokkosBlockElements());
   if (!_rhs_dispatcher)
     _rhs_dispatcher = DispatcherRegistry::build<RightHandSideLoop>(this, type());
-  _rhs_dispatcher->parallelFor(policy);
+  _rhs_dispatcher->parallelForAsync(policy);
 }
 
 void
@@ -68,7 +68,7 @@ LinearFVElementalKernel::computeMatrix()
     Policy policy(0, numKokkosBlockElements());
     if (!_matrix_dispatcher)
       _matrix_dispatcher = DispatcherRegistry::build<MatrixLoop>(this, type());
-    _matrix_dispatcher->parallelFor(policy);
+    _matrix_dispatcher->parallelForAsync(policy);
   }
 }
 

@@ -60,4 +60,36 @@
     max_threads = 1
     min_slots = 2
   []
+  [kokkos_threads]
+    type = MMSTest
+    input = 'test.py'
+    test_case = TestKokkosLinearFVDiffusion2DOrthogonalNeumannKokkosThreads
+    requirement = 'The system shall dispatch Kokkos linear finite volume kernels and boundary conditions with multiple host backend threads, set independently of the MOOSE thread count, and retain second-order convergence for a two-dimensional diffusion problem with mixed Dirichlet and Neumann boundary conditions.'
+    capabilities = 'kokkos'
+    compute_devices = 'cpu'
+    max_threads = 1
+  []
+  [device_petsc_types]
+    requirement = 'The system shall keep the matrix and vectors of a linear system assembled only by Kokkos objects in device memory on GPU builds'
+    [default]
+      type = RunApp
+      input = 'kokkos_diffusion-2d.i'
+      cli_args = 'Mesh/gmg/nx=4 Mesh/gmg/ny=4 -ksp_view'
+      expect_out = "Linear system 'u_sys' is assembled by Kokkos objects only; keeping its matrix and vectors in device memory.*type: (seq|mpi)aijkokkos"
+      detail = 'by default, and'
+      capabilities = 'kokkos'
+      compute_devices = 'cuda xpu'
+      max_threads = 1
+    []
+    [user_types]
+      type = RunApp
+      input = 'kokkos_diffusion-2d.i'
+      cli_args = 'Mesh/gmg/nx=4 Mesh/gmg/ny=4 -vec_type standard -u_sys_mat_type aij'
+      absent_out = 'keeping its matrix and vectors in device memory'
+      detail = 'not when the input or the command line selects other PETSc types.'
+      capabilities = 'kokkos'
+      compute_devices = 'cuda xpu'
+      max_threads = 1
+    []
+  []
 []

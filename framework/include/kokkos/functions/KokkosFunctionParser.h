@@ -373,6 +373,12 @@ public:
 
 private:
   /**
+   * Whether the expression reads no field variables, material properties or functions, whose
+   * values the copies made for dispatch must capture on their own
+   */
+  bool usesOnlyScalars() const { return !_num_fields && !_num_properties && !_num_functions; }
+
+  /**
    * RPN instruction
    */
   struct Instruction
