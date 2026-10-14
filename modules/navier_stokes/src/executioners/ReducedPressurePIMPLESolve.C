@@ -194,22 +194,18 @@ ReducedPressurePIMPLESolve::validParams()
       "Maximum allowed alpha Courant number during subcycling. The executioner increases the "
       "alpha subcycle count as needed so the current transported volumetric flux satisfies this "
       "limit.");
-  MooseEnum startup_pressure_initialization("none projection-only", "projection-only");
-  params.addParam<MooseEnum>(
-      "startup_pressure_initialization",
-      startup_pressure_initialization,
-      "Startup reduced-pressure initialization policy on the first time step. Use "
-      "'projection-only' to apply startup continuity projection without overwriting the "
-      "user-supplied reduced-pressure field, or 'none' to skip startup pressure "
-      "cleanup entirely.");
+  params.addParam<bool>("startup_continuity_projection",
+                        true,
+                        "Whether to repair the initial face flux with pressure-only continuity "
+                        "projections on the first time step, leaving the user-supplied reduced "
+                        "pressure field untouched.");
   params.addRangeCheckedParam<unsigned int>(
       "startup_flux_corrections",
       1,
       "startup_flux_corrections>0",
-      "Number of pressure-only startup cleanup / projection corrections applied when "
-      "startup_pressure_initialization is not 'none'.");
+      "Number of pressure-only continuity projections of the startup repair.");
   params.addParamNamesToGroup(
-      "volume_fraction_subcycles volume_fraction_max_courant startup_pressure_initialization "
+      "volume_fraction_subcycles volume_fraction_max_courant startup_continuity_projection "
       "startup_flux_corrections",
       "Volume Fraction Equations");
   return params;
@@ -219,11 +215,9 @@ ReducedPressurePIMPLESolve::ReducedPressurePIMPLESolve(Executioner & ex)
   : PIMPLESolve(ex),
     _volume_fraction_subcycles(getParam<unsigned int>("volume_fraction_subcycles")),
     _volume_fraction_max_courant(getParam<Real>("volume_fraction_max_courant")),
+    _startup_continuity_projection(getParam<bool>("startup_continuity_projection")),
     _startup_flux_corrections(getParam<unsigned int>("startup_flux_corrections"))
 {
-  _startup_pressure_initialization =
-      getParam<MooseEnum>("startup_pressure_initialization").operator std::string();
-
   if (_pin_pressure)
     paramError("pin_pressure",
                "ReducedPressurePIMPLE supports pressure boundary-condition constraints only; "
@@ -231,15 +225,9 @@ ReducedPressurePIMPLESolve::ReducedPressurePIMPLESolve(Executioner & ex)
 }
 
 bool
-ReducedPressurePIMPLESolve::startupPressureInitializationEnabled() const
-{
-  return _startup_pressure_initialization != "none";
-}
-
-bool
 ReducedPressurePIMPLESolve::shouldRunStartupInitialization() const
 {
-  return startupPressureInitializationEnabled() && _problem.timeStep() == 1;
+  return _startup_continuity_projection && _problem.timeStep() == 1;
 }
 
 bool

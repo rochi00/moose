@@ -43,7 +43,6 @@ protected:
   void postPublishPressureCorrectedState() override;
 
 private:
-  bool startupPressureInitializationEnabled() const;
   bool shouldRunStartupInitialization() const;
   bool solvesVolumeFraction() const;
   void initializeStartupPressureField(const SolverParams & solver_params);
@@ -87,6 +86,6 @@ private:
 
   const unsigned int _volume_fraction_subcycles;
   const Real _volume_fraction_max_courant;
-  std::string _startup_pressure_initialization;
+  const bool _startup_continuity_projection;
   const unsigned int _startup_flux_corrections;
 };

@@ -209,7 +209,6 @@ interface_width = 0.015625
   active_scalar_petsc_options_iname = '-pc_type'
   active_scalar_petsc_options_value = 'lu'
 
-  startup_pressure_initialization = 'projection-only'
   startup_flux_corrections = 2
 
   volume_fraction_subcycles = 1
