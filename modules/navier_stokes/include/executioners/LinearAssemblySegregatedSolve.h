@@ -43,8 +43,6 @@ public:
 protected:
   virtual std::vector<std::pair<unsigned int, Real>> solveMomentumPredictor() override;
   virtual std::pair<unsigned int, Real> solvePressureCorrector() override;
-  virtual void addMomentumPredictorExplicitForcing(const unsigned int system_i,
-                                                   NumericVector<Number> & rhs);
 
   struct MomentumPredictorAssembly
   {

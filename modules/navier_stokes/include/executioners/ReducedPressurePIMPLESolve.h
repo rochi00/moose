@@ -39,8 +39,6 @@ protected:
                                     const SolverParams & solver_params) override;
   bool shouldAssembleMomentumPredictorWithoutSolve() const override;
   bool shouldSolveActiveScalarsAfterFlowLoop() const override;
-  void addMomentumPredictorExplicitForcing(const unsigned int system_i,
-                                           NumericVector<Number> & rhs) override;
   void postPreparePressureCorrectorState() override;
   void postPublishPressureCorrectedState() override;
 

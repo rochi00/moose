@@ -215,7 +215,6 @@ WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::setRhieChowUserObjectParams
     InputParameters & params) const
 {
   WCNSLinearFVFlowPhysics::setRhieChowUserObjectParams(params);
-  params.set<bool>("split_momentum_predictor_operator") = true;
   if (parameters().isParamValid("gravity"))
     params.set<RealVectorValue>("gravity") = getParam<RealVectorValue>("gravity");
   if (_solve_for_dynamic_pressure)

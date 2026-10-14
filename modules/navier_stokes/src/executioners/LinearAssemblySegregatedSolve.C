@@ -372,9 +372,6 @@ LinearAssemblySegregatedSolve::solveMomentumPredictor()
   // Solve the momentum equations.
   // TO DO: These equations are VERY similar. If we can store the differences (things coming from
   // BCs for example) separately, it is enough to construct one matrix.
-  if (_rc_uo)
-    _rc_uo->clearMomentumPredictorOperatorCache();
-
   for (const auto system_i : index_range(_momentum_systems))
   {
     // Assemble and relax through the shared routine, so that a split predictor operator also
@@ -478,33 +475,24 @@ LinearAssemblySegregatedSolve::assembleMomentumPredictorOperator(const unsigned 
     rhs.close();
   }
 
-  if (_rc_uo && _rc_uo->splitMomentumPredictorOperator())
-    _rc_uo->beginFVSplitMomentumPredictorOperatorAssembly(system_i);
+  if (_rc_uo)
+    _rc_uo->beginMomentumPredictorAssembly(system_i);
 
   _problem.computeLinearSystemSys(momentum_system, mmat, rhs, /*compute_grads*/ true);
 
   if (prepare_without_solve)
     rhs.close();
 
-  if (_rc_uo && _rc_uo->splitMomentumPredictorOperator())
-    _rc_uo->cacheFVSplitMomentumPredictorOperatorAssembly(system_i, mmat, rhs);
-
-  if (_rc_uo && _rc_uo->splitMomentumPredictorOperator())
-    _rc_uo->completeFVSplitMomentumPredictorOperatorAssembly(system_i,
-                                                             _momentum_equation_relaxation);
+  // The provider sees the operator as assembled, before relaxation alters its diagonal
+  if (_rc_uo)
+    _rc_uo->momentumPredictorAssembled(system_i, mmat, rhs, _momentum_equation_relaxation);
 
   applyMomentumEquationRelaxation(mmat, rhs, solution, *diff_diagonal);
 
-  if (_rc_uo && _rc_uo->splitMomentumPredictorOperator())
-    addMomentumPredictorExplicitForcing(system_i, rhs);
+  if (_rc_uo)
+    _rc_uo->addMomentumPredictorExplicitForcing(system_i, rhs);
 
   return {&momentum_system, &solution, &rhs, &mmat};
-}
-
-void
-LinearAssemblySegregatedSolve::addMomentumPredictorExplicitForcing(const unsigned int /*system_i*/,
-                                                                   NumericVector<Number> & /*rhs*/)
-{
 }
 
 void
@@ -836,9 +824,6 @@ LinearAssemblySegregatedSolve::assembleMomentumPredictorWithoutSolve()
 {
   if (_momentum_systems.empty())
     return;
-
-  if (_rc_uo)
-    _rc_uo->clearMomentumPredictorOperatorCache();
 
   for (const auto system_i : index_range(_momentum_systems))
   {

@@ -124,24 +124,28 @@ public:
    * arithmetic for the ordinary case lives in updateCellVelocity.
    */
   virtual void computeCellVelocity();
-  /// Accessor for the current cell Ainv state.
-  Real cellAinvRaw(const unsigned int system_i, const dof_id_type dof) const;
-  /// Begin streaming native linear FV assembly contributions into the cached split predictor.
-  void beginFVSplitMomentumPredictorOperatorAssembly(const unsigned int system_i);
-  /// Finalize the split predictor assembled from the momentum operator.
-  void completeFVSplitMomentumPredictorOperatorAssembly(const unsigned int system_i,
-                                                        const Real relaxation_parameter);
-  /// Populate cached split-predictor internals from the assembled momentum operator.
-  void cacheFVSplitMomentumPredictorOperatorAssembly(const unsigned int system_i,
-                                                     libMesh::SparseMatrix<Number> & matrix,
-                                                     const NumericVector<Number> & rhs);
-  /// Invalidate the cached assembled/relaxed momentum predictor operator.
-  void clearMomentumPredictorOperatorCache();
-  /// Add explicit forcing to the momentum predictor RHS after the base operator assembly.
+  /**
+   * The momentum predictor assembly seams. The executioner announces each component's assembly,
+   * hands over the assembled, not yet relaxed operator, and finally offers the relaxed right hand
+   * side for explicit forcing. A provider that assembles its predictor without the pressure and
+   * body forces (see splitMomentumPredictorOperator) keeps the operator here and adds those
+   * forces itself; this provider needs none of it.
+   */
+  virtual void beginMomentumPredictorAssembly(const unsigned int /*system_i*/) {}
+  virtual void momentumPredictorAssembled(const unsigned int /*system_i*/,
+                                          libMesh::SparseMatrix<Number> & /*matrix*/,
+                                          const NumericVector<Number> & /*rhs*/,
+                                          const Real /*relaxation_parameter*/)
+  {
+  }
   virtual void addMomentumPredictorExplicitForcing(const unsigned int system_i,
                                                    NumericVector<Number> & rhs) const;
-  /// Whether the predictor operator excludes explicit pressure/body-force terms.
-  bool splitMomentumPredictorOperator() const { return _split_momentum_predictor_operator; }
+  /**
+   * Whether the momentum predictor is assembled without its explicit pressure and body forces.
+   * The flow physics then adds no momentum pressure kernel, and the coupling pressure gradient is
+   * requested here rather than read off that kernel.
+   */
+  virtual bool splitMomentumPredictorOperator() const { return false; }
 
   /**
    * Whether this provider's pressure-correction face fluxes carry the face measure, rather than
@@ -231,7 +235,6 @@ protected:
 
   /// Check the single-variable system layout assumed by reconstructed pressure-gradient vector ops.
   void checkReconstructedPressureGradientCompatibility() const;
-  struct MomentumPredictorOperator;
   struct FaceMomentumPredictorState
   {
     Real face_rho = 0.0;
@@ -313,18 +316,20 @@ protected:
   interpolateMomentumVectorReadersToFace(const FaceInfo * fi,
                                          const std::vector<PetscVectorReader> & readers) const;
 
+  /**
+   * Form H(u) - b and the diagonal A of one momentum component, in the momentum system's layout.
+   * The stock predictor carries the pressure force in its right hand side, so it is removed again
+   * here with the coupling gradient snapshot the momentum pressure source used.
+   */
+  virtual void computePredictorOperator(const unsigned int system_i,
+                                        NumericVector<Number> & HbyA,
+                                        NumericVector<Number> & Ainv);
+
   /// Build the base predictor operator vectors M*u - A*u - rhs and the relaxed diagonal.
   void computePredictorOperatorBase(const unsigned int system_i,
                                     NumericVector<Number> & base_raw,
                                     NumericVector<Number> & diagonal_raw,
                                     const NumericVector<Number> * rhs_override = nullptr) const;
-
-  /// Finalize all component operators as one vector momentum-predictor object.
-  void finalizeCachedMomentumPredictorOperators();
-
-  /// Access the cached momentum-predictor operator for a component.
-  const MomentumPredictorOperator *
-  cachedMomentumPredictorOperator(const unsigned int system_i) const;
 
   /**
    * Check the block consistency between the passed in \p var and us
@@ -438,15 +443,6 @@ protected:
 
   /// Indicates whether _boundary_velocity_face_values matches the latest cell-centered velocity.
   bool _velocity_boundary_state_valid = false;
-
-  /// Whether the momentum predictor operator excludes the explicit pressure/body-force terms
-  const bool _split_momentum_predictor_operator;
-
-  /// Predictor operators for each momentum component.
-  std::vector<std::unique_ptr<MomentumPredictorOperator>> _momentum_predictor_operators;
-
-  /// Whether every component operator has been assembled and finalized since the last clear
-  bool _predictor_ready = false;
 
   /**
    * Producer counter for the conservative face mass flux: incremented every time

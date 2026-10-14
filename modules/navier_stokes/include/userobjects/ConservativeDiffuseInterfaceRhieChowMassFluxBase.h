@@ -44,6 +44,16 @@ public:
   void meshChanged() override;
   void initialSetup() override;
   void initialize() override;
+  void beginMomentumPredictorAssembly(const unsigned int system_i) override;
+  void momentumPredictorAssembled(const unsigned int system_i,
+                                  libMesh::SparseMatrix<Number> & matrix,
+                                  const NumericVector<Number> & rhs,
+                                  const Real relaxation_parameter) override;
+  /// The predictor is assembled without the pressure and body forces, which
+  /// addMomentumPredictorExplicitForcing supplies from the reduced pressure, gravity and
+  /// capillarity; H/A then comes from the operator as assembled, treating the boundary
+  /// coefficients as OpenFOAM's fvMatrix::A() and H() do.
+  bool splitMomentumPredictorOperator() const override { return true; }
   void cachePressureEquationFlux() override;
   void computeFaceMassFlux() override;
   void computeCellVelocity() override;
@@ -72,6 +82,16 @@ public:
 
 protected:
   using FaceScalarField = FaceCenteredMapFunctor<Real, std::unordered_map<dof_id_type, Real>>;
+  struct MomentumPredictorOperator;
+
+  void computePredictorOperator(const unsigned int system_i,
+                                NumericVector<Number> & HbyA,
+                                NumericVector<Number> & Ainv) override;
+  /// Finalize all component operators as one vector momentum-predictor object.
+  void finalizeCachedMomentumPredictorOperators();
+  /// Access the momentum-predictor operator for a component.
+  const MomentumPredictorOperator *
+  cachedMomentumPredictorOperator(const unsigned int system_i) const;
 
   Real pressureBoundaryTargetFlux(const FaceInfo * fi,
                                   const Moose::StateArg & time_arg) const override;
@@ -157,4 +177,10 @@ protected:
   const Moose::Functor<RealVectorValue> * _surface_tension_force = nullptr;
   bool _startup_projection_active = false;
   bool _pressure_coupled_velocity_correction_valid = false;
+
+  /// Predictor operators for each momentum component.
+  std::vector<std::unique_ptr<MomentumPredictorOperator>> _momentum_predictor_operators;
+
+  /// Whether every component operator has been assembled and finalized since the last begin
+  bool _predictor_ready = false;
 };

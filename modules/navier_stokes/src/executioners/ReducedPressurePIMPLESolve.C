@@ -385,15 +385,6 @@ ReducedPressurePIMPLESolve::shouldSolveActiveScalarsAfterFlowLoop() const
   return false;
 }
 
-void
-ReducedPressurePIMPLESolve::addMomentumPredictorExplicitForcing(const unsigned int system_i,
-                                                                NumericVector<Number> & rhs)
-{
-  if (auto * diffuse_rc = diffuseInterfaceRC();
-      diffuse_rc && diffuse_rc->splitMomentumPredictorOperator())
-    diffuse_rc->addMomentumPredictorExplicitForcing(system_i, rhs);
-}
-
 ConservativeDiffuseInterfaceRhieChowMassFlux *
 ReducedPressurePIMPLESolve::diffuseInterfaceRC() const
 {
