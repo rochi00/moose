@@ -181,12 +181,6 @@ linearFVCellVelocity(const LinearFVVelocityVariableArray & velocity_vars,
 }
 
 const ElemInfo &
-linearFVBoundaryElemInfo(const FaceInfo & fi, const FaceInfo::VarFaceNeighbors face_type)
-{
-  return face_type == FaceInfo::VarFaceNeighbors::NEIGHBOR ? *fi.neighborInfo() : *fi.elemInfo();
-}
-
-const ElemInfo &
 linearFVFaceSideElemInfo(const FaceInfo & fi, const FaceInfo::VarFaceNeighbors face_type)
 {
   return face_type == FaceInfo::VarFaceNeighbors::ELEM ? *fi.elemInfo() : *fi.neighborInfo();
@@ -201,14 +195,7 @@ linearFVBoundaryNormalMultiplier(const FaceInfo::VarFaceNeighbors face_type)
 RealVectorValue
 linearFVOutwardUnitNormal(const FaceInfo & fi, const FaceInfo::VarFaceNeighbors face_type)
 {
-  auto normal = fi.normal();
-  normal *= linearFVBoundaryNormalMultiplier(face_type);
-
-  const Real normal_magnitude = normal.norm();
-  if (normal_magnitude <= libMesh::TOLERANCE)
-    return RealVectorValue();
-
-  return normal / normal_magnitude;
+  return linearFVBoundaryNormalMultiplier(face_type) * fi.normal();
 }
 
 template <class T>

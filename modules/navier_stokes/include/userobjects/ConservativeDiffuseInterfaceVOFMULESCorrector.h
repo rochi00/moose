@@ -108,7 +108,6 @@ private:
   Real boundaryValue(const FaceInfo & fi, const FaceTransportData & face_data) const;
   bool hasFaceSide(const FaceInfo & fi, bool fi_elem_side) const override;
   Real cellVolume(const ElemInfo & elem_info) const;
-  Real faceMeasure(const FaceInfo & fi) const;
   Real cellAlpha(const ElemInfo & elem_info) const;
   Real oldCellAlpha(const ElemInfo & elem_info) const;
   Real boundedAlpha(Real value) const;

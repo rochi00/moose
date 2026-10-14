@@ -266,8 +266,6 @@ protected:
   Moose::FaceArg makeCenteredFaceArg(const FaceInfo * fi,
                                      const Elem * face_side = nullptr,
                                      const Moose::StateArg * limiter_state = nullptr) const;
-  /// Geometric face measure used to convert between flux density and integrated flux.
-  Real faceMeasure(const FaceInfo & fi) const;
   /// Face area supplied to the pressure diffusion kernel, in this provider's flux convention.
   Real pressureDiffusionFaceArea(const FaceInfo * fi) const;
   /// Evaluate or fetch the boundary face value for a velocity component.

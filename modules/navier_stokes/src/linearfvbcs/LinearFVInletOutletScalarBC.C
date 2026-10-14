@@ -42,7 +42,7 @@ LinearFVInletOutletScalarBC::LinearFVInletOutletScalarBC(const InputParameters &
 const ElemInfo &
 LinearFVInletOutletScalarBC::fluidElemInfo() const
 {
-  return NS::linearFVBoundaryElemInfo(*_current_face_info, _current_face_type);
+  return NS::linearFVFaceSideElemInfo(*_current_face_info, _current_face_type);
 }
 
 bool

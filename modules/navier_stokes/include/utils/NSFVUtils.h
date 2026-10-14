@@ -49,6 +49,14 @@ namespace NS
 {
 using LinearFVVelocityVariableArray = std::array<const MooseLinearVariableFVReal *, 3>;
 
+/// The measure of a face: its area times the coordinate factor, so it is a length in 2D Cartesian
+/// and an area in 3D, and carries the axisymmetric factor where one applies.
+inline Real
+faceMeasure(const FaceInfo & fi)
+{
+  return fi.faceArea() * fi.faceCoord();
+}
+
 /**
  * Adds the standard velocity-component parameters used by linear FV Navier-Stokes objects.
  */
@@ -70,8 +78,7 @@ RealVectorValue linearFVCellVelocity(const LinearFVVelocityVariableArray & veloc
                                      const ElemInfo & elem_info,
                                      const Moose::StateArg & state);
 
-const ElemInfo & linearFVBoundaryElemInfo(const FaceInfo & fi,
-                                          FaceInfo::VarFaceNeighbors face_type);
+/// The element on the side of a face that the current face type names
 const ElemInfo & linearFVFaceSideElemInfo(const FaceInfo & fi,
                                           FaceInfo::VarFaceNeighbors face_type);
 Real linearFVBoundaryNormalMultiplier(FaceInfo::VarFaceNeighbors face_type);

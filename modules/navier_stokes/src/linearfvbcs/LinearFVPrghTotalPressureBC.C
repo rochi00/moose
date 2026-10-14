@@ -50,7 +50,7 @@ LinearFVPrghTotalPressureBC::LinearFVPrghTotalPressureBC(const InputParameters &
 const ElemInfo &
 LinearFVPrghTotalPressureBC::fluidElemInfo() const
 {
-  return NS::linearFVBoundaryElemInfo(*_current_face_info, _current_face_type);
+  return NS::linearFVFaceSideElemInfo(*_current_face_info, _current_face_type);
 }
 
 bool

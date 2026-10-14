@@ -24,6 +24,7 @@
 #include "ElemInfo.h"
 #include "MathFVUtils.h"
 #include "MathUtils.h"
+#include "NSFVUtils.h"
 
 #include "timpi/parallel_sync.h"
 
@@ -323,12 +324,6 @@ ConservativeDiffuseInterfaceVOFMULESCorrector::cellVolume(const ElemInfo & elem_
 }
 
 Real
-ConservativeDiffuseInterfaceVOFMULESCorrector::faceMeasure(const FaceInfo & fi) const
-{
-  return fi.faceArea() * fi.faceCoord();
-}
-
-Real
 ConservativeDiffuseInterfaceVOFMULESCorrector::cellAlpha(const ElemInfo & elem_info) const
 {
   return _alpha_var->getElemValue(elem_info, Moose::currentState());
@@ -498,7 +493,7 @@ ConservativeDiffuseInterfaceVOFMULESCorrector::faceTransportData(const FaceInfo 
     return data;
 
   data.volumetric_flux = _face_flux(functorFaceArg(_face_flux, fi), Moose::currentState());
-  data.integrated_flux = data.volumetric_flux * faceMeasure(fi);
+  data.integrated_flux = data.volumetric_flux * NS::faceMeasure(fi);
   data.upwind_is_elem = data.volumetric_flux >= 0.0;
   data.boundary_condition = _alpha_var->getBoundaryCondition(fi);
   data.boundary_kind =
@@ -618,7 +613,7 @@ ConservativeDiffuseInterfaceVOFMULESCorrector::rhoPhi(const FaceInfo & fi,
   const Real liquid_density =
       MetaPhysicL::raw_value(_liquid_density(functorFaceArg(_liquid_density, fi), state));
   const Real volumetric_mass_flux =
-      _face_flux(functorFaceArg(_face_flux, fi), Moose::currentState()) * faceMeasure(fi) *
+      _face_flux(functorFaceArg(_face_flux, fi), Moose::currentState()) * NS::faceMeasure(fi) *
       gas_density;
   return volumetric_mass_flux + (liquid_density - gas_density) * limited_alpha_flux;
 }
@@ -640,7 +635,7 @@ ConservativeDiffuseInterfaceVOFMULESCorrector::rhoCpPhi(const FaceInfo & fi,
   const Real liquid_specific_heat = MetaPhysicL::raw_value(
       (*_liquid_specific_heat)(functorFaceArg(*_liquid_specific_heat, fi), state));
   const Real volumetric_heat_capacity_flux = _face_flux(functorFaceArg(_face_flux, fi), state) *
-                                             faceMeasure(fi) * gas_density * gas_specific_heat;
+                                             NS::faceMeasure(fi) * gas_density * gas_specific_heat;
   return volumetric_heat_capacity_flux +
          (liquid_density * liquid_specific_heat - gas_density * gas_specific_heat) *
              limited_alpha_flux;
@@ -1196,24 +1191,24 @@ ConservativeDiffuseInterfaceVOFMULESCorrector::applyCorrection(const Real dt,
 
   std::unordered_map<dof_id_type, Real> working_alpha_flux;
 
+  const auto publish = [&](const std::vector<FaceCorrectionData> & face_corrections,
+                           const std::vector<Real> & alpha_fluxes)
+  {
+    publishFaceFluxes(face_corrections, alpha_fluxes, subcycle_fraction);
+    applyConfinedScalarTransport(face_corrections, alpha_fluxes, dt);
+    applyThermalEnergyTransport(face_corrections, alpha_fluxes, dt);
+  };
+
+  // Without a correction sweep the donor flux is the published flux.
   if (_num_alpha_corrections == 0)
   {
     _system->computeGradients();
-
     const auto face_corrections = collectFaceCorrectionData();
-
-    if (face_corrections.empty())
-      return;
-
-    std::vector<Real> donor_flux(face_corrections.size(), 0.0);
+    std::vector<Real> donor_flux(face_corrections.size());
     for (const auto i : index_range(face_corrections))
       donor_flux[i] = face_corrections[i].donor_flux;
-
-    publishFaceFluxes(face_corrections, donor_flux, subcycle_fraction);
-    applyConfinedScalarTransport(face_corrections, donor_flux, dt);
-    applyThermalEnergyTransport(face_corrections, donor_flux, dt);
-    _system->computeGradients();
-    return;
+    if (!face_corrections.empty())
+      publish(face_corrections, donor_flux);
   }
 
   for (const auto correction_it : make_range(_num_alpha_corrections))
@@ -1451,11 +1446,7 @@ ConservativeDiffuseInterfaceVOFMULESCorrector::applyCorrection(const Real dt,
     }
 
     if (correction_it + 1 == _num_alpha_corrections)
-    {
-      publishFaceFluxes(face_corrections, accumulated_alpha_flux, subcycle_fraction);
-      applyConfinedScalarTransport(face_corrections, accumulated_alpha_flux, dt);
-      applyThermalEnergyTransport(face_corrections, accumulated_alpha_flux, dt);
-    }
+      publish(face_corrections, accumulated_alpha_flux);
   }
 
   _system->computeGradients();

@@ -63,18 +63,11 @@ reconstructCellVectorFromFaceNormalScalars(const MooseMesh & moose_mesh,
 
   for (const auto side : make_range(elem->n_sides()))
   {
-    const Elem * const loc_neighbor = elem->neighbor_ptr(side);
-    const bool elem_has_fi = Moose::FV::elemHasFaceInfo(*elem, loc_neighbor);
-    if (!elem_has_fi && !loc_neighbor)
-      continue;
-
-    const FaceInfo * const fi_loc =
-        moose_mesh.faceInfo(elem_has_fi ? elem : loc_neighbor,
-                            elem_has_fi ? side : loc_neighbor->which_neighbor_am_i(elem));
+    const FaceInfo * const fi_loc = NS::faceInfoForElementSide(moose_mesh, elem, side);
     if (!fi_loc)
       continue;
 
-    const Real face_measure = fi_loc->faceArea() * fi_loc->faceCoord();
+    const Real face_measure = NS::faceMeasure(*fi_loc);
     if (face_measure <= 0.0)
       continue;
 
@@ -208,7 +201,7 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::getMassFlux(const FaceInfo & f
   // fraction update actually transported, and across a large density jump the two differ: the
   // transported product does not factor into one face density times one face volumetric flux.
   // _face_mass_flux remains what the base class and restart expect; this is what advection needs.
-  const Real face_measure = faceMeasure(fi);
+  const Real face_measure = NS::faceMeasure(fi);
   return face_measure > 0.0 ? vofRhoPhiIntegrated(fi) / face_measure : 0.0;
 }
 
@@ -344,7 +337,7 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::pressureBoundaryTargetFlux(
   if (!fi)
     return 0.0;
 
-  return boundaryVolumetricFluxTarget(fi, time_arg) * faceMeasure(*fi);
+  return boundaryVolumetricFluxTarget(fi, time_arg) * NS::faceMeasure(*fi);
 }
 
 Real
@@ -406,7 +399,7 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::correctedTransportPhi(const Fa
     return std::abs(face_rho) > libMesh::TOLERANCE ? face_flux_of(_face_mass_flux) / face_rho : 0.0;
   }
 
-  const Real face_measure = faceMeasure(fi);
+  const Real face_measure = NS::faceMeasure(fi);
   if (face_measure <= libMesh::TOLERANCE)
     return 0.0;
 
@@ -428,7 +421,7 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::writebackReconstructionScalar(
 
   // The diffuse pressure equation stores area-integrated phi. Convert back to the
   // normal-flux-density transport convention only at the writeback boundary.
-  const Real face_measure = faceMeasure(*fi);
+  const Real face_measure = NS::faceMeasure(*fi);
   if (face_measure <= libMesh::TOLERANCE)
     return 0.0;
 
@@ -807,7 +800,7 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::updateAdditionalPressureFluxFu
                                         time_arg,
                                         /* use_boundary_velocity_values = */ true);
 
-    const Real face_measure = faceMeasure(*fi);
+    const Real face_measure = NS::faceMeasure(*fi);
     // FaceMomentumPredictorState carries H/A with the sign it is stored in, so that the velocity
     // u = -(H/A) - Ainv grad(p). The reduced-pressure predictor flux is a velocity, and the
     // bookkeeping below negates it once more when forming the base flux, so convert here rather

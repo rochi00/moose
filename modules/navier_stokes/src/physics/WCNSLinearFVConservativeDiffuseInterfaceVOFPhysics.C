@@ -321,14 +321,16 @@ WCNSLinearFVConservativeDiffuseInterfaceVOFPhysics::addScalarAdvectionKernels()
           : InterpolationMethodName(
                 std::string(getParam<MooseEnum>("passive_scalar_advection_interpolation")));
 
-  addLinearFVScalarAdvectionKernel(
-      _passive_scalar_names[0],
-      prefix() + "alpha_advection",
-      _flow_equations_physics->rhieChowUOName(),
-      method_name,
-      _blocks,
-      [](InputParameters & params)
-      { params.set<MooseFunctorName>("face_flux") = "lagged_corrected_face_phi"; });
+  const std::string kernel_type = "LinearFVScalarAdvection";
+  InputParameters params = getFactory().getValidParams(kernel_type);
+  assignBlocks(params, _blocks);
+  params.set<LinearVariableName>("variable") = _passive_scalar_names[0];
+  params.set<UserObjectName>("rhie_chow_user_object") = _flow_equations_physics->rhieChowUOName();
+  params.set<InterpolationMethodName>("advected_interp_method_name") = method_name;
+  // The volume fraction advances with the flux frozen for this outer iteration, so that the
+  // limited flux it publishes and the backflow switches that read it agree.
+  params.set<MooseFunctorName>("face_flux") = "lagged_corrected_face_phi";
+  getProblem().addLinearFVKernel(kernel_type, prefix() + "alpha_advection", params);
 }
 
 void

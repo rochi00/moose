@@ -476,10 +476,7 @@ ReducedPressurePIMPLESolve::advanceVolumeFractionSubcycleOldState(LinearSystem &
 void
 ReducedPressurePIMPLESolve::initializeStartupPressureField(const SolverParams & solver_params)
 {
-  if (!startupPressureInitializationEnabled() || _problem.timeStep() != 1)
-    return;
-
-  if (!_should_solve_pressure)
+  if (!shouldRunStartupInitialization())
     return;
 
   _console << "Applying startup continuity projection before PIMPLE iterations" << std::endl;
@@ -553,7 +550,6 @@ ReducedPressurePIMPLESolve::solveVolumeFractionSystems()
                                                        std::make_pair(0, 1.0));
 
   const Real global_dt = _problem.dt();
-  const Real global_time = _problem.time();
   const Real global_time_old = _problem.timeOld();
   const unsigned int num_subcycles = computeVolumeFractionSubcycles();
   const Real subcycle_dt = global_dt / num_subcycles;
@@ -567,9 +563,8 @@ ReducedPressurePIMPLESolve::solveVolumeFractionSystems()
     residuals[i] =
         solveOneVolumeFractionSystem(i, num_subcycles, subcycle_dt, global_dt, global_time_old);
 
-  _problem.dt() = global_dt;
-  _problem.time() = global_time;
-  _problem.timeOld() = global_time_old;
+  // The transport state is published at the global time, not the last subcycle's.
+  time_guard.restore();
   finalizeVolumeFractionTransportState();
 
   return residuals;

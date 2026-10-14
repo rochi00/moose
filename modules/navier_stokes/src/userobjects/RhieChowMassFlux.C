@@ -30,7 +30,7 @@
 #include "LinearFVKernel.h"
 #include "LinearFVBoundaryCondition.h"
 #include "LinearFVFluxKernel.h"
-#include "MooseUtils.h"
+#include "NSFVUtils.h"
 
 #include <algorithm>
 #include <cmath>
@@ -935,7 +935,7 @@ RhieChowMassFlux::maxCourant(const Real dt) const
     if (!fi)
       continue;
 
-    const Real face_measure = faceMeasure(*fi);
+    const Real face_measure = NS::faceMeasure(*fi);
     const Real face_volumetric_flux = std::abs(getVolumetricFaceFlux(*fi));
     const Real volumetric_flux = face_volumetric_flux * face_measure;
 
@@ -1644,7 +1644,7 @@ RhieChowMassFlux::pressureDiffusionFaceArea(const FaceInfo * fi) const
   if (!pressureCorrectionFluxIsIntegrated())
     return 1.0;
 
-  return fi ? faceMeasure(*fi) : 0.0;
+  return fi ? NS::faceMeasure(*fi) : 0.0;
 }
 
 bool
@@ -1694,12 +1694,6 @@ RhieChowMassFlux::makeCenteredFaceArg(const FaceInfo * fi,
       fi, Moose::FV::LimiterType::CentralDifference, true, false, face_side, limiter_state};
 }
 
-Real
-RhieChowMassFlux::faceMeasure(const FaceInfo & fi) const
-{
-  return fi.faceArea() * fi.faceCoord();
-}
-
 void
 RhieChowMassFlux::updatePressureBoundaryNormalGradients()
 {
@@ -1735,7 +1729,7 @@ RhieChowMassFlux::updatePressureBoundaryNormalGradients()
 
     const Real required_pressure_flux =
         _phiHbyA_flux.evaluate(fi) + pressureBoundaryTargetFlux(fi, time_arg);
-    const Real face_measure = faceMeasure(*fi);
+    const Real face_measure = NS::faceMeasure(*fi);
     if (pressureCorrectionFluxIsIntegrated() && face_measure <= libMesh::TOLERANCE)
     {
       _pressure_boundary_normal_gradient[fi->id()] = 0.0;
