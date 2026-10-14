@@ -57,25 +57,13 @@ public:
 
   void computePressureCorrectedCellVelocity();
 
-  void
-  setSuppressExplicitHydrostaticPressureFlux(const bool suppress_explicit_hydrostatic_pressure_flux)
-  {
-    _suppress_explicit_hydrostatic_pressure_flux = suppress_explicit_hydrostatic_pressure_flux;
-  }
-  bool suppressExplicitHydrostaticPressureFlux() const
-  {
-    return _suppress_explicit_hydrostatic_pressure_flux;
-  }
-  void setSuppressStartupPressurePredictorFluxSources(
-      const bool suppress_startup_pressure_predictor_flux_sources)
-  {
-    _suppress_startup_pressure_predictor_flux_sources =
-        suppress_startup_pressure_predictor_flux_sources;
-  }
-  bool suppressStartupPressurePredictorFluxSources() const
-  {
-    return _suppress_startup_pressure_predictor_flux_sources;
-  }
+  /**
+   * While the startup continuity projection runs, the pressure equation carries no transient,
+   * hydrostatic or capillary source and the predictor force carries no hydrostatic part: that
+   * projection repairs the face flux alone, and leaves the user's reduced pressure untouched.
+   */
+  void setStartupProjectionActive(const bool active) { _startup_projection_active = active; }
+  bool startupProjectionActive() const { return _startup_projection_active; }
   RealVectorValue
   reducedPressureMomentumPredictorForceDensity(const ElemInfo & elem_info,
                                                const Moose::StateArg & time_arg) const;
@@ -167,7 +155,6 @@ protected:
 
   const Moose::Functor<Real> * _vof_rho_phi;
   const Moose::Functor<RealVectorValue> * _surface_tension_force = nullptr;
-  bool _suppress_explicit_hydrostatic_pressure_flux = false;
-  bool _suppress_startup_pressure_predictor_flux_sources = false;
+  bool _startup_projection_active = false;
   bool _pressure_coupled_velocity_correction_valid = false;
 };

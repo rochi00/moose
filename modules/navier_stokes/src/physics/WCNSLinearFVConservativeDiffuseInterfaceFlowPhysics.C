@@ -41,9 +41,6 @@ WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::validParams()
   // Large-density-ratio diffuse-interface work should default to a reduced / dynamic pressure
   // solve.
   params.set<bool>("solve_for_dynamic_pressure") = true;
-  params.transferParam<bool>(RhieChowMassFlux::validParams(),
-                             "use_cached_momentum_predictor_operator");
-  params.set<bool>("use_cached_momentum_predictor_operator") = true;
 
   params.transferParam<MooseFunctorName>(
       ConservativeDiffuseInterfaceRhieChowMassFlux::validParams(), "vof_rho_phi_functor");
@@ -218,8 +215,6 @@ WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::setRhieChowUserObjectParams
     InputParameters & params) const
 {
   WCNSLinearFVFlowPhysics::setRhieChowUserObjectParams(params);
-  params.set<bool>("use_cached_momentum_predictor_operator") =
-      getParam<bool>("use_cached_momentum_predictor_operator");
   params.set<bool>("split_momentum_predictor_operator") = true;
   if (parameters().isParamValid("gravity"))
     params.set<RealVectorValue>("gravity") = getParam<RealVectorValue>("gravity");

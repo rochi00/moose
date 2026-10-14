@@ -721,8 +721,7 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::computeFaceNormalPressureGradi
 bool
 ConservativeDiffuseInterfaceRhieChowMassFluxBase::useExplicitHydrostaticPredictorForce() const
 {
-  return !_suppress_startup_pressure_predictor_flux_sources &&
-         !_suppress_explicit_hydrostatic_pressure_flux;
+  return !_startup_projection_active;
 }
 
 Real
@@ -749,7 +748,7 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::surfaceTensionForceDensity(
 {
   // The force itself belongs to a functor material. What belongs here is only whether this
   // corrector may use it, which is startup projection state no material can see.
-  if (!surfaceTensionEnabled() || _suppress_startup_pressure_predictor_flux_sources ||
+  if (!surfaceTensionEnabled() || _startup_projection_active ||
       !elem_info.elem())
     return RealVectorValue();
 
@@ -760,7 +759,7 @@ Real
 ConservativeDiffuseInterfaceRhieChowMassFluxBase::surfaceTensionFaceNormalForceDensity(
     const FaceInfo * fi, const Moose::StateArg & time_arg) const
 {
-  if (!fi || !surfaceTensionEnabled() || _suppress_startup_pressure_predictor_flux_sources)
+  if (!fi || !surfaceTensionEnabled() || _startup_projection_active)
     return 0.0;
 
   // An interior face averages the two cell forces; a boundary face names the side that owns the
@@ -814,18 +813,14 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::updateAdditionalPressureFluxFu
     Real hydrostatic_flux = 0.0;
     Real surface_tension_flux = 0.0;
 
-    if (!_suppress_startup_pressure_predictor_flux_sources)
+    if (!_startup_projection_active)
+    {
       transient_projection_flux =
           -computeDefaultTransientProjectionVolumetricFlux(fi, time_arg, state);
 
-    if (!_suppress_startup_pressure_predictor_flux_sources)
-    {
-      if (!_suppress_explicit_hydrostatic_pressure_flux)
-      {
-        const Real ghf = _gravity * (fi->faceCentroid() - _reference_pressure_point);
-        const Real sn_grad_rho = computeFaceNormalDensityGradient(fi, time_arg);
-        hydrostatic_flux = -ghf * sn_grad_rho * normal_pressure_ainv;
-      }
+      const Real ghf = _gravity * (fi->faceCentroid() - _reference_pressure_point);
+      const Real sn_grad_rho = computeFaceNormalDensityGradient(fi, time_arg);
+      hydrostatic_flux = -ghf * sn_grad_rho * normal_pressure_ainv;
 
       surface_tension_flux = surfaceTensionFaceNormalForceDensity(fi, time_arg) *
                              normal_pressure_ainv;

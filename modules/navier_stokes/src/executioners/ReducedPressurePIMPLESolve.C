@@ -56,31 +56,20 @@ class DiffuseInterfaceStartupProjectionGuard
 {
 public:
   explicit DiffuseInterfaceStartupProjectionGuard(ConservativeDiffuseInterfaceRhieChowMassFlux * rc)
-    : _rc(rc),
-      _saved_explicit_hydrostatic(rc ? rc->suppressExplicitHydrostaticPressureFlux() : false),
-      _saved_startup_sources(rc ? rc->suppressStartupPressurePredictorFluxSources() : false)
+    : _rc(rc)
   {
     if (_rc)
-    {
-      // Projection-only startup cleanup should solve only the continuity flux repair.
-      _rc->setSuppressStartupPressurePredictorFluxSources(true);
-      _rc->setSuppressExplicitHydrostaticPressureFlux(true);
-    }
+      _rc->setStartupProjectionActive(true);
   }
 
   ~DiffuseInterfaceStartupProjectionGuard()
   {
     if (_rc)
-    {
-      _rc->setSuppressStartupPressurePredictorFluxSources(_saved_startup_sources);
-      _rc->setSuppressExplicitHydrostaticPressureFlux(_saved_explicit_hydrostatic);
-    }
+      _rc->setStartupProjectionActive(false);
   }
 
 private:
   ConservativeDiffuseInterfaceRhieChowMassFlux * const _rc;
-  const bool _saved_explicit_hydrostatic;
-  const bool _saved_startup_sources;
 };
 
 class PressureStateGuard

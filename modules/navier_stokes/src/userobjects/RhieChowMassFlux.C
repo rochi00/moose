@@ -49,8 +49,6 @@ registerMooseObject("NavierStokesApp", RhieChowMassFlux);
 
 struct RhieChowMassFlux::MomentumPredictorOperator : public LinearFVAssemblyConsumer
 {
-  bool assembly_closed = false;
-  bool finalized = false;
   Real relaxation_parameter = 1.0;
   std::unique_ptr<NumericVector<Number>> rhs_raw;
   std::unique_ptr<NumericVector<Number>> pressure_coupling_diagonal_raw;
@@ -70,7 +68,6 @@ struct RhieChowMassFlux::MomentumPredictorOperator : public LinearFVAssemblyCons
   std::vector<BoundaryMatrixContribution> boundary_matrix_contributions;
   mutable libMesh::Threads::spin_mutex assembly_mutex;
 
-  bool complete() const;
   void
   addBoundaryMatrixContribution(dof_id_type face_id, dof_id_type dof, Real contribution) override;
 };
@@ -124,17 +121,12 @@ RhieChowMassFlux::validParams()
       MooseEnum("average harmonic", "average"),
       "The face interpolation method for Ainv in the pressure correction diffusion term.");
   params.addParam<bool>(
-      "use_cached_momentum_predictor_operator",
-      false,
-      "Whether to use a cached assembled/relaxed momentum predictor operator as the starting "
-      "point for HbyA/Ainv construction instead of rebuilding that base state from the live "
-      "system on demand.");
-  params.addParam<bool>(
       "split_momentum_predictor_operator",
       false,
-      "Whether the assembled momentum predictor operator already excludes explicit pressure-"
-      "gradient and body-force terms, so HbyA should use that operator directly instead of "
-      "subtracting those terms back out.");
+      "Whether the assembled momentum predictor operator excludes the explicit pressure and body "
+      "forces, which the provider then adds itself. H/A is then formed from the operator as it "
+      "was assembled, with the boundary coefficients treated as OpenFOAM's fvMatrix does, instead "
+      "of from the relaxed matrix with those forces subtracted back out.");
   return params;
 }
 
@@ -172,8 +164,6 @@ RhieChowMassFlux::RhieChowMassFlux(const InputParameters & params)
     _pressure_boundary_normal_gradient(
         _moose_mesh, blockIDs(), "pressure_boundary_normal_gradient"),
     _boundary_velocity_face_values(_dim),
-    _use_cached_momentum_predictor_operator(
-        getParam<bool>("use_cached_momentum_predictor_operator")),
     _split_momentum_predictor_operator(getParam<bool>("split_momentum_predictor_operator")),
     _rho(getFunctor<Real>(NS::density)),
     _pressure_system(nullptr),
@@ -1076,13 +1066,6 @@ RhieChowMassFlux::cellAinvRaw(const unsigned int system_i, const dof_id_type dof
   return (*_Ainv_raw[system_i])(dof);
 }
 
-bool
-RhieChowMassFlux::MomentumPredictorOperator::complete() const
-{
-  return rhs_raw && pressure_coupling_diagonal_raw && h_diagonal_correction_raw &&
-         assembly_closed && finalized;
-}
-
 void
 RhieChowMassFlux::MomentumPredictorOperator::addBoundaryMatrixContribution(
     const dof_id_type face_id, const dof_id_type dof, const Real contribution)
@@ -1106,8 +1089,7 @@ RhieChowMassFlux::clearMomentumPredictorOperatorCache()
 {
   LinearFVKernel::setAssemblyConsumer(nullptr);
   _momentum_predictor_operators.clear();
-  _cached_predictor_operator_valid = false;
-  _cached_predictor_operator_finalized = false;
+  _predictor_ready = false;
 }
 
 void
@@ -1115,7 +1097,7 @@ RhieChowMassFlux::cacheFVSplitMomentumPredictorOperatorAssembly(const unsigned i
                                                                 SparseMatrix<Number> & matrix,
                                                                 const NumericVector<Number> & rhs)
 {
-  if (!_use_cached_momentum_predictor_operator || !_split_momentum_predictor_operator)
+  if (!_split_momentum_predictor_operator)
     return;
 
   mooseAssert(system_i < _momentum_predictor_operators.size() &&
@@ -1171,51 +1153,14 @@ RhieChowMassFlux::addMomentumPredictorExplicitForcing(const unsigned int /*syste
 {
 }
 
-bool
-RhieChowMassFlux::canUseCachedMomentumPredictorOperator()
-{
-  if (!_use_cached_momentum_predictor_operator)
-    return false;
-
-  if (!_split_momentum_predictor_operator)
-    return false;
-
-  if (!_cached_predictor_operator_finalized)
-    finalizeCachedMomentumPredictorOperators();
-
-  if (!_cached_predictor_operator_valid)
-    return false;
-
-  if (_momentum_predictor_operators.size() != _momentum_systems.size())
-    return false;
-
-  return std::all_of(_momentum_predictor_operators.begin(),
-                     _momentum_predictor_operators.end(),
-                     [](const auto & op) { return op && op->complete(); });
-}
-
-void
-RhieChowMassFlux::updateCachedMomentumPredictorOperatorValidity()
-{
-  _cached_predictor_operator_valid =
-      _momentum_predictor_operators.size() == _momentum_systems.size() &&
-      std::all_of(_momentum_predictor_operators.begin(),
-                  _momentum_predictor_operators.end(),
-                  [](const auto & op) { return op && op->complete(); });
-}
-
 void
 RhieChowMassFlux::finalizeCachedMomentumPredictorOperators()
 {
-  if (!_use_cached_momentum_predictor_operator || !_split_momentum_predictor_operator ||
-      _cached_predictor_operator_finalized)
-    return;
-
-  if (_momentum_predictor_operators.size() != _momentum_systems.size() ||
-      std::any_of(_momentum_predictor_operators.begin(),
-                  _momentum_predictor_operators.end(),
-                  [](const auto & op) { return !op || !op->assembly_closed; }))
-    return;
+  mooseAssert(_momentum_predictor_operators.size() == _momentum_systems.size() &&
+                  std::all_of(_momentum_predictor_operators.begin(),
+                              _momentum_predictor_operators.end(),
+                              [](const auto & op) { return static_cast<bool>(op); }),
+              "Every momentum component must be assembled before the predictor is finalized.");
 
   struct BoundaryFaceCoefficients
   {
@@ -1348,12 +1293,9 @@ RhieChowMassFlux::finalizeCachedMomentumPredictorOperators()
     predictor.h_diagonal_correction_raw->close();
     predictor.h_diagonal_correction_raw->insert(h_diagonal_correction, indices);
     predictor.h_diagonal_correction_raw->close();
-
-    predictor.finalized = true;
   }
 
-  _cached_predictor_operator_finalized = true;
-  updateCachedMomentumPredictorOperatorValidity();
+  _predictor_ready = true;
 }
 
 void
@@ -1411,7 +1353,7 @@ RhieChowMassFlux::computePredictorOperatorBase(const unsigned int system_i,
 void
 RhieChowMassFlux::beginFVSplitMomentumPredictorOperatorAssembly(const unsigned int system_i)
 {
-  if (!_use_cached_momentum_predictor_operator)
+  if (!_split_momentum_predictor_operator)
     return;
 
   mooseAssert(system_i < _momentum_implicit_systems.size() && _momentum_implicit_systems[system_i],
@@ -1445,7 +1387,7 @@ RhieChowMassFlux::beginFVSplitMomentumPredictorOperatorAssembly(const unsigned i
 
   LinearFVKernel::setAssemblyConsumer(predictor.get());
   _momentum_predictor_operators[system_i] = std::move(predictor);
-  _cached_predictor_operator_valid = false;
+  _predictor_ready = false;
 }
 
 void
@@ -1454,7 +1396,7 @@ RhieChowMassFlux::completeFVSplitMomentumPredictorOperatorAssembly(
 {
   LinearFVKernel::setAssemblyConsumer(nullptr);
 
-  if (!_use_cached_momentum_predictor_operator)
+  if (!_split_momentum_predictor_operator)
     return;
 
   mooseAssert(system_i < _momentum_predictor_operators.size() &&
@@ -1476,11 +1418,10 @@ RhieChowMassFlux::completeFVSplitMomentumPredictorOperatorAssembly(
                         predictor.offdiag_abs_sum_raw.get()})
     vector->close();
   predictor.relaxation_parameter = relaxation_parameter;
-  predictor.assembly_closed = true;
-  predictor.finalized = false;
-  _cached_predictor_operator_finalized = false;
 
-  updateCachedMomentumPredictorOperatorValidity();
+  // The components are assembled in order, so the last one completes the vector operator.
+  if (system_i + 1 == _momentum_systems.size())
+    finalizeCachedMomentumPredictorOperators();
 }
 
 void
@@ -1990,11 +1931,12 @@ RhieChowMassFlux::computeHbyA(bool verbose)
   _pressure_boundary_normal_gradient_valid = false;
   _pressure_predictor_face_state_valid = false;
 
-  const bool use_cached_predictor_operator = canUseCachedMomentumPredictorOperator();
   const bool split_predictor_operator = _split_momentum_predictor_operator;
+  mooseAssert(!split_predictor_operator || _predictor_ready,
+              "A split predictor operator must be assembled and finalized before computing H/A.");
 
-  if (verbose && use_cached_predictor_operator)
-    _console << "Using cached momentum predictor operator for HbyA/Ainv." << std::endl;
+  if (verbose && split_predictor_operator)
+    _console << "Using the split momentum predictor operator for HbyA/Ainv." << std::endl;
 
   _HbyA_raw.clear();
   _Ainv_raw.clear();
@@ -2023,13 +1965,12 @@ RhieChowMassFlux::computeHbyA(bool verbose)
       solution.print();
     }
 
-    if (use_cached_predictor_operator)
+    if (split_predictor_operator)
     {
       _Ainv_raw.push_back(current_local_solution.zero_clone());
       _HbyA_raw.push_back(current_local_solution.zero_clone());
       const auto * const predictor = cachedMomentumPredictorOperator(system_i);
-      mooseAssert(predictor && predictor->complete(),
-                  "A complete momentum predictor operator is required before computing HbyA.");
+      mooseAssert(predictor, "The momentum predictor operator is required before computing HbyA.");
 
       computePredictorOperatorBase(
           system_i, *(_HbyA_raw.back()), *(_Ainv_raw.back()), predictor->rhs_raw.get());

@@ -319,12 +319,6 @@ protected:
                                     NumericVector<Number> & diagonal_raw,
                                     const NumericVector<Number> * rhs_override = nullptr) const;
 
-  /// Refresh the aggregate validity flag for the cached predictor operator.
-  void updateCachedMomentumPredictorOperatorValidity();
-
-  /// Whether the cached predictor-operator state is complete and can be consumed.
-  bool canUseCachedMomentumPredictorOperator();
-
   /// Finalize all component operators as one vector momentum-predictor object.
   void finalizeCachedMomentumPredictorOperators();
 
@@ -445,20 +439,14 @@ protected:
   /// Indicates whether _boundary_velocity_face_values matches the latest cell-centered velocity.
   bool _velocity_boundary_state_valid = false;
 
-  /// Whether to consume a cached assembled predictor operator instead of rebuilding HbyA live.
-  const bool _use_cached_momentum_predictor_operator;
-
-  /// Whether the momentum predictor operator already excludes explicit pressure/body-force terms.
+  /// Whether the momentum predictor operator excludes the explicit pressure/body-force terms
   const bool _split_momentum_predictor_operator;
 
   /// Predictor operators for each momentum component.
   std::vector<std::unique_ptr<MomentumPredictorOperator>> _momentum_predictor_operators;
 
-  /// Indicates whether the cached predictor operator has been populated for every component.
-  bool _cached_predictor_operator_valid = false;
-
-  /// Indicates whether all streamed component operators have been vector-finalized.
-  bool _cached_predictor_operator_finalized = false;
+  /// Whether every component operator has been assembled and finalized since the last clear
+  bool _predictor_ready = false;
 
   /**
    * Producer counter for the conservative face mass flux: incremented every time
