@@ -194,12 +194,6 @@ WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::generatedGeometryFunctorNam
 }
 
 bool
-WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::shouldAddMomentumPressureKernels() const
-{
-  return false;
-}
-
-bool
 WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::rhieChowUserObjectAppliesToBlocks(
     const RhieChowMassFlux & rc_obj) const
 {

@@ -846,6 +846,13 @@ RhieChowMassFlux::getMassFlux(const FaceInfo & fi) const
 Real
 RhieChowMassFlux::getVolumetricFaceFlux(const FaceInfo & fi) const
 {
+  // This recovers the volumetric flux by dividing the mass flux by one face density, which is only
+  // valid where the mass flux factors that way. A provider that answers tracksOwnVolumetricFaceFlux
+  // affirmatively is saying it does not, so it has to supply the flux rather than reach this.
+  mooseAssert(!tracksOwnVolumetricFaceFlux(),
+              "A provider that tracks its own volumetric face flux must override "
+              "getVolumetricFaceFlux rather than let it be recovered from the mass flux.");
+
   const std::string neighbor_cell_id =
       fi.neighborPtr() ? std::to_string(fi.neighborPtr()->id()) : "none";
   const auto face_flux = _face_mass_flux.find(fi.id());

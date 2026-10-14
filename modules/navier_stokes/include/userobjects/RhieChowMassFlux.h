@@ -147,6 +147,14 @@ public:
                                                    NumericVector<Number> & rhs) const;
   /// Whether the predictor operator excludes explicit pressure/body-force terms.
   bool splitMomentumPredictorOperator() const { return _split_momentum_predictor_operator; }
+
+  /**
+   * Whether this provider's pressure-correction face fluxes carry the face measure, rather than
+   * being flux densities. The pressure equation that corrects the flux must match it, so the
+   * flow physics asks here when it builds that equation, and pressureDiffusionFaceArea derives
+   * from the same answer so the two cannot disagree.
+   */
+  virtual bool pressureCorrectionFluxIsIntegrated() const { return false; }
   /// Update boundary pressure gradients from the current predictor and boundary velocity state.
   void updatePressureBoundaryNormalGradients(const bool apply_pressure_flux_adjustment);
   /// Refresh boundary-face velocity values from the active FV velocity BC objects.
@@ -253,12 +261,6 @@ protected:
   virtual Real pressureBoundaryNormalAinv(const FaceInfo * fi) const;
   /// Fetch and initialize the pressure boundary condition attached to a boundary face.
   LinearFVBoundaryCondition * pressureBoundaryCondition(const FaceInfo * fi) const;
-  /**
-   * Whether this provider's pressure-correction face fluxes carry the face measure, rather than
-   * being flux densities. The same answer fixes the area handed to the pressure diffusion kernel,
-   * so pressureDiffusionFaceArea derives from it and the two cannot disagree.
-   */
-  virtual bool pressureCorrectionFluxIsIntegrated() const { return false; }
   /// Whether a boundary face should use constrained boundary values for the predictor state.
   virtual bool useConstrainedBoundaryPredictorState(const FaceInfo * fi) const;
   /// Whether a face touches the active flow block set.

@@ -224,7 +224,11 @@ WCNSLinearFVFlowPhysics::addPressureCorrectionKernels()
     assignBlocks(params, _blocks);
     params.set<LinearVariableName>("variable") = _pressure_name;
     params.set<MooseFunctorName>("face_flux") = pressureDivergenceFluxName();
-    params.set<bool>("face_flux_is_integrated") = pressureDivergenceFluxIsIntegrated();
+    // Whether that flux carries the face area is the publishing provider's convention, and the
+    // provider uses the same answer for its own boundary bookkeeping. Asking it keeps the pressure
+    // equation and the provider from disagreeing silently.
+    params.set<bool>("face_flux_is_integrated") =
+        pressureCorrectionProvider().pressureCorrectionFluxIsIntegrated();
     params.set<bool>("force_boundary_execution") = true;
 
     getProblem().addLinearFVKernel(kernel_type, kernel_name, params);
@@ -710,6 +714,32 @@ void
 WCNSLinearFVFlowPhysics::addUserObjects()
 {
   addRhieChowUserObjects();
+}
+
+bool
+WCNSLinearFVFlowPhysics::shouldAddMomentumPressureKernels() const
+{
+  return !pressureCorrectionProvider().splitMomentumPredictorOperator();
+}
+
+const RhieChowMassFlux &
+WCNSLinearFVFlowPhysics::pressureCorrectionProvider() const
+{
+  std::vector<UserObject *> objs;
+  getProblem()
+      .theWarehouse()
+      .query()
+      .condition<AttribSystem>("UserObject")
+      .condition<AttribThread>(0)
+      .queryInto(objs);
+
+  for (const auto & obj : objs)
+    if (const auto rc_obj = dynamic_cast<RhieChowMassFlux *>(obj))
+      if (rhieChowUserObjectAppliesToBlocks(*rc_obj) && isCompatibleRhieChowUserObject(*obj))
+        return *rc_obj;
+
+  mooseError("No Rhie-Chow mass flux user object is available to this flow physics. User objects "
+             "are created before flux kernels, so one should exist by now.");
 }
 
 void

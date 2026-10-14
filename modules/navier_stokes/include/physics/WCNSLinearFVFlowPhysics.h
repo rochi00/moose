@@ -60,10 +60,17 @@ protected:
 
   unsigned short getNumberAlgebraicGhostingLayersNeeded() const override;
 
-  virtual bool shouldAddMomentumPressureKernels() const { return true; }
+  /**
+   * Whether the momentum equation carries its own pressure kernel. A provider that splits the
+   * predictor operator supplies the pressure force itself, through
+   * addMomentumPredictorExplicitForcing, so the kernel would apply it twice. One decision, taken
+   * where the splitting is configured.
+   */
+  virtual bool shouldAddMomentumPressureKernels() const;
   virtual MooseFunctorName pressureDiffusionTensorName() const { return "Ainv"; }
   virtual MooseFunctorName pressureDivergenceFluxName() const { return "HbyA"; }
-  virtual bool pressureDivergenceFluxIsIntegrated() const { return false; }
+  /// The Rhie-Chow mass flux user object whose published flux the pressure equation corrects.
+  const RhieChowMassFlux & pressureCorrectionProvider() const;
   virtual void setMomentumTimeKernelParams(InputParameters & params) const;
   void setVelocitySolverVariableParams(InputParameters & params) const;
   void setVelocityVariableParams(InputParameters & params) const;

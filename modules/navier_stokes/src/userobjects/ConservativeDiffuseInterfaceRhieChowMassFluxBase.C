@@ -203,6 +203,11 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::ConservativeDiffuseInterfaceRh
 Real
 ConservativeDiffuseInterfaceRhieChowMassFluxBase::getMassFlux(const FaceInfo & fi) const
 {
+  // Deliberately not the inherited _face_mass_flux, which this class also maintains as the
+  // restartable rho_f * phi_f. Momentum advection needs the density flux that the limited volume
+  // fraction update actually transported, and across a large density jump the two differ: the
+  // transported product does not factor into one face density times one face volumetric flux.
+  // _face_mass_flux remains what the base class and restart expect; this is what advection needs.
   const Real face_measure = faceMeasure(fi);
   return face_measure > 0.0 ? vofRhoPhiIntegrated(fi) / face_measure : 0.0;
 }
@@ -394,6 +399,10 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::correctedTransportPhi(const Fa
 
   if (!_pressure_predictor_face_state_valid)
   {
+    // Before a predictor exists the only mass flux is the one initFaceMassFlux built as
+    // face_rho * boundary velocity, formed with a single face density, so dividing it back out
+    // recovers that velocity rather than inverting a transported product. This is the one place
+    // the division is exact, which is why it is confined to this branch.
     const Real face_rho = predictorFaceDensity(&fi, Moose::currentState());
     return std::abs(face_rho) > libMesh::TOLERANCE ? face_flux_of(_face_mass_flux) / face_rho : 0.0;
   }
