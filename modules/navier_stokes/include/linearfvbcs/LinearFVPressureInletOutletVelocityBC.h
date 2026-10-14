@@ -16,17 +16,15 @@
 class ElemInfo;
 
 /**
- * Pressure-controlled inlet/outlet velocity boundary condition for the diffuse-interface path.
- *
- * The historical class name is retained, but the solved variable and returned boundary values are
- * velocity components, not rho*u.
+ * Velocity boundary condition of a pressure-controlled inlet/outlet: a zero-gradient outlet on
+ * outflow, a fixed tangential velocity with an extrapolated normal velocity on backflow.
  */
-class LinearFVPressureInletOutletMomentumBC : public LinearFVInletOutletScalarBC
+class LinearFVPressureInletOutletVelocityBC : public LinearFVInletOutletScalarBC
 {
 public:
   static InputParameters validParams();
 
-  LinearFVPressureInletOutletMomentumBC(const InputParameters & parameters);
+  LinearFVPressureInletOutletVelocityBC(const InputParameters & parameters);
 
 protected:
   Real computeBackflowBoundaryValue() const override;

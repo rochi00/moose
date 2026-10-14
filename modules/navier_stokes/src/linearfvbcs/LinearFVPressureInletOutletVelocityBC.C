@@ -7,21 +7,21 @@
 //* Licensed under LGPL 2.1, please see LICENSE for details
 //* https://www.gnu.org/licenses/lgpl-2.1.html
 
-#include "LinearFVPressureInletOutletMomentumBC.h"
+#include "LinearFVPressureInletOutletVelocityBC.h"
 
 #include "ElemInfo.h"
 #include "FEProblemBase.h"
 
-registerMooseObject("NavierStokesApp", LinearFVPressureInletOutletMomentumBC);
+registerMooseObject("NavierStokesApp", LinearFVPressureInletOutletVelocityBC);
 
 InputParameters
-LinearFVPressureInletOutletMomentumBC::validParams()
+LinearFVPressureInletOutletVelocityBC::validParams()
 {
   InputParameters params = LinearFVInletOutletScalarBC::validParams();
   params.addClassDescription(
-      "Adds a pressure-controlled inlet/outlet boundary condition for velocity components. On "
-      "outflow it behaves like a zero-gradient / extrapolated outlet; on backflow it fixes the "
-      "tangential velocity and extrapolates the normal velocity.");
+      "Velocity boundary condition of a pressure-controlled inlet/outlet. On outflow it behaves "
+      "like a zero-gradient / extrapolated outlet; on backflow it fixes the tangential velocity "
+      "and extrapolates the normal velocity.");
   NS::addLinearFVVelocityVariableParams(params);
   MooseEnum momentum_component("x=0 y=1 z=2");
   params.addRequiredParam<MooseEnum>(
@@ -31,7 +31,7 @@ LinearFVPressureInletOutletMomentumBC::validParams()
   return params;
 }
 
-LinearFVPressureInletOutletMomentumBC::LinearFVPressureInletOutletMomentumBC(
+LinearFVPressureInletOutletVelocityBC::LinearFVPressureInletOutletVelocityBC(
     const InputParameters & parameters)
   : LinearFVInletOutletScalarBC(parameters),
     _dim(_subproblem.mesh().dimension()),
@@ -41,13 +41,13 @@ LinearFVPressureInletOutletMomentumBC::LinearFVPressureInletOutletMomentumBC(
 }
 
 RealVectorValue
-LinearFVPressureInletOutletMomentumBC::outwardUnitNormal() const
+LinearFVPressureInletOutletVelocityBC::outwardUnitNormal() const
 {
   return NS::linearFVOutwardUnitNormal(*_current_face_info, _current_face_type);
 }
 
 Real
-LinearFVPressureInletOutletMomentumBC::computeBackflowBoundaryValue() const
+LinearFVPressureInletOutletVelocityBC::computeBackflowBoundaryValue() const
 {
   const auto & elem_info = fluidElemInfo();
   const auto state = determineState();
@@ -63,7 +63,7 @@ LinearFVPressureInletOutletMomentumBC::computeBackflowBoundaryValue() const
 }
 
 Real
-LinearFVPressureInletOutletMomentumBC::computeBackflowBoundaryValueMatrixContribution() const
+LinearFVPressureInletOutletVelocityBC::computeBackflowBoundaryValueMatrixContribution() const
 {
   const Real normal_component = outwardUnitNormal()(_index);
   return normal_component * normal_component;

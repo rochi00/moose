@@ -137,7 +137,7 @@ WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::addOutletBC()
       // this outer iteration, so that the boundary value cannot depend on the pressure equation
       // that evaluates it.
       const std::string bc_type =
-          pressure_outlet ? "LinearFVPressureInletOutletMomentumBC" : "LinearFVAdvectionDiffusionOutflowBC";
+          pressure_outlet ? "LinearFVPressureInletOutletVelocityBC" : "LinearFVAdvectionDiffusionOutflowBC";
       InputParameters params = getFactory().getValidParams(bc_type);
       params.set<std::vector<BoundaryName>>("boundary") = {outlet_bdy};
       params.set<bool>("use_two_term_expansion") = getParam<bool>("momentum_two_term_bc_expansion");
