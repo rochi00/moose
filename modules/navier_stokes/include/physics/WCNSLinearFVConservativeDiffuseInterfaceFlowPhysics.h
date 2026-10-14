@@ -26,36 +26,19 @@ public:
   WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics(const InputParameters & parameters);
 
 private:
+  /// The pressure equation of the reduced pressure: raw face rAUf and the explicit-force-free flux
+  void addPressureCorrectionKernels() override;
+  /// Pressure outlets with backflow handling, and the total-pressure condition on p_rgh
+  void addOutletBC() override;
+  /// No-slip walls carry a constrained zero-normal-flux pressure condition
+  void addWallsBC() override;
+  /// The diffuse-interface Rhie-Chow object, with gravity, reference point and face forces
+  void addRhieChowUserObjects() override;
   void addFunctorMaterials() override;
 
   MooseFunctorName generatedGeometryFunctorName(const std::string & base_name) const;
   /// Creates the material publishing the interface curvature and capillary force density.
   void addSurfaceTensionFunctorMaterial();
-  MooseFunctorName pressureDiffusionTensorName() const override { return "pressure_Ainv"; }
-  MooseFunctorName pressureDivergenceFluxName() const override { return "phiHbyA"; }
-  std::string momentumOutletBCType(const BoundaryName & boundary,
-                                   const MooseEnum & momentum_outlet_type) const override;
-  void setMomentumOutletBCParams(InputParameters & params,
-                                 const BoundaryName & boundary,
-                                 const MooseEnum & momentum_outlet_type,
-                                 unsigned int component) const override;
-  std::string pressureOutletBCType(const BoundaryName & boundary,
-                                   const MooseEnum & momentum_outlet_type) const override;
-  void setPressureOutletBCParams(InputParameters & params,
-                                 const BoundaryName & boundary,
-                                 const MooseEnum & momentum_outlet_type) const override;
-  MooseFunctorName wallPressureSymmetryFluxName() const override { return "phiHbyA"; }
-  void addWallPressureBC(const BoundaryName & boundary,
-                         const MooseEnum & momentum_wall_type) override;
-  bool shouldAddWallPressureTwoTermExpansion() const override;
-  std::string rhieChowUserObjectType() const override
-  {
-    return "ConservativeDiffuseInterfaceRhieChowMassFlux";
-  }
-  bool rhieChowUserObjectAppliesToBlocks(const RhieChowMassFlux & rc_obj) const override;
-  bool isCompatibleRhieChowUserObject(const UserObject & obj) const override;
-  void checkIncompatibleRhieChowUserObject(const RhieChowMassFlux & rc_obj) const override;
-  void setRhieChowUserObjectParams(InputParameters & params) const override;
   bool shouldCreateGeometryFunctorMaterial() const;
 
   unsigned short getNumberAlgebraicGhostingLayersNeeded() const override;

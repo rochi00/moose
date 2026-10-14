@@ -12,6 +12,7 @@
 #include "MooseUtils.h"
 #include "NS.h"
 #include "ConservativeDiffuseInterfaceRhieChowMassFlux.h"
+#include "TheWarehouse.h"
 
 registerWCNSFVFlowPhysicsBaseTasks("NavierStokesApp",
                                    WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics);
@@ -80,154 +81,239 @@ WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::
                "true.");
 }
 
-std::string
-WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::momentumOutletBCType(
-    const BoundaryName & boundary, const MooseEnum & momentum_outlet_type) const
+void
+WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::addPressureCorrectionKernels()
 {
-  const bool use_pressure_inlet_outlet_velocity =
-      momentum_outlet_type == "fixed-pressure" ||
-      momentum_outlet_type == "fixed-pressure-zero-gradient";
-
-  return use_pressure_inlet_outlet_velocity
-             ? "LinearFVPressureInletOutletMomentumBC"
-             : WCNSLinearFVFlowPhysics::momentumOutletBCType(boundary, momentum_outlet_type);
+  {
+    const std::string kernel_type = "LinearFVPressureCorrectionDiffusion";
+    InputParameters params = getFactory().getValidParams(kernel_type);
+    assignBlocks(params, _blocks);
+    params.set<LinearVariableName>("variable") = _pressure_name;
+    // The diffuse-interface Rhie-Chow object publishes the raw face rAUf of the reduced pressure
+    params.set<MooseFunctorName>("diffusion_tensor") = "pressure_Ainv";
+    params.set<bool>("use_nonorthogonal_correction") = _non_orthogonal_correction;
+    getProblem().addLinearFVKernel(kernel_type, prefix() + "p_diffusion", params);
+  }
+  {
+    const std::string kernel_type = "LinearFVDivergence";
+    InputParameters params = getFactory().getValidParams(kernel_type);
+    assignBlocks(params, _blocks);
+    params.set<LinearVariableName>("variable") = _pressure_name;
+    // The predictor flux less the explicit face forces, area-integrated
+    params.set<MooseFunctorName>("face_flux") = "phiHbyA";
+    params.set<bool>("face_flux_is_integrated") =
+        pressureCorrectionProvider().pressureCorrectionFluxIsIntegrated();
+    params.set<bool>("force_boundary_execution") = true;
+    getProblem().addLinearFVKernel(kernel_type, prefix() + "HbyA_divergence", params);
+  }
 }
 
 void
-WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::setMomentumOutletBCParams(
-    InputParameters & params,
-    const BoundaryName & /* boundary */,
-    const MooseEnum & momentum_outlet_type,
-    const unsigned int component) const
+WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::addOutletBC()
 {
-  const bool use_pressure_inlet_outlet_velocity =
-      momentum_outlet_type == "fixed-pressure" ||
-      momentum_outlet_type == "fixed-pressure-zero-gradient";
+  unsigned int num_pressure_outlets = 0;
+  for (const auto & [bdy, momentum_outlet_type] : _momentum_outlet_types)
+    if (momentum_outlet_type == "fixed-pressure" ||
+        momentum_outlet_type == "fixed-pressure-zero-gradient")
+      num_pressure_outlets++;
 
-  if (!use_pressure_inlet_outlet_velocity)
-    return;
+  if (num_pressure_outlets != _pressure_functors.size())
+    paramError("pressure_functors",
+               "Size (" + std::to_string(_pressure_functors.size()) +
+                   ") is not the same as the number of pressure outlet boundaries in "
+                   "'fixed-pressure/fixed-pressure-zero-gradient' (size " +
+                   std::to_string(num_pressure_outlets) + ")");
 
-  setVelocitySolverVariableParams(params);
-  params.set<MooseEnum>("momentum_component") = MooseEnum("x=0 y=1 z=2", NS::directions[component]);
-  // Every outlet backflow switch reads the same flux, frozen once per corrector. Switching on the
-  // live corrected flux instead makes the boundary value depend on the pressure equation that
-  // evaluates it, which is a cycle that then has to be iterated.
-  params.set<MooseFunctorName>("face_flux") = "lagged_corrected_face_phi";
-}
+  const std::string u_names[3] = {"u", "v", "w"};
+  for (const auto & [outlet_bdy, momentum_outlet_type] : _momentum_outlet_types)
+  {
+    const bool pressure_outlet = momentum_outlet_type == "fixed-pressure" ||
+                                 momentum_outlet_type == "fixed-pressure-zero-gradient";
 
-std::string
-WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::pressureOutletBCType(
-    const BoundaryName & /* boundary */, const MooseEnum & /* momentum_outlet_type */) const
-{
-  return "LinearFVPrghTotalPressureBC";
+    if (momentum_outlet_type == "zero-gradient" || pressure_outlet)
+    {
+      // A pressure outlet lets the flow reverse: on backflow the velocity BC fixes the tangential
+      // velocity and extrapolates the normal one. Every backflow switch reads the flux frozen for
+      // this outer iteration, so that the boundary value cannot depend on the pressure equation
+      // that evaluates it.
+      const std::string bc_type =
+          pressure_outlet ? "LinearFVPressureInletOutletMomentumBC" : "LinearFVAdvectionDiffusionOutflowBC";
+      InputParameters params = getFactory().getValidParams(bc_type);
+      params.set<std::vector<BoundaryName>>("boundary") = {outlet_bdy};
+      params.set<bool>("use_two_term_expansion") = getParam<bool>("momentum_two_term_bc_expansion");
+      if (pressure_outlet)
+      {
+        for (unsigned int d = 0; d < dimension(); ++d)
+          params.set<SolverVariableName>(u_names[d]) = _velocity_names[d];
+        params.set<MooseFunctorName>("face_flux") = "lagged_corrected_face_phi";
+      }
+
+      for (const auto d : make_range(dimension()))
+      {
+        params.set<LinearVariableName>("variable") = _velocity_names[d];
+        if (pressure_outlet)
+          params.set<MooseEnum>("momentum_component") =
+              MooseEnum("x=0 y=1 z=2", NS::directions[d]);
+        getProblem().addLinearFVBC(bc_type, _velocity_names[d] + "_" + outlet_bdy, params);
+      }
+    }
+
+    if (pressure_outlet)
+    {
+      // The reduced pressure holds the total pressure less its hydrostatic part, and on backflow
+      // less the incoming dynamic pressure
+      const std::string bc_type = "LinearFVPrghTotalPressureBC";
+      InputParameters params = getFactory().getValidParams(bc_type);
+      params.set<LinearVariableName>("variable") = _pressure_name;
+      params.set<MooseFunctorName>("functor") = libmesh_map_find(_pressure_functors, outlet_bdy);
+      params.set<std::vector<BoundaryName>>("boundary") = {outlet_bdy};
+      params.set<MooseFunctorName>(NS::density) = _density_name;
+      params.set<RealVectorValue>("gravity") = getParam<RealVectorValue>("gravity");
+      params.set<Point>("reference_pressure_point") = getParam<Point>("reference_pressure_point");
+      for (unsigned int d = 0; d < dimension(); ++d)
+        params.set<SolverVariableName>(u_names[d]) = _velocity_names[d];
+      params.set<MooseFunctorName>("face_flux") = "lagged_corrected_face_phi";
+      getProblem().addLinearFVBC(bc_type, _pressure_name + "_" + outlet_bdy, params);
+    }
+  }
 }
 
 void
-WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::setPressureOutletBCParams(
-    InputParameters & params,
-    const BoundaryName & /* boundary */,
-    const MooseEnum & /* momentum_outlet_type */) const
+WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::addWallsBC()
 {
-  params.set<MooseFunctorName>(NS::density) = _density_name;
-  params.set<RealVectorValue>("gravity") = getParam<RealVectorValue>("gravity");
-  params.set<Point>("reference_pressure_point") = getParam<Point>("reference_pressure_point");
-  setVelocitySolverVariableParams(params);
-  // Every outlet backflow switch reads the same flux, frozen once per corrector. Switching on the
-  // live corrected flux instead makes the boundary value depend on the pressure equation that
-  // evaluates it, which is a cycle that then has to be iterated.
-  params.set<MooseFunctorName>("face_flux") = "lagged_corrected_face_phi";
-}
+  const std::string u_names[3] = {"u", "v", "w"};
 
-void
-WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::addWallPressureBC(
-    const BoundaryName & boundary, const MooseEnum & momentum_wall_type)
-{
-  if (momentum_wall_type != "noslip")
-    return;
+  for (const auto & [boundary_name, momentum_wall_type] : _momentum_wall_types)
+  {
+    if (momentum_wall_type == "noslip")
+    {
+      {
+        const std::string bc_type = "LinearFVAdvectionDiffusionFunctorDirichletBC";
+        InputParameters params = getFactory().getValidParams(bc_type);
+        params.set<std::vector<BoundaryName>>("boundary") = {boundary_name};
 
-  const std::string pressure_bc_type = "LinearFVPressureFluxBC";
-  InputParameters pressure_params = getFactory().getValidParams(pressure_bc_type);
-  pressure_params.set<std::vector<BoundaryName>>("boundary") = {boundary};
-  pressure_params.set<LinearVariableName>("variable") = _pressure_name;
-  pressure_params.set<MooseFunctorName>("constrained_pressure_normal_gradient") =
-      "pressure_boundary_normal_gradient";
-  pressure_params.set<MooseFunctorName>("HbyA_flux") = "phiHbyA";
-  pressure_params.set<MooseFunctorName>("Ainv") = "pressure_Ainv";
-  getProblem().addLinearFVBC(
-      pressure_bc_type, _pressure_name + "_wall_flux_" + boundary, pressure_params);
-}
+        for (const auto d : make_range(dimension()))
+        {
+          params.set<LinearVariableName>("variable") = _velocity_names[d];
+          if (_momentum_wall_functors.count(boundary_name) == 0)
+            params.set<MooseFunctorName>("functor") = "0";
+          else
+            params.set<MooseFunctorName>("functor") = _momentum_wall_functors[boundary_name][d];
+          getProblem().addLinearFVBC(bc_type, _velocity_names[d] + "_" + boundary_name, params);
+        }
+      }
+      {
+        // A wall carries the pressure gradient that makes the predictor flux match the prescribed
+        // (zero) wall flux; the Rhie-Chow object computes and publishes that gradient
+        const std::string bc_type = "LinearFVPressureFluxBC";
+        InputParameters params = getFactory().getValidParams(bc_type);
+        params.set<std::vector<BoundaryName>>("boundary") = {boundary_name};
+        params.set<LinearVariableName>("variable") = _pressure_name;
+        params.set<MooseFunctorName>("constrained_pressure_normal_gradient") =
+            "pressure_boundary_normal_gradient";
+        params.set<MooseFunctorName>("HbyA_flux") = "phiHbyA";
+        params.set<MooseFunctorName>("Ainv") = "pressure_Ainv";
+        getProblem().addLinearFVBC(bc_type, _pressure_name + "_wall_flux_" + boundary_name, params);
+      }
+    }
+    else if (momentum_wall_type == "symmetry")
+    {
+      {
+        const std::string bc_type = "LinearFVVelocitySymmetryBC";
+        InputParameters params = getFactory().getValidParams(bc_type);
+        params.set<std::vector<BoundaryName>>("boundary") = {boundary_name};
+        for (unsigned int d = 0; d < dimension(); ++d)
+          params.set<SolverVariableName>(u_names[d]) = _velocity_names[d];
 
-bool
-WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::shouldAddWallPressureTwoTermExpansion() const
-{
+        for (const auto d : make_range(dimension()))
+        {
+          params.set<LinearVariableName>("variable") = _velocity_names[d];
+          params.set<MooseEnum>("momentum_component") = NS::directions[d];
+          getProblem().addLinearFVBC(bc_type, _velocity_names[d] + "_" + boundary_name, params);
+        }
+      }
+      {
+        const std::string bc_type = "LinearFVPressureSymmetryBC";
+        InputParameters params = getFactory().getValidParams(bc_type);
+        params.set<std::vector<BoundaryName>>("boundary") = {boundary_name};
+        params.set<LinearVariableName>("variable") = _pressure_name;
+        params.set<MooseFunctorName>("HbyA_flux") = "phiHbyA";
+        getProblem().addLinearFVBC(bc_type, _pressure_name + "_" + boundary_name, params);
+      }
+    }
+    else
+      mooseError("Unsupported wall boundary condition type: " + std::string(momentum_wall_type));
+  }
+
   if (getParam<bool>("pressure_two_term_bc_expansion"))
     paramWarning("pressure_two_term_bc_expansion",
-                 "Ignoring pressure_two_term_bc_expansion on diffuse-interface wall boundaries "
-                 "because the reduced-pressure path now applies an explicit zero-normal-flux "
-                 "pressure boundary condition.");
-
-  return false;
-}
-
-MooseFunctorName
-WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::generatedGeometryFunctorName(
-    const std::string & base_name) const
-{
-  return prefix() + base_name;
-}
-
-bool
-WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::rhieChowUserObjectAppliesToBlocks(
-    const RhieChowMassFlux & rc_obj) const
-{
-  const auto this_block_ids =
-      getSubdomainIDs(std::set<SubdomainName>(_blocks.begin(), _blocks.end()));
-  const auto & rc_block_ids = rc_obj.blockIDs();
-
-  return rc_block_ids.empty() || this_block_ids.empty() ||
-         rc_block_ids.count(Moose::ANY_BLOCK_ID) || this_block_ids.count(Moose::ANY_BLOCK_ID) ||
-         MooseUtils::setsIntersect(rc_block_ids, this_block_ids);
-}
-
-bool
-WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::isCompatibleRhieChowUserObject(
-    const UserObject & obj) const
-{
-  return dynamic_cast<const ConservativeDiffuseInterfaceRhieChowMassFlux *>(&obj);
+                 "Ignored on diffuse-interface wall boundaries, which carry an explicit "
+                 "zero-normal-flux pressure boundary condition instead.");
 }
 
 void
-WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::checkIncompatibleRhieChowUserObject(
-    const RhieChowMassFlux & rc_obj) const
+WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::addRhieChowUserObjects()
 {
-  mooseError("Diffuse-interface flow physics '",
-             name(),
-             "' requires a ConservativeDiffuseInterfaceRhieChowMassFlux on blocks ",
-             Moose::stringify(_blocks),
-             ", but found existing RhieChowMassFlux '",
-             rc_obj.name(),
-             "' on overlapping blocks. Remove the stock Rhie-Chow object or use the "
-             "diffuse-interface flow physics as the owner of the segregated flow coupling.");
-}
+  mooseAssert(dimension(), "0-dimension not supported");
 
-void
-WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::setRhieChowUserObjectParams(
-    InputParameters & params) const
-{
-  WCNSLinearFVFlowPhysics::setRhieChowUserObjectParams(params);
+  // The flow coupling is owned by this physics: a diffuse-interface Rhie-Chow object on these
+  // blocks is reused, a stock one on overlapping blocks is an input error
+  const auto this_block_ids = getSubdomainIDs(std::set<SubdomainName>(_blocks.begin(), _blocks.end()));
+  std::vector<UserObject *> objs;
+  getProblem()
+      .theWarehouse()
+      .query()
+      .condition<AttribSystem>("UserObject")
+      .condition<AttribThread>(0)
+      .queryInto(objs);
+  for (const auto & obj : objs)
+    if (const auto rc_obj = dynamic_cast<RhieChowMassFlux *>(obj))
+    {
+      const auto & rc_block_ids = rc_obj->blockIDs();
+      const bool overlapping = rc_block_ids.empty() || this_block_ids.empty() ||
+                               rc_block_ids.count(Moose::ANY_BLOCK_ID) ||
+                               this_block_ids.count(Moose::ANY_BLOCK_ID) ||
+                               MooseUtils::setsIntersect(rc_block_ids, this_block_ids);
+      if (!overlapping)
+        continue;
+
+      if (dynamic_cast<ConservativeDiffuseInterfaceRhieChowMassFlux *>(obj))
+        return;
+
+      mooseError("Diffuse-interface flow physics '",
+                 name(),
+                 "' requires a ConservativeDiffuseInterfaceRhieChowMassFlux on blocks ",
+                 Moose::stringify(_blocks),
+                 ", but found existing RhieChowMassFlux '",
+                 rc_obj->name(),
+                 "' on overlapping blocks. Remove the stock Rhie-Chow object or use the "
+                 "diffuse-interface flow physics as the owner of the segregated flow coupling.");
+    }
+
+  const std::string u_names[3] = {"u", "v", "w"};
+  const auto object_type = "ConservativeDiffuseInterfaceRhieChowMassFlux";
+
+  auto params = getFactory().getValidParams(object_type);
+  assignBlocks(params, _blocks);
+  for (unsigned int d = 0; d < dimension(); ++d)
+    params.set<VariableName>(u_names[d]) = _velocity_names[d];
+
+  params.set<VariableName>("pressure") = _pressure_name;
+  params.set<std::string>("p_diffusion_kernel") = prefix() + "p_diffusion";
+  params.set<MooseFunctorName>(NS::density) = _density_name;
+  params.set<MooseEnum>("pressure_projection_method") =
+      getParam<MooseEnum>("pressure_projection_method");
+  params.set<MooseEnum>("pressure_diffusion_interpolation") =
+      getParam<MooseEnum>("pressure_diffusion_interpolation");
   if (parameters().isParamValid("gravity"))
     params.set<RealVectorValue>("gravity") = getParam<RealVectorValue>("gravity");
-  if (_solve_for_dynamic_pressure)
-    params.set<Point>("reference_pressure_point") = getParam<Point>("reference_pressure_point");
+  params.set<Point>("reference_pressure_point") = getParam<Point>("reference_pressure_point");
   params.set<MooseFunctorName>("vof_rho_phi_functor") =
       getParam<MooseFunctorName>("vof_rho_phi_functor");
 
-  const auto surface_tension_coefficient =
-      getParam<MooseFunctorName>("surface_tension_coefficient");
-  if (!surface_tension_coefficient.empty())
+  if (!getParam<MooseFunctorName>("surface_tension_coefficient").empty())
   {
-    const auto volume_fraction_functor = getParam<MooseFunctorName>("volume_fraction_functor");
-    if (volume_fraction_functor.empty())
+    if (getParam<MooseFunctorName>("volume_fraction_functor").empty())
       paramError("volume_fraction_functor",
                  "Surface tension requires the volume-fraction functor used by the least-squares "
                  "CSF curvature operator.");
@@ -235,6 +321,15 @@ WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::setRhieChowUserObjectParams
     params.set<MooseFunctorName>("surface_tension_force_density_functor") =
         generatedGeometryFunctorName("surface_tension_force_density");
   }
+
+  addUserObject(object_type, rhieChowUOName(), params);
+}
+
+MooseFunctorName
+WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::generatedGeometryFunctorName(
+    const std::string & base_name) const
+{
+  return prefix() + base_name;
 }
 
 bool
