@@ -116,8 +116,11 @@ WCNSLinearFVFlowPhysics::initializePhysicsAdditional()
   getProblem().needSolutionState(2, Moose::SolutionIterationType::Nonlinear);
   // TODO Ban all other nonlinear Physics for now
 
-  // Fix the default system names if using a different dimension
-  if (!isParamSetByUser("system_name"))
+  // Fix the default system names if using a different dimension. The default is the 3D list, and
+  // a default set in validParams counts as set by the user, so it is recognised by value too.
+  const std::vector<SolverSystemName> default_system_names = {
+      "u_system", "v_system", "w_system", "pressure_system"};
+  if (!isParamSetByUser("system_names") || _system_names == default_system_names)
   {
     if (dimension() == 1)
       _system_names = {"u_system", "pressure_system"};
