@@ -266,14 +266,13 @@ LinearSystem::computeKokkosLinearSystem(const std::set<TagID> & vector_tags,
   for (const auto & tag : _fe_problem.getVectorTags(Moose::VECTOR_TAG_SOLUTION))
     needed_solution_vector_tags.insert(tag._id);
 
+  // Kokkos linear FV kernels and boundary conditions read only their own variable, which belongs to
+  // this system, so the other Kokkos systems are not synchronized
   auto & kokkos_systems = _fe_problem.getKokkosSystems();
   {
     TIME_SECTION("KokkosFVSyncToDevice", 2);
-    for (auto & system : kokkos_systems.constructedEntries())
-    {
-      system.setActiveSolutionTags(needed_solution_vector_tags);
-      system.sync(Moose::Kokkos::MemcpyType::HOST_TO_DEVICE);
-    }
+    our_kokkos_system.setActiveSolutionTags(needed_solution_vector_tags);
+    our_kokkos_system.sync(Moose::Kokkos::MemcpyType::HOST_TO_DEVICE);
 
     kokkos_systems.copyToDevice();
   }
@@ -340,16 +339,11 @@ LinearSystem::computeKokkosLinearSystem(const std::set<TagID> & vector_tags,
 
   {
     TIME_SECTION("KokkosFVSyncToHost", 2);
-    for (auto & system : kokkos_systems.constructedEntries())
-      system.sync(Moose::Kokkos::MemcpyType::DEVICE_TO_HOST);
+    our_kokkos_system.sync(Moose::Kokkos::MemcpyType::DEVICE_TO_HOST);
   }
 
   our_kokkos_system.clearActiveResidualTags();
   our_kokkos_system.clearActiveMatrixTags();
-
-  for (auto & system : kokkos_systems.constructedEntries())
-  {
-    system.clearActiveVariables();
-    system.clearActiveSolutionTags();
-  }
+  our_kokkos_system.clearActiveVariables();
+  our_kokkos_system.clearActiveSolutionTags();
 }
