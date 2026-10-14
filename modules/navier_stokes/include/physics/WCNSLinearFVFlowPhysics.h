@@ -80,8 +80,6 @@ protected:
   virtual bool isCompatibleRhieChowUserObject(const UserObject & obj) const;
   virtual void checkIncompatibleRhieChowUserObject(const RhieChowMassFlux & rc_obj) const;
   virtual void setRhieChowUserObjectParams(InputParameters & params) const;
-  virtual MooseFunctorName momentumFluxMassFluxFunctorName() const { return ""; }
-  virtual bool momentumFluxMassFluxFunctorIsIntegrated() const { return false; }
   virtual std::string momentumOutletBCType(const BoundaryName & boundary,
                                            const MooseEnum & momentum_outlet_type) const;
   virtual void setMomentumOutletBCParams(InputParameters & params,

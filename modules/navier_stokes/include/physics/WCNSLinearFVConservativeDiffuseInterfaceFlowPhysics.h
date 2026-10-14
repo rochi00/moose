@@ -33,8 +33,6 @@ private:
   void addSurfaceTensionFunctorMaterial();
   MooseFunctorName pressureDiffusionTensorName() const override { return "pressure_Ainv"; }
   MooseFunctorName pressureDivergenceFluxName() const override { return "phiHbyA"; }
-  MooseFunctorName momentumFluxMassFluxFunctorName() const override { return "rho_phi"; }
-  bool momentumFluxMassFluxFunctorIsIntegrated() const override { return true; }
   std::string momentumOutletBCType(const BoundaryName & boundary,
                                    const MooseEnum & momentum_outlet_type) const override;
   void setMomentumOutletBCParams(InputParameters & params,

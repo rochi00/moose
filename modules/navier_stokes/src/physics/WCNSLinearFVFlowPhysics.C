@@ -316,12 +316,6 @@ WCNSLinearFVFlowPhysics::addMomentumFluxKernels()
     params.set<MooseFunctorName>(NS::mu) = NS::mu_eff;
 
   params.set<UserObjectName>("rhie_chow_user_object") = rhieChowUOName();
-  if (const auto mass_flux_functor = momentumFluxMassFluxFunctorName(); !mass_flux_functor.empty())
-  {
-    params.set<MooseFunctorName>("mass_flux_functor") = mass_flux_functor;
-    params.set<bool>("mass_flux_is_integrated") = momentumFluxMassFluxFunctorIsIntegrated();
-  }
-
   params.set<InterpolationMethodName>("advected_interp_method_name") =
       momentum_advection_method_name;
   params.set<bool>("use_nonorthogonal_correction") = _non_orthogonal_correction;

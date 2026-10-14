@@ -97,14 +97,6 @@ protected:
   /// The Rhie-Chow user object that provides us with the face velocity
   const RhieChowMassFlux & _mass_flux_provider;
 
-  /// An externally supplied face mass flux, used in place of the Rhie-Chow one. The
-  /// diffuse-interface transport publishes its alpha-consistent rho_phi this way so that momentum
-  /// advects with the same mass flux the volume fraction was advanced with.
-  const Moose::Functor<Real> * const _mass_flux_functor;
-
-  /// Whether the supplied mass flux already includes the face area
-  const bool _mass_flux_is_integrated;
-
   /// The functor for the dynamic viscosity
   const Moose::Functor<Real> & _mu;
 
