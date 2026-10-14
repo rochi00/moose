@@ -66,44 +66,6 @@ WCNSLinearFVConservativeDiffuseInterfaceVOFPhysics::validParams()
       "interface_normal_functor",
       "interface_unit_normal_face",
       "Face-oriented interface unit normal used by the explicit compression flux.");
-  params.addParam<std::vector<VariableName>>(
-      "confined_scalar_variables",
-      {},
-      "Scalar amount variables q = alpha c to transport conservatively with the limited "
-      "volume-fraction flux.");
-  params.addParam<MooseFunctorName>(
-      "confined_scalar_backflow_concentration",
-      "0",
-      "Concentration imposed for confined scalar backflow on open volume-fraction boundaries.");
-  params.addParam<VariableName>(
-      "thermal_energy_variable",
-      "Conserved mixture thermal energy variable to transport with the limited VOF flux.");
-  params.addParam<VariableName>(
-      "conserved_enthalpy_variable",
-      "Conserved mixture sensible enthalpy variable rho * h to transport with the limited VOF "
-      "flux.");
-  params.addParam<MooseFunctorName>(
-      "thermal_energy_temperature",
-      "Temperature functor used to advect conserved mixture thermal energy.");
-  params.addParam<MooseFunctorName>(
-      "conserved_enthalpy_temperature",
-      "Temperature functor used to advect conserved mixture sensible enthalpy.");
-  params.addParam<MooseFunctorName>(
-      "thermal_energy_backflow_temperature",
-      "0",
-      "Temperature imposed for thermal-energy backflow on open volume-fraction boundaries.");
-  params.addParam<MooseFunctorName>(
-      "conserved_enthalpy_backflow_temperature",
-      "Temperature imposed for conserved-enthalpy backflow on open volume-fraction boundaries.");
-  params.addRangeCheckedParam<Real>(
-      "confined_scalar_alpha_floor",
-      1e-12,
-      "confined_scalar_alpha_floor > 0",
-      "Minimum alpha used to recover confined scalar concentration c = q / alpha.");
-  params.addParam<Real>(
-      "confined_scalar_concentration_min", 0.0, "Minimum allowed confined scalar concentration.");
-  params.addParam<Real>(
-      "confined_scalar_concentration_max", 1.0, "Maximum allowed confined scalar concentration.");
   params.addRangeCheckedParam<unsigned int>("n_alpha_corrections",
                                             2,
                                             "n_alpha_corrections>=0",
@@ -122,29 +84,12 @@ WCNSLinearFVConservativeDiffuseInterfaceVOFPhysics::validParams()
                                     "Name of the generated mixture dynamic viscosity functor.");
   params.addRequiredParam<MooseFunctorName>("liquid_density_name", "Liquid-phase density functor.");
   params.addRequiredParam<MooseFunctorName>("gas_density_name", "Gas-phase density functor.");
-  params.addParam<MooseFunctorName>(
-      "liquid_specific_heat_name",
-      "Liquid-phase specific heat functor used to publish rho_cp_phi.");
-  params.addParam<MooseFunctorName>("gas_specific_heat_name",
-                                    "Gas-phase specific heat functor used to publish rho_cp_phi.");
-  params.addParam<MooseFunctorName>(
-      "rho_cp_phi_name", "rho_cp_phi", "Name of the generated rho_cp_phi face flux functor.");
   params.addRequiredParam<MooseFunctorName>("liquid_dynamic_viscosity_name",
                                             "Liquid-phase dynamic viscosity functor.");
   params.addRequiredParam<MooseFunctorName>("gas_dynamic_viscosity_name",
                                             "Gas-phase dynamic viscosity functor.");
 
-  params.addParamNamesToGroup("compression_factor "
-                              "interface_normal_functor confined_scalar_variables "
-                              "confined_scalar_backflow_concentration confined_scalar_alpha_floor "
-                              "confined_scalar_concentration_min "
-                              "confined_scalar_concentration_max thermal_energy_variable "
-                              "thermal_energy_temperature thermal_energy_backflow_temperature "
-                              "conserved_enthalpy_variable conserved_enthalpy_temperature "
-                              "conserved_enthalpy_backflow_temperature",
-                              "Numerical scheme");
-  params.addParamNamesToGroup("liquid_specific_heat_name gas_specific_heat_name rho_cp_phi_name",
-                              "Material properties");
+  params.addParamNamesToGroup("compression_factor interface_normal_functor", "Numerical scheme");
 
   params.suppressParameter<MooseEnum>("preconditioning");
   return params;
@@ -264,51 +209,6 @@ WCNSLinearFVConservativeDiffuseInterfaceVOFPhysics::addUserObjects()
   params.set<MooseFunctorName>("liquid_density") =
       getParam<MooseFunctorName>("liquid_density_name");
   params.set<MooseFunctorName>("gas_density") = getParam<MooseFunctorName>("gas_density_name");
-  if (isParamValid("liquid_specific_heat_name") || isParamValid("gas_specific_heat_name"))
-  {
-    if (!isParamValid("liquid_specific_heat_name"))
-      paramError("liquid_specific_heat_name",
-                 "Must be supplied when 'gas_specific_heat_name' is supplied.");
-    if (!isParamValid("gas_specific_heat_name"))
-      paramError("gas_specific_heat_name",
-                 "Must be supplied when 'liquid_specific_heat_name' is supplied.");
-
-    params.set<MooseFunctorName>("liquid_specific_heat") =
-        getParam<MooseFunctorName>("liquid_specific_heat_name");
-    params.set<MooseFunctorName>("gas_specific_heat") =
-        getParam<MooseFunctorName>("gas_specific_heat_name");
-    params.set<MooseFunctorName>("rho_cp_phi_name") = getParam<MooseFunctorName>("rho_cp_phi_name");
-  }
-  params.set<std::vector<VariableName>>("confined_scalar_variables") =
-      getParam<std::vector<VariableName>>("confined_scalar_variables");
-  if (isParamValid("conserved_enthalpy_variable") || isParamValid("thermal_energy_variable"))
-  {
-    if (isParamValid("conserved_enthalpy_variable"))
-    {
-      params.set<VariableName>("conserved_enthalpy_variable") =
-          getParam<VariableName>("conserved_enthalpy_variable");
-      params.set<MooseFunctorName>("conserved_enthalpy_temperature") =
-          getParam<MooseFunctorName>("conserved_enthalpy_temperature");
-      params.set<MooseFunctorName>("conserved_enthalpy_backflow_temperature") =
-          getParam<MooseFunctorName>("conserved_enthalpy_backflow_temperature");
-    }
-    else
-    {
-      params.set<VariableName>("thermal_energy_variable") =
-          getParam<VariableName>("thermal_energy_variable");
-      params.set<MooseFunctorName>("thermal_energy_temperature") =
-          getParam<MooseFunctorName>("thermal_energy_temperature");
-      params.set<MooseFunctorName>("thermal_energy_backflow_temperature") =
-          getParam<MooseFunctorName>("thermal_energy_backflow_temperature");
-    }
-  }
-  params.set<MooseFunctorName>("confined_scalar_backflow_concentration") =
-      getParam<MooseFunctorName>("confined_scalar_backflow_concentration");
-  params.set<Real>("confined_scalar_alpha_floor") = getParam<Real>("confined_scalar_alpha_floor");
-  params.set<Real>("confined_scalar_concentration_min") =
-      getParam<Real>("confined_scalar_concentration_min");
-  params.set<Real>("confined_scalar_concentration_max") =
-      getParam<Real>("confined_scalar_concentration_max");
   getProblem().addUserObject(object_type, object_name, params);
 }
 
