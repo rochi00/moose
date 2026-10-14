@@ -8,7 +8,6 @@
 //* https://www.gnu.org/licenses/lgpl-2.1.html
 
 #include "LinearFVFluxKernel.h"
-#include "LinearFVAssemblyConsumer.h"
 #include "LinearFVBoundaryCondition.h"
 
 InputParameters
@@ -87,11 +86,6 @@ LinearFVFluxKernel::addMatrixContribution()
       {
         const auto dof_id_elem = _current_face_info->elemInfo()->dofIndices()[_sys_num][_var_num];
 
-        if (!_matrices.empty())
-          if (auto * consumer = assemblyConsumer())
-            consumer->addBoundaryMatrixContribution(
-                _current_face_info->id(), dof_id_elem, matrix_contribution);
-
         // We add the contributions to every tagged matrix
         for (auto & matrix : _matrices)
           (*matrix).add(dof_id_elem, dof_id_elem, matrix_contribution);
@@ -100,11 +94,6 @@ LinearFVFluxKernel::addMatrixContribution()
       {
         const auto dof_id_neighbor =
             _current_face_info->neighborInfo()->dofIndices()[_sys_num][_var_num];
-
-        if (!_matrices.empty())
-          if (auto * consumer = assemblyConsumer())
-            consumer->addBoundaryMatrixContribution(
-                _current_face_info->id(), dof_id_neighbor, matrix_contribution);
 
         // We add the contributions to every tagged matrix
         for (auto & matrix : _matrices)

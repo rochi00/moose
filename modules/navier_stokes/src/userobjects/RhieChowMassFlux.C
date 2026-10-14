@@ -26,8 +26,6 @@
 #include "FVReconstructedPressureGradient.h"
 #include "FVUtils.h"
 #include "MooseUtils.h"
-#include "LinearFVAssemblyConsumer.h"
-#include "LinearFVKernel.h"
 #include "LinearFVBoundaryCondition.h"
 #include "LinearFVFluxKernel.h"
 #include "NSFVUtils.h"
@@ -41,13 +39,12 @@
 #include "libmesh/elem.h"
 #include "libmesh/elem_range.h"
 #include "libmesh/petsc_matrix.h"
-#include "libmesh/threads.h"
 
 #include <cmath>
 
 registerMooseObject("NavierStokesApp", RhieChowMassFlux);
 
-struct RhieChowMassFlux::MomentumPredictorOperator : public LinearFVAssemblyConsumer
+struct RhieChowMassFlux::MomentumPredictorOperator
 {
   Real relaxation_parameter = 1.0;
   std::unique_ptr<NumericVector<Number>> rhs_raw;
@@ -66,10 +63,6 @@ struct RhieChowMassFlux::MomentumPredictorOperator : public LinearFVAssemblyCons
     Real contribution;
   };
   std::vector<BoundaryMatrixContribution> boundary_matrix_contributions;
-  mutable libMesh::Threads::spin_mutex assembly_mutex;
-
-  void
-  addBoundaryMatrixContribution(dof_id_type face_id, dof_id_type dof, Real contribution) override;
 };
 
 InputParameters
@@ -1066,14 +1059,6 @@ RhieChowMassFlux::cellAinvRaw(const unsigned int system_i, const dof_id_type dof
   return (*_Ainv_raw[system_i])(dof);
 }
 
-void
-RhieChowMassFlux::MomentumPredictorOperator::addBoundaryMatrixContribution(
-    const dof_id_type face_id, const dof_id_type dof, const Real contribution)
-{
-  libMesh::Threads::spin_mutex::scoped_lock lock(assembly_mutex);
-  boundary_matrix_contributions.push_back({face_id, dof, contribution});
-}
-
 const RhieChowMassFlux::MomentumPredictorOperator *
 RhieChowMassFlux::cachedMomentumPredictorOperator(const unsigned int system_i) const
 {
@@ -1087,7 +1072,6 @@ RhieChowMassFlux::cachedMomentumPredictorOperator(const unsigned int system_i) c
 void
 RhieChowMassFlux::clearMomentumPredictorOperatorCache()
 {
-  LinearFVKernel::setAssemblyConsumer(nullptr);
   _momentum_predictor_operators.clear();
   _predictor_ready = false;
 }
@@ -1111,6 +1095,46 @@ RhieChowMassFlux::cacheFVSplitMomentumPredictorOperatorAssembly(const unsigned i
 
   *predictor.rhs_raw = rhs;
   predictor.rhs_raw->close();
+
+  // The assembled diagonal mixes interior coefficients with the boundary ones, which fvMatrix
+  // treats differently (component-averaged for A, per component for H). They are not recoverable
+  // from the matrix, so ask the flux kernels that assembled them, exactly as the pressure
+  // diffusion kernel is asked for the pressure face flux.
+  predictor.boundary_matrix_contributions.clear();
+  std::vector<LinearFVFluxKernel *> flux_kernels;
+  _fe_problem.theWarehouse()
+      .query()
+      .template condition<AttribSysNum>(_global_momentum_system_numbers[system_i])
+      .template condition<AttribSystem>("LinearFVFluxKernel")
+      .template condition<AttribThread>(_tid)
+      .queryInto(flux_kernels);
+
+  for (const auto * fi : _flow_face_info)
+    for (auto * kernel : flux_kernels)
+    {
+      const bool on_elem = kernel->hasBlocks(fi->elemSubdomainID());
+      const bool on_neighbor = fi->neighborPtr() && kernel->hasBlocks(fi->neighborSubdomainID());
+      if (!on_elem && !on_neighbor)
+        continue;
+
+      auto & var = kernel->variable();
+      const auto face_type = fi->faceType(std::make_pair(var.number(), var.sys().number()));
+      if (face_type != FaceInfo::VarFaceNeighbors::ELEM &&
+          face_type != FaceInfo::VarFaceNeighbors::NEIGHBOR)
+        continue;
+
+      auto * const bc = var.getBoundaryCondition(*fi);
+      if (!bc)
+        continue;
+
+      kernel->setupFaceData(fi);
+      kernel->setCurrentFaceArea(NS::faceMeasure(*fi));
+      const Real contribution = kernel->computeBoundaryMatrixContribution(*bc);
+      const auto & elem_info =
+          face_type == FaceInfo::VarFaceNeighbors::ELEM ? *fi->elemInfo() : *fi->neighborInfo();
+      predictor.boundary_matrix_contributions.push_back(
+          {fi->id(), elem_info.dofIndices()[var.sys().number()][var.number()], contribution});
+    }
 
   predictor.interior_diagonal_raw->zero();
   predictor.interior_diagonal_raw->close();
@@ -1385,7 +1409,6 @@ RhieChowMassFlux::beginFVSplitMomentumPredictorOperatorAssembly(const unsigned i
                         &predictor->offdiag_abs_sum_raw})
     initialize_zero_vector(*vector);
 
-  LinearFVKernel::setAssemblyConsumer(predictor.get());
   _momentum_predictor_operators[system_i] = std::move(predictor);
   _predictor_ready = false;
 }
@@ -1394,8 +1417,6 @@ void
 RhieChowMassFlux::completeFVSplitMomentumPredictorOperatorAssembly(
     const unsigned int system_i, const Real relaxation_parameter)
 {
-  LinearFVKernel::setAssemblyConsumer(nullptr);
-
   if (!_split_momentum_predictor_operator)
     return;
 

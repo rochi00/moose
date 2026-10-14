@@ -481,16 +481,7 @@ LinearAssemblySegregatedSolve::assembleMomentumPredictorOperator(const unsigned 
   if (_rc_uo && _rc_uo->splitMomentumPredictorOperator())
     _rc_uo->beginFVSplitMomentumPredictorOperatorAssembly(system_i);
 
-  try
-  {
-    _problem.computeLinearSystemSys(momentum_system, mmat, rhs, /*compute_grads*/ true);
-  }
-  catch (...)
-  {
-    if (_rc_uo && _rc_uo->splitMomentumPredictorOperator())
-      _rc_uo->clearMomentumPredictorOperatorCache();
-    throw;
-  }
+  _problem.computeLinearSystemSys(momentum_system, mmat, rhs, /*compute_grads*/ true);
 
   if (prepare_without_solve)
     rhs.close();
