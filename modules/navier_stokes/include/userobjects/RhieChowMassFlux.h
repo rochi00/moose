@@ -14,10 +14,7 @@
 #include "FaceCenteredMapFunctor.h"
 #include "DerivedFaceFunctor.h"
 #include "VectorComponentFunctor.h"
-#include "LinearFVElementalKernel.h"
-#include "LinearFVAnisotropicDiffusion.h"
 #include "PetscVectorReader.h"
-#include <string>
 #include <unordered_map>
 #include <set>
 
@@ -31,7 +28,6 @@ class LinearFVGradientReader;
 class FVReconstructedPressureGradient;
 class LinearFVPressureCorrectionDiffusion;
 class LinearFVBoundaryCondition;
-class LinearFVElementalKernel;
 namespace libMesh
 {
 class Elem;
@@ -156,7 +152,7 @@ public:
    */
   virtual bool pressureCorrectionFluxIsIntegrated() const { return false; }
   /// Update boundary pressure gradients from the current predictor and boundary velocity state.
-  void updatePressureBoundaryNormalGradients(const bool apply_pressure_flux_adjustment);
+  void updatePressureBoundaryNormalGradients();
   /// Refresh boundary-face velocity values from the active FV velocity BC objects.
   void updateVelocityBoundaryState();
 
@@ -252,8 +248,6 @@ protected:
   Real pressurePredictorFlux(const FaceInfo * fi) const;
   /// Populate the explicit face state used by the pressure corrector.
   void updatePressurePredictorFaceState();
-  /// Optional per-face adjustment added to the predictor flux for reference-pressure compatibility.
-  Real pressurePredictorFluxAdjustment(const FaceInfo * fi) const;
   /// Target boundary flux for the active pressure-correction space.
   virtual Real pressureBoundaryTargetFlux(const FaceInfo * fi,
                                           const Moose::StateArg & time_arg) const;
@@ -293,8 +287,6 @@ protected:
                              const RealVectorValue & face_normal) const;
   /// Compute the normal component of the face diffusion coefficient used by pressure BCs.
   Real boundaryNormalAinv(const FaceInfo * fi) const;
-  /// Determine whether a boundary face belongs to an adjustable fixed-flux pressure patch.
-  bool isAdjustablePressureBoundaryFace(const FaceInfo * fi) const;
   /// Compute the face flux contributed by the solved pressure equation in the
   /// native pressure-correction space used by this Rhie-Chow object.
   Real computeDiscretePressureFaceFlux(const FaceInfo * fi) const;
@@ -318,7 +310,6 @@ protected:
                                   const std::vector<PetscVectorReader> & hbya_reader,
                                   const std::vector<PetscVectorReader> * ainv_reader,
                                   const Moose::StateArg & time_arg,
-                                  bool include_boundary_body_force_correction,
                                   bool use_boundary_velocity_values) const;
   /// Interpolate per-component momentum-system cell readers to a face vector.
   RealVectorValue
@@ -373,7 +364,7 @@ protected:
   std::vector<MooseLinearVariableFVReal *> _vel;
 
   /// Pointer to the pressure diffusion term in the pressure Poisson equation
-  LinearFVAnisotropicDiffusion * _p_diffusion_kernel;
+  LinearFVPressureCorrectionDiffusion * _p_diffusion_kernel;
 
   /**
    * A map functor from faces to $HbyA_{ij} = (A_{offdiag}*\mathrm{(predicted~velocity)} -
@@ -389,14 +380,6 @@ protected:
    * -_phiHbyA_flux + _pressure_equation_flux.
    */
   DerivedFaceFunctor<Real> _phiHbyA_flux;
-
-  /**
-   * Predictor-side face flux in the same native pressure-correction space consumed by the
-   * pressure equation and pressure boundary-condition updates. For stock RC this is a normal
-   * flux density; diffuse/conservative paths publish an area-integrated phi. It is
-   * still a pressure-correction-space predictor quantity, not the accepted transport phi.
-   */
-  DerivedFaceFunctor<Real> _pressure_predictor_flux;
 
   /**
    * Explicit face-force contribution entering the pressure corrector.
@@ -453,11 +436,8 @@ protected:
   /// Indicates whether _pressure_equation_flux matches the latest solved pressure field.
   bool _pressure_equation_flux_valid = false;
 
-  /// Per-face predictor source-flux adjustments used for the local adjustPhi analogue.
-  std::unordered_map<dof_id_type, Real> _pressure_predictor_flux_adjustment;
-
-  /// Unadjusted predictor-side face flux prior to the local adjustPhi analogue, stored in the
-  /// internal pressure-correction convention. The accepted transport flux uses the negated value.
+  /// Predictor-side face flux before the explicit face force is removed, stored in the internal
+  /// pressure-correction convention. The accepted transport flux uses the negated value.
   std::unordered_map<dof_id_type, Real> _pressure_predictor_base_flux;
 
   /// Indicates whether _pressure_boundary_normal_gradient matches the latest predictor state.
@@ -486,11 +466,6 @@ protected:
 
   /// Indicates whether all streamed component operators have been vector-finalized.
   bool _cached_predictor_operator_finalized = false;
-
-  /// Pointer to the body force terms
-  std::vector<std::vector<LinearFVElementalKernel *>> _body_force_kernels;
-  /// Vector of body force term names
-  std::vector<std::vector<std::string>> _body_force_kernel_names;
 
   /**
    * Producer counter for the conservative face mass flux: incremented every time

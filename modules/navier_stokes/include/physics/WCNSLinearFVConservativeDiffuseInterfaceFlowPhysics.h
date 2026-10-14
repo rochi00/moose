@@ -32,7 +32,7 @@ private:
   /// Creates the material publishing the interface curvature and capillary force density.
   void addSurfaceTensionFunctorMaterial();
   MooseFunctorName pressureDiffusionTensorName() const override { return "pressure_Ainv"; }
-  MooseFunctorName pressureDivergenceFluxName() const override { return "pressure_predictor_flux"; }
+  MooseFunctorName pressureDivergenceFluxName() const override { return "phiHbyA"; }
   MooseFunctorName momentumFluxMassFluxFunctorName() const override { return "rho_phi"; }
   bool momentumFluxMassFluxFunctorIsIntegrated() const override { return true; }
   std::string momentumOutletBCType(const BoundaryName & boundary,

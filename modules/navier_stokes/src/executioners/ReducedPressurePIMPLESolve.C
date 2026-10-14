@@ -528,7 +528,7 @@ ReducedPressurePIMPLESolve::postPreparePressureCorrectorState(
   // predictor before assembling the constrained pressure boundary gradient.
   _rc_uo->updateVelocityBoundaryState();
 
-  _rc_uo->updatePressureBoundaryNormalGradients(/* apply_pressure_flux_adjustment = */ false);
+  _rc_uo->updatePressureBoundaryNormalGradients();
 }
 
 unsigned int

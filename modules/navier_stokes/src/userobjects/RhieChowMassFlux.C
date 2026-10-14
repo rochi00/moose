@@ -26,14 +26,10 @@
 #include "FVReconstructedPressureGradient.h"
 #include "FVUtils.h"
 #include "MooseUtils.h"
-#include "LinearFVElementalKernel.h"
 #include "LinearFVAssemblyConsumer.h"
 #include "LinearFVKernel.h"
 #include "LinearFVBoundaryCondition.h"
-#include "LinearFVAnisotropicDiffusion.h"
 #include "LinearFVFluxKernel.h"
-#include "LinearFVPressureFluxBC.h"
-#include "LinearFVPressureSymmetryBC.h"
 #include "MooseUtils.h"
 
 #include <algorithm>
@@ -95,11 +91,6 @@ RhieChowMassFlux::validParams()
   params.addParam<VariableName>("w", "The z-component of velocity");
   params.addRequiredParam<std::string>("p_diffusion_kernel",
                                        "The diffusion kernel acting on the pressure.");
-  params.addParam<std::vector<std::vector<std::string>>>(
-      "body_force_kernel_names",
-      {},
-      "The body force kernel names."
-      "this double vector would have size index_x_dim: 'f1x f2x; f1y f2y; f1z f2z'");
 
   params.addRequiredParam<MooseFunctorName>(NS::density, "Density functor");
 
@@ -172,16 +163,6 @@ RhieChowMassFlux::RhieChowMassFlux(const InputParameters & params)
                     };
                     return at(_pressure_predictor_base_flux) - at(_phig_flux);
                   }),
-    _pressure_predictor_flux(_moose_mesh,
-                             blockIDs(),
-                             "pressure_predictor_flux",
-                             [this](const FaceInfo & fi)
-                             {
-                               const auto & adj = _pressure_predictor_flux_adjustment;
-                               const auto it = adj.find(fi.id());
-                               return _phiHbyA_flux.evaluate(&fi) +
-                                      (it == adj.end() ? 0.0 : it->second);
-                             }),
     _phig_flux(_moose_mesh, blockIDs(), "phig_flux"),
     _Ainv(_moose_mesh, blockIDs(), "Ainv"),
     _pressure_Ainv(_moose_mesh, blockIDs(), "pressure_Ainv"),
@@ -195,8 +176,6 @@ RhieChowMassFlux::RhieChowMassFlux(const InputParameters & params)
     _use_cached_momentum_predictor_operator(
         getParam<bool>("use_cached_momentum_predictor_operator")),
     _split_momentum_predictor_operator(getParam<bool>("split_momentum_predictor_operator")),
-    _body_force_kernel_names(
-        getParam<std::vector<std::vector<std::string>>>("body_force_kernel_names")),
     _rho(getFunctor<Real>(NS::density)),
     _pressure_system(nullptr),
     _pressure_gradient_field(nullptr),
@@ -232,9 +211,6 @@ RhieChowMassFlux::RhieChowMassFlux(const InputParameters & params)
     UserObject::_subproblem.addFunctor("pressure_Ainv", _pressure_Ainv, tid);
     UserObject::_subproblem.addFunctor("HbyA", _HbyA_flux, tid);
     UserObject::_subproblem.addFunctor("phiHbyA", _phiHbyA_flux, tid);
-    UserObject::_subproblem.addFunctor("pressure_predictor_flux", _pressure_predictor_flux, tid);
-    UserObject::_subproblem.addFunctor("phig", _phig_flux, tid);
-    UserObject::_subproblem.addFunctor("pressure_equation_flux", _pressure_equation_flux, tid);
     UserObject::_subproblem.addFunctor(
         "pressure_boundary_normal_gradient", _pressure_boundary_normal_gradient, tid);
   }
@@ -526,7 +502,6 @@ RhieChowMassFlux::meshChanged()
   _grad_p_current.clear();
   _pressure_equation_flux.clear();
   _pressure_boundary_normal_gradient.clear();
-  _pressure_predictor_flux_adjustment.clear();
   _pressure_predictor_base_flux.clear();
   _pressure_equation_flux_valid = false;
   _pressure_boundary_normal_gradient_valid = false;
@@ -657,38 +632,6 @@ RhieChowMassFlux::initialSetup()
     paramError("p_diffusion_kernel",
                "The provided diffusion kernel must be of type "
                "LinearFVPressureCorrectionDiffusion.");
-
-  // We fetch the body forces kernel to ensure that the face flux correction
-  // is accurate.
-
-  // Check if components match the dimension.
-
-  if (!_body_force_kernel_names.empty())
-  {
-    if (_body_force_kernel_names.size() != _dim)
-      paramError("body_force_kernel_names",
-                 "The dimension of the body force vector does not match the problem dimension.");
-
-    _body_force_kernels.resize(_dim);
-
-    for (const auto dim_i : make_range(_dim))
-      for (const auto & force_name : _body_force_kernel_names[dim_i])
-      {
-        std::vector<LinearFVElementalKernel *> temp_storage;
-        auto base_query_force = _fe_problem.theWarehouse()
-                                    .query()
-                                    .template condition<AttribThread>(_tid)
-                                    .template condition<AttribSysNum>(_vel[dim_i]->sys().number())
-                                    .template condition<AttribSystem>("LinearFVElementalKernel")
-                                    .template condition<AttribName>(force_name)
-                                    .queryInto(temp_storage);
-        if (temp_storage.size() != 1)
-          paramError("body_force_kernel_names",
-                     "The kernel with the given name: " + force_name +
-                         " could not be found or multiple instances were identified.");
-        _body_force_kernels[dim_i].push_back(temp_storage[0]);
-      }
-  }
 }
 
 void
@@ -716,7 +659,6 @@ RhieChowMassFlux::setupMeshInformation()
   for (const auto * fi : _flow_face_info)
   {
     _pressure_boundary_normal_gradient[fi->id()] = 0.0;
-    _pressure_predictor_flux_adjustment[fi->id()] = 0.0;
     _pressure_predictor_base_flux[fi->id()] = 0.0;
     _pressure_Ainv[fi->id()] = RealVectorValue();
   }
@@ -778,10 +720,6 @@ RhieChowMassFlux::initialize()
 
   for (const auto & pair : _pressure_boundary_normal_gradient)
     _pressure_boundary_normal_gradient[pair.first] = 0;
-
-  _pressure_predictor_flux_adjustment.clear();
-  for (const auto * fi : _flow_face_info)
-    _pressure_predictor_flux_adjustment[fi->id()] = 0.0;
 
   _pressure_equation_flux_valid = false;
   _pressure_boundary_normal_gradient_valid = false;
@@ -1105,7 +1043,6 @@ RhieChowMassFlux::updatePressurePredictorFaceState()
     const auto face_id = fi->id();
     _phig_flux[face_id] = 0.0;
     _pressure_predictor_base_flux[face_id] = pressurePredictorFlux(fi);
-    _pressure_predictor_flux_adjustment[face_id] = 0.0;
   }
 
   _pressure_predictor_face_state_valid = true;
@@ -1692,29 +1629,6 @@ RhieChowMassFlux::boundaryNormalAinv(const FaceInfo * fi) const
   return computeFaceNormalAinv(face_ainv, fi->normal());
 }
 
-bool
-RhieChowMassFlux::isAdjustablePressureBoundaryFace(const FaceInfo * fi) const
-{
-  if (!fi || _vel[0]->isInternalFace(*fi) || fi->boundaryIDs().empty())
-    return false;
-
-  if (const auto * bc_pointer = pressureBoundaryCondition(fi))
-    return dynamic_cast<const LinearFVPressureFluxBC *>(bc_pointer) ||
-           dynamic_cast<const LinearFVPressureSymmetryBC *>(bc_pointer);
-
-  return false;
-}
-
-Real
-RhieChowMassFlux::pressurePredictorFluxAdjustment(const FaceInfo * fi) const
-{
-  if (!fi)
-    return 0.0;
-
-  const auto it = _pressure_predictor_flux_adjustment.find(fi->id());
-  return it == _pressure_predictor_flux_adjustment.end() ? 0.0 : it->second;
-}
-
 Real
 RhieChowMassFlux::pressureBoundaryTargetFlux(const FaceInfo * fi,
                                              const Moose::StateArg & time_arg) const
@@ -1799,7 +1713,7 @@ RhieChowMassFlux::faceMeasure(const FaceInfo & fi) const
 }
 
 void
-RhieChowMassFlux::updatePressureBoundaryNormalGradients(const bool apply_pressure_flux_adjustment)
+RhieChowMassFlux::updatePressureBoundaryNormalGradients()
 {
   if (!_pressure_predictor_face_state_valid)
     updatePressurePredictorFaceState();
@@ -1808,20 +1722,9 @@ RhieChowMassFlux::updatePressureBoundaryNormalGradients(const bool apply_pressur
   Real max_boundary_normal_ainv = 0.0;
 
   for (const auto * fi : _flow_face_info)
-  {
-    _pressure_predictor_flux_adjustment[fi->id()] = 0.0;
-    // Rebuild the live predictor source in the native pressure-correction
-    // space so constrained pressure BCs see the same total phiHbyA contract
-    // that the interior pressure equation sees. The diffuse-interface path stores
-    // _pressure_predictor_base_flux with the internal sign, while _phig_flux is
-    // the explicit body-force contribution, so internal phiHbyA is base - phig.
     if (!_vel[0]->isInternalFace(*fi))
-    {
-      _pressure_boundary_normal_gradient[fi->id()] = 0.0;
       max_boundary_normal_ainv =
           std::max(max_boundary_normal_ainv, std::abs(pressureBoundaryNormalAinv(fi)));
-    }
-  }
 
   // Treat a boundary pressure coefficient as degenerate only relative to the scale of the
   // current boundary operator. An absolute libMesh::TOLERANCE cutoff is too aggressive for
@@ -1829,41 +1732,6 @@ RhieChowMassFlux::updatePressureBoundaryNormalGradients(const bool apply_pressur
   const Real degenerate_normal_ainv_tol =
       std::max(std::numeric_limits<Real>::min(),
                std::numeric_limits<Real>::epsilon() * std::max(1.0, max_boundary_normal_ainv));
-
-  // Shift the predictor source on adjustable fixed-flux patches so the integrated predictor
-  // boundary flux matches the boundary mass-flux target before the pressure solve.
-  if (apply_pressure_flux_adjustment)
-  {
-    Real integrated_source_imbalance = 0.0;
-    Real adjustable_measure = 0.0;
-
-    for (const auto * fi : _flow_face_info)
-      if (isAdjustablePressureBoundaryFace(fi))
-      {
-        const Real face_measure = faceMeasure(*fi);
-        const Real required_pressure_flux =
-            _pressure_predictor_flux.evaluate(fi) + pressureBoundaryTargetFlux(fi, time_arg);
-        integrated_source_imbalance += pressureCorrectionFluxIsIntegrated()
-                                           ? required_pressure_flux
-                                           : required_pressure_flux * face_measure;
-        adjustable_measure += face_measure;
-      }
-
-    if (adjustable_measure > libMesh::TOLERANCE)
-    {
-      const Real uniform_source_adjustment_density =
-          -integrated_source_imbalance / adjustable_measure;
-      for (const auto * fi : _flow_face_info)
-        if (isAdjustablePressureBoundaryFace(fi))
-        {
-          const Real face_measure = faceMeasure(*fi);
-          const Real source_adjustment = pressureCorrectionFluxIsIntegrated()
-                                             ? uniform_source_adjustment_density * face_measure
-                                             : uniform_source_adjustment_density;
-          _pressure_predictor_flux_adjustment[fi->id()] = source_adjustment;
-        }
-    }
-  }
 
   for (const auto * fi : _flow_face_info)
   {
@@ -1878,7 +1746,7 @@ RhieChowMassFlux::updatePressureBoundaryNormalGradients(const bool apply_pressur
     }
 
     const Real required_pressure_flux =
-        _pressure_predictor_flux.evaluate(fi) + pressureBoundaryTargetFlux(fi, time_arg);
+        _phiHbyA_flux.evaluate(fi) + pressureBoundaryTargetFlux(fi, time_arg);
     const Real face_measure = faceMeasure(*fi);
     if (pressureCorrectionFluxIsIntegrated() && face_measure <= libMesh::TOLERANCE)
     {
@@ -1954,7 +1822,6 @@ RhieChowMassFlux::buildMomentumPredictorFaceState(
     const std::vector<PetscVectorReader> & hbya_reader,
     const std::vector<PetscVectorReader> * ainv_reader,
     const Moose::StateArg & time_arg,
-    const bool include_boundary_body_force_correction,
     const bool use_boundary_velocity_values) const
 {
   using namespace Moose::FV;
@@ -2041,16 +1908,6 @@ RhieChowMassFlux::buildMomentumPredictorFaceState(
               ? -boundary_value
               : -MetaPhysicL::raw_value((*_vel[dim_i])(boundary_face, Moose::currentState()));
 
-      if (include_boundary_body_force_correction && !_split_momentum_predictor_operator &&
-          !_body_force_kernel_names.empty())
-        for (const auto & force_kernel : _body_force_kernels[dim_i])
-        {
-          force_kernel->setCurrentElemInfo(&elem_info);
-          state.face_hbya(dim_i) -=
-              force_kernel->computeRightHandSideContribution() * (*ainv_reader)[dim_i](elem_dof) /
-              (elem_info.volume() * elem_info.coordFactor()); // zero-term expansion
-        }
-
       state.face_hbya(dim_i) *= boundary_normal_multiplier;
       state.density_weighted_face_hbya(dim_i) = state.face_rho * state.face_hbya(dim_i);
     }
@@ -2107,8 +1964,6 @@ RhieChowMassFlux::populateCouplingFunctors(
                                         hbya_reader,
                                         &ainv_reader,
                                         time_arg,
-                                        /* include_boundary_body_force_correction = */
-                                        true,
                                         /* use_boundary_velocity_values = */ false);
     _Ainv[fi->id()] = state.face_density_weighted_ainv;
     _pressure_Ainv[fi->id()] = state.face_pressure_ainv;
@@ -2230,36 +2085,11 @@ RhieChowMassFlux::computeHbyA(bool verbose)
 
     if (!split_predictor_operator)
     {
-      // The non-split predictor operator includes explicit pressure/body-force
-      // terms in the assembled RHS, so HbyA has to remove pressure and then
-      // restore explicit body-force sources.
-      // The coupling gradient is the snapshot taken before this predictor was assembled,
-      // which is the gradient the momentum pressure source actually used.
+      // The non-split predictor operator carries the pressure force in its assembled RHS, so
+      // HbyA has to remove it again. The coupling gradient is the snapshot taken before this
+      // predictor was assembled, which is the gradient the momentum pressure source actually used.
       working_vector_petsc->pointwise_mult(*coupling_pressure_gradient[system_i], *_cell_volumes);
       HbyA.add(-1.0, *working_vector_petsc);
-
-      if (!_body_force_kernels.empty())
-      {
-        auto explicit_body_force_rhs = current_local_solution.zero_clone();
-        for (const auto & elem_info : _fe_problem.mesh().elemInfoVector())
-          if (hasBlocks(elem_info->subdomain_id()))
-          {
-            const auto elem_dof =
-                elem_info->dofIndices()[_global_momentum_system_numbers[system_i]][0];
-
-            Real rhs_contribution = 0.0;
-            for (const auto & force_kernel : _body_force_kernels[system_i])
-            {
-              force_kernel->setCurrentElemInfo(elem_info);
-              rhs_contribution += force_kernel->computeRightHandSideContribution();
-            }
-
-            explicit_body_force_rhs->set(elem_dof, rhs_contribution);
-          }
-
-        explicit_body_force_rhs->close();
-        HbyA.add(1.0, *explicit_body_force_rhs);
-      }
     }
 
     if (verbose)
@@ -2268,15 +2098,9 @@ RhieChowMassFlux::computeHbyA(bool verbose)
       rhs.print();
       _console << "pressure RHS" << std::endl;
       coupling_pressure_gradient[system_i]->print();
-      _console << " H(u)-rhs-relaxation_source" << std::endl;
-      if (!split_predictor_operator)
-      {
-        _console << "pressure RHS" << std::endl;
-        coupling_pressure_gradient[system_i]->print();
-        _console << " predictor_base - pressure + explicit_body_force" << std::endl;
-      }
-      else
-        _console << " predictor_base (split operator)" << std::endl;
+      _console << (split_predictor_operator ? " predictor_base (split operator)"
+                                            : " predictor_base - pressure")
+               << std::endl;
       HbyA.print();
     }
 

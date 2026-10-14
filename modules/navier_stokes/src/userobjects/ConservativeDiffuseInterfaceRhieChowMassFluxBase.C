@@ -881,7 +881,6 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::updateAdditionalPressureFluxFu
                                         hbya_readers,
                                         nullptr,
                                         time_arg,
-                                        /* include_boundary_body_force_correction = */ false,
                                         /* use_boundary_velocity_values = */ true);
 
     const Real face_measure = faceMeasure(*fi);
@@ -922,9 +921,6 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::updateAdditionalPressureFluxFu
     _phig_flux[fi->id()] = phig_flux;
     _pressure_Ainv[fi->id()] = pressure_face_raw_ainv;
     _pressure_predictor_base_flux[fi->id()] = -pressure_predictor_base_flux;
-    // The boundary source adjustment belongs to the pressure boundary pass that computes it, so a
-    // freshly published predictor state carries none of the previous one's.
-    _pressure_predictor_flux_adjustment[fi->id()] = 0.0;
   }
 
   _pressure_predictor_face_state_valid = true;
