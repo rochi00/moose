@@ -17,8 +17,6 @@
 #include "LinearSystem.h"
 #include "MooseFunctorArguments.h"
 #include "MooseMesh.h"
-#include "PIMPLE.h"
-#include "SIMPLE.h"
 #include "SubProblem.h"
 #include "FVUtils.h"
 #include "libmesh/dense_matrix.h"
@@ -790,11 +788,6 @@ ConservativeDiffuseInterfaceRhieChowMassFluxBase::ConservativeDiffuseInterfaceRh
                                        _pressure_coupled_cell_reconstruction_scalar,
                                        tid);
   }
-
-  if (!dynamic_cast<SIMPLE *>(getMooseApp().getExecutioner()) &&
-      !dynamic_cast<PIMPLE *>(getMooseApp().getExecutioner()))
-    mooseError(this->name(),
-               " should only be used with a linear segregated thermal-hydraulics solver!");
 
   initializeAdditionalPressureFluxStorage();
 }

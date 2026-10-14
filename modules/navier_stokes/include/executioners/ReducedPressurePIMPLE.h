@@ -9,27 +9,29 @@
 
 #pragma once
 
-#include "PIMPLE.h"
+#include "TransientBase.h"
 #include "ReducedPressurePIMPLESolve.h"
 
 /**
- * Executioner that reuses the stock PIMPLE executioner API, but swaps in a
- * custom PIMPLE solve object with reduced-pressure / diffuse-interface hooks.
- *
- * Deriving from PIMPLE is deliberate: RhieChowMassFlux validates that the
- * executioner is a PIMPLE or SIMPLE executioner in its constructor.
+ * Executioner solving a transient diffuse-interface two-phase problem in the reduced pressure
+ * with the PIMPLE algorithm, using segregated linear systems solved by fixed-point iteration
+ * within each time step.
  */
-class ReducedPressurePIMPLE : public PIMPLE
+class ReducedPressurePIMPLE : public TransientBase
 {
 public:
   static InputParameters validParams();
 
   ReducedPressurePIMPLE(const InputParameters & parameters);
 
-protected:
-  PIMPLESolve & pimpleSolve() override { return _reduced_pimple_solve; }
-  const PIMPLESolve & pimpleSolve() const override { return _reduced_pimple_solve; }
-  void postTakeStep() override;
+  virtual void init() override;
+  virtual void takeStep(Real input_dt = -1.0) override;
 
-  ReducedPressurePIMPLESolve _reduced_pimple_solve;
+  virtual Real relativeSolutionDifferenceNorm(bool check_aux) const override;
+
+protected:
+  virtual std::set<TimeIntegrator *> getTimeIntegrators() const override;
+
+  /// The solve object performing the reduced-pressure PIMPLE iteration
+  ReducedPressurePIMPLESolve _solve;
 };

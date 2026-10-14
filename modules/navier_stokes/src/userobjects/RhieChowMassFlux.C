@@ -13,8 +13,6 @@
 #include "MooseMesh.h"
 #include "NS.h"
 #include "VectorCompositeFunctor.h"
-#include "PIMPLE.h"
-#include "SIMPLE.h"
 #include "PetscVectorReader.h"
 #include "LinearSystem.h"
 #include "LinearFVGradientManager.h"
@@ -129,8 +127,9 @@ RhieChowMassFlux::RhieChowMassFlux(const InputParameters & params)
     UserObject::_subproblem.addFunctor("HbyA", _HbyA_flux, tid);
   }
 
-  if (!dynamic_cast<SIMPLE *>(getMooseApp().getExecutioner()) &&
-      !dynamic_cast<PIMPLE *>(getMooseApp().getExecutioner()))
+  // Any executioner built on the segregated linear-assembly solve carries its parameters
+  if (!getMooseApp().getExecutioner()->parameters().have_parameter<std::vector<SolverSystemName>>(
+          "momentum_systems"))
     mooseError(this->name(),
                " should only be used with a linear segregated thermal-hydraulics solver!");
 }
