@@ -12,14 +12,8 @@
 #include "FunctorMaterial.h"
 
 /**
- * Functor material that prepares face-aware diffuse-interface geometry quantities
- * for reduced-pressure linear-FV coupling.
- *
- * This object is intentionally focused on the *consumer-facing* quantities that
- * the custom Rhie-Chow object needs right now:
- *
- * - clipped / near-interface alpha indicators
- * - face unit normals from grad(alpha)
+ * Publishes the face-oriented interface unit normal of a diffuse interface, grad(alpha) over its
+ * regularized magnitude, which the volume-fraction compression flux consumes.
  */
 class ConservativeDiffuseInterfaceGeometryFunctorMaterial final : public FunctorMaterial
 {
@@ -35,15 +29,6 @@ private:
 
   const Moose::Functor<Real> & _volume_fraction;
 
-  const bool _clip_volume_fraction;
-  const Real _alpha_lower_bound;
-  const Real _alpha_upper_bound;
-  const Real _near_interface_lower;
-  const Real _near_interface_upper;
+  /// Added to |grad(alpha)| so a vanishing gradient gives a finite normal
   const Real _delta_n;
-
-  const MooseFunctorName _delta_n_name;
-  const MooseFunctorName _near_interface_name;
-  const MooseFunctorName _alpha_gradient_name;
-  const MooseFunctorName _interface_unit_normal_name;
 };

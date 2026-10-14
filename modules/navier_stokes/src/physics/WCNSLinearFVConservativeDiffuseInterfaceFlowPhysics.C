@@ -51,36 +51,22 @@ WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::validParams()
       "volume_fraction_functor",
       "",
       "Volume-fraction functor used to generate diffuse-interface geometry functors.");
-  params.addParam<Real>(
-      "near_interface_lower", 0.01, "Lower threshold used for the near-interface indicator.");
-  params.addParam<Real>(
-      "near_interface_upper", 0.99, "Upper threshold used for the near-interface indicator.");
   params.addParam<bool>(
       "create_geometry_functors",
       true,
       "Whether to automatically add the diffuse-interface geometry functor material that produces "
-      "face normals and capillary / hydrostatic face accelerations.");
+      "the face-oriented interface unit normal.");
   params.addParam<Real>(
       "geometry_delta_n",
       1e-8,
       "Regularization used in the geometry material when constructing interface unit normals.");
-  params.addParam<bool>(
-      "clip_volume_fraction_for_geometry",
-      true,
-      "Whether to clip the volume fraction in the geometry material before forming indicators.");
-  params.addParam<Real>(
-      "geometry_alpha_lower_bound", 0.0, "Lower clipping bound for the volume fraction.");
-  params.addParam<Real>(
-      "geometry_alpha_upper_bound", 1.0, "Upper clipping bound for the volume fraction.");
   params.addParam<MooseFunctorName>(
       "surface_tension_coefficient",
       "",
       "Surface-tension coefficient functor. Leave empty to disable capillary forcing.");
   params.addParamNamesToGroup(
       "create_geometry_functors volume_fraction_functor geometry_delta_n "
-      "clip_volume_fraction_for_geometry "
-      "geometry_alpha_lower_bound geometry_alpha_upper_bound near_interface_lower "
-      "near_interface_upper surface_tension_coefficient",
+      "surface_tension_coefficient",
       "Diffuse Interface Geometry");
 
   return params;
@@ -287,20 +273,7 @@ WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::addFunctorMaterials()
 
   params.set<MooseFunctorName>("volume_fraction_functor") =
       getParam<MooseFunctorName>("volume_fraction_functor");
-
-  params.set<bool>("clip_volume_fraction_for_geometry") =
-      getParam<bool>("clip_volume_fraction_for_geometry");
-  params.set<Real>("alpha_lower_bound") = getParam<Real>("geometry_alpha_lower_bound");
-  params.set<Real>("alpha_upper_bound") = getParam<Real>("geometry_alpha_upper_bound");
-  params.set<Real>("near_interface_lower") = getParam<Real>("near_interface_lower");
-  params.set<Real>("near_interface_upper") = getParam<Real>("near_interface_upper");
   params.set<Real>("delta_n") = getParam<Real>("geometry_delta_n");
-
-  params.set<MooseFunctorName>("delta_n_name") = generatedGeometryFunctorName("delta_n");
-  params.set<MooseFunctorName>("near_interface_name") =
-      generatedGeometryFunctorName("near_interface");
-  params.set<MooseFunctorName>("alpha_gradient_name") =
-      generatedGeometryFunctorName("alpha_gradient");
   params.set<MooseFunctorName>("interface_unit_normal_name") =
       generatedGeometryFunctorName("interface_unit_normal_face");
   getProblem().addFunctorMaterial(class_name, prefix() + "diffuse_interface_geometry", params);

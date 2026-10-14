@@ -341,14 +341,8 @@ ConservativeDiffuseInterfaceVOFMULESCorrector::oldCellAlpha(const ElemInfo & ele
   if (dof == DofObject::invalid_id)
     return 0.0;
 
-  const auto cached_alpha = _pre_subcycle_alpha_by_dof.find(dof);
-  if (cached_alpha != _pre_subcycle_alpha_by_dof.end())
-    return boundedAlpha(cached_alpha->second);
-
-  if (const auto * previous_solution = _system->solutionPreviousNewton())
-    return boundedAlpha((*previous_solution)(dof));
-
-  return boundedAlpha(_system->solutionOld()(dof));
+  // cachePreSubcycleAlpha runs before every correction, so the pre-subcycle value is always here.
+  return boundedAlpha(libmesh_map_find(_pre_subcycle_alpha_by_dof, dof));
 }
 
 Real
@@ -478,10 +472,8 @@ ConservativeDiffuseInterfaceVOFMULESCorrector::boundaryValue(
   if (auto * bc = face_data.boundary_condition)
     return boundedAlpha(bc->computeBoundaryValue());
 
-  const auto * fluid_info = face_data.face_type == FaceInfo::VarFaceNeighbors::NEIGHBOR
-                                ? fi.neighborInfo()
-                                : fi.elemInfo();
-  return fluid_info ? cellAlpha(*fluid_info) : 0.0;
+  return cellAlpha(face_data.face_type == FaceInfo::VarFaceNeighbors::NEIGHBOR ? *fi.neighborInfo()
+                                                                               : *fi.elemInfo());
 }
 
 FaceInfo::VarFaceNeighbors
