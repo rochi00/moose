@@ -523,6 +523,8 @@ ConservativeDiffuseInterfaceRhieChowMassFlux::maxCourant(const Real dt) const
     max_courant = std::max(max_courant, courant);
   }
 
+  // The subcycle count it sizes must agree on every rank
+  comm().max(max_courant);
   return max_courant;
 }
 
