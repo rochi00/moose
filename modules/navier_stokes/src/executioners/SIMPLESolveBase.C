@@ -707,6 +707,16 @@ SIMPLESolveBase::SIMPLESolveBase(Executioner & ex)
 }
 
 void
+SIMPLESolveBase::applyMomentumEquationRelaxation(SparseMatrix<Number> & matrix,
+                                                 NumericVector<Number> & rhs,
+                                                 const NumericVector<Number> & solution,
+                                                 NumericVector<Number> & diff_diagonal) const
+{
+  NS::FV::relaxMatrix(matrix, _momentum_equation_relaxation, diff_diagonal);
+  NS::FV::relaxRightHandSide(rhs, solution, diff_diagonal);
+}
+
+void
 SIMPLESolveBase::setupPressurePin()
 {
   if (_pin_pressure)

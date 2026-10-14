@@ -65,10 +65,16 @@ protected:
   const bool _two_term_expansion;
 
   /// Velocity functors used to prescribe a boundary mass flux
-  const Moose::Functor<Real> & _u;
+  /// Boundary normal pressure gradient supplied from outside, superseding the reconstruction
+  const Moose::Functor<Real> * const _constrained_pressure_normal_gradient;
+
+  /// The supplied boundary normal pressure gradient evaluated on the current face
+  Real suppliedBoundaryNormalGradient() const;
+
+  const Moose::Functor<Real> * const _u;
   const Moose::Functor<Real> * const _v;
   const Moose::Functor<Real> * const _w;
 
   /// Density functor used with the prescribed boundary velocity
-  const Moose::Functor<Real> & _rho;
+  const Moose::Functor<Real> * const _rho;
 };

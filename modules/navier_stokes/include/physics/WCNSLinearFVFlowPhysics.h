@@ -12,6 +12,8 @@
 #include "WCNSFVFlowPhysicsBase.h"
 #include "WCNSFVTurbulencePhysics.h"
 
+class RhieChowMassFlux;
+
 /**
  * Creates all the objects needed to solve the Navier-Stokes equations with the SIMPLE algorithm
  * using the linear finite volume discretization
@@ -21,7 +23,7 @@
  * - porous media
  * - transients
  */
-class WCNSLinearFVFlowPhysics final : public WCNSFVFlowPhysicsBase
+class WCNSLinearFVFlowPhysics : public WCNSFVFlowPhysicsBase
 {
 public:
   static InputParameters validParams();
@@ -33,14 +35,28 @@ public:
 protected:
   virtual void initializePhysicsAdditional() override;
 
+  /// Function adding kernels for the incompressible pressure correction equation
+  virtual void addPressureCorrectionKernels();
+
+  virtual void addOutletBC() override;
+  virtual void addWallsBC() override;
+
+  virtual void addRhieChowUserObjects() override;
+  virtual void addFunctorMaterials() override;
+
+  /// The Rhie-Chow mass flux user object whose published flux the pressure equation corrects.
+  const RhieChowMassFlux & pressureCorrectionProvider() const;
+
+  unsigned short getNumberAlgebraicGhostingLayersNeeded() const override;
+
+  /// Whether to use the correction term for non-orthogonality
+  const bool _non_orthogonal_correction;
+
 private:
   virtual void addSolverVariables() override;
   virtual void addFVInterpolationMethods() override;
   virtual void addFVKernels() override;
   virtual void addUserObjects() override;
-
-  /// Function adding kernels for the incompressible pressure correction equation
-  void addPressureCorrectionKernels();
 
   /**
    * Functions adding kernels for the incompressible momentum equation
@@ -55,22 +71,12 @@ private:
   virtual void addMomentumBoussinesqKernels() override;
 
   virtual void addInletBC() override;
-  virtual void addOutletBC() override;
-  virtual void addWallsBC() override;
   virtual void addSeparatorBC() override {}
 
   virtual bool hasForchheimerFriction() const override { return false; };
-
-  virtual void addRhieChowUserObjects() override;
-  virtual void addFunctorMaterials() override;
 
   virtual MooseFunctorName getLinearFrictionCoefName() const override
   {
     mooseError("Not implemented");
   }
-
-  unsigned short getNumberAlgebraicGhostingLayersNeeded() const override;
-
-  /// Whether to use the correction term for non-orthogonality
-  const bool _non_orthogonal_correction;
 };

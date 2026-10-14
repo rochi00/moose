@@ -13,6 +13,8 @@
 #include "RhieChowMassFlux.h"
 #include "LinearAssemblySegregatedSolve.h"
 
+#include <memory>
+
 /**
  * PIMPLE-based (PISO + SIMPLE) for transient solution object with
  * linear FV system assembly. A detailed discussion of the algorithm
@@ -38,6 +40,9 @@ public:
 protected:
   virtual std::pair<unsigned int, Real>
   correctVelocity(const bool recompute_face_mass_flux, const SolverParams & solver_params) override;
+
+  void advanceSystemOuterIterationHistory(const std::vector<LinearSystem *> & systems) const;
+  void advancePressureOuterIterationHistory() const;
 
   /// Number of H(u) and u iterations with fixed face flux.
   const unsigned int _num_piso_iterations;
