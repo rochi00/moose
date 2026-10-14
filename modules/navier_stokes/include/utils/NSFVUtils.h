@@ -11,11 +11,16 @@
 
 #include "MathFVUtils.h"
 #include "MooseEnum.h"
+#include "MooseLinearVariableFV.h"
+#include "FaceInfo.h"
+
+#include <array>
 
 class MooseObject;
 class InputParameters;
 class FEProblemBase;
 class Factory;
+class ElemInfo;
 
 namespace Moose
 {
@@ -42,6 +47,44 @@ InputParameters interpolationParameters();
 
 namespace NS
 {
+using LinearFVVelocityVariableArray = std::array<const MooseLinearVariableFVReal *, 3>;
+
+/// The measure of a face: its area times the coordinate factor, so it is a length in 2D Cartesian
+/// and an area in 3D, and carries the axisymmetric factor where one applies.
+inline Real
+faceMeasure(const FaceInfo & fi)
+{
+  return fi.faceArea() * fi.faceCoord();
+}
+
+/**
+ * Adds the standard velocity-component parameters used by linear FV Navier-Stokes objects.
+ */
+void addLinearFVVelocityVariableParams(InputParameters & params);
+
+/**
+ * Gets and validates linear FV velocity variables from the standard u/v/w parameters.
+ */
+LinearFVVelocityVariableArray getLinearFVVelocityVariables(const MooseObject & obj,
+                                                           FEProblemBase & problem,
+                                                           THREAD_ID tid,
+                                                           unsigned int dim);
+
+/**
+ * Reconstructs a velocity vector from linear FV cell-centered velocity component variables.
+ */
+RealVectorValue linearFVCellVelocity(const LinearFVVelocityVariableArray & velocity_vars,
+                                     unsigned int dim,
+                                     const ElemInfo & elem_info,
+                                     const Moose::StateArg & state);
+
+/// The element on the side of a face that the current face type names
+const ElemInfo & linearFVFaceSideElemInfo(const FaceInfo & fi,
+                                          FaceInfo::VarFaceNeighbors face_type);
+Real linearFVBoundaryNormalMultiplier(FaceInfo::VarFaceNeighbors face_type);
+RealVectorValue linearFVOutwardUnitNormal(const FaceInfo & fi,
+                                          FaceInfo::VarFaceNeighbors face_type);
+
 /**
  * Enum of the advected interpolation methods supported by FVInterpolationMethod objects.
  */

@@ -28,7 +28,7 @@ namespace FV
  *
  * @param matrix_in The matrix that needs to be relaxed
  * @param relaxation_parameter The scale which described how much the matrix is relaxed
- * @param diff_diagonal A vector holding the $A_{diag}-A_{diag, relaxed}$ entries for further
+ * @param diff_diagonal A vector holding the $A_{diag, relaxed}-A_{diag}$ entries for further
  *                      use in the relaxation of the right hand side
  */
 void relaxMatrix(SparseMatrix<Number> & matrix_in,
