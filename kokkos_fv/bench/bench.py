@@ -64,10 +64,12 @@ SECTIONS = {
     "kokkos_total": "LinearSystem::computeKokkosLinearSystem",
     "kokkos_sync_to_device": "LinearSystem::KokkosFVSyncToDevice",
     "kokkos_bc_data": "LinearSystem::KokkosFVBoundaryData",
+    "kokkos_face_coefficients": "LinearSystem::KokkosFVFaceCoefficients",
     "kokkos_elem_matrix": "LinearSystem::KokkosFVElementalMatrix",
     "kokkos_flux_matrix": "LinearSystem::KokkosFVFluxMatrix",
     "kokkos_elem_rhs": "LinearSystem::KokkosFVElementalRHS",
     "kokkos_flux_rhs": "LinearSystem::KokkosFVFluxRHS",
+    "kokkos_wait": "LinearSystem::KokkosFVWait",
     "kokkos_sync_to_host": "LinearSystem::KokkosFVSyncToHost",
     "kokkos_mat_set_values": "KokkosSystem::MatSetValues",
     "linear_solve": "LinearSystem::LinearSystem::solve",
@@ -363,7 +365,9 @@ def cmd_sweep(args):
                                 d = tempfile.mkdtemp(prefix=f"sweep_{impl}_", dir=args.workroot)
                                 ov = {"n": n, "elem_type": elem, "steps": steps}
                                 ov.update(parse_sets(args.set))
-                                rc, out = run_moose(args, impl, ov, np_ranks, d, threads=threads)
+                                rc, out = run_moose(
+                                    args, impl, ov, np_ranks, d, threads=threads,
+                                    extra=args.petsc_args.split())
                                 check(rc, out, f"sweep {impl} n={n} np={np_ranks} t={threads}")
                                 secs[steps] = perf_sections(find_json(d))
                                 info = final_csv_row(d)
@@ -627,6 +631,7 @@ def main():
     ps.add_argument("--steps-low", type=int, default=3)
     ps.add_argument("--steps-high", type=int, default=13)
     ps.add_argument("--set", nargs="*", default=[], help="extra input overrides key=value")
+    ps.add_argument("--petsc-args", default="", help="extra PETSc command-line options")
     ps.add_argument("--label", default="", help="free-form label stored in the CSV")
 
     pt = sub.add_parser("transient")

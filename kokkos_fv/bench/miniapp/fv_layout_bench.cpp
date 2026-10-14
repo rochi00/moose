@@ -16,6 +16,25 @@
 //   V4 halfface_gather   face pass writes half-face scratch (side, cell); per-cell gather writes
 //                        the whole matrix row and RHS (no atomics)
 //
+// Green-Gauss cell gradient variants (--grad-variants), on a smooth analytic cell field:
+//
+//   G0 side_gather       per-cell gather over today's padded per-(side, cell) geometry
+//   G1 face_gather       per-cell gather over the face SoA through elem_faces (no atomics)
+//   G2 face_atomic       one thread per face, atomic adds into both cells, then a volume pass
+//   G3 face_atomic_vol   G2 with 1/V folded into the atomic adds (single face pass)
+//   G0C                  G0 with the padded side arrays cell-fastest (coalesced on GPUs)
+//   G1C                  G1 with elem_faces cell-fastest
+//   G1CS                 G1C with face normals and centroids as separate x, y, z arrays (SoA)
+//
+// V2F is V2 with the diffusion and advection face passes fused into one kernel.
+// --launch-bench times kernel launches with a small functor (passed as a kernel argument on CUDA)
+// and a 6 KB functor (the size of Kokkos-MOOSE linear FV functors, which CUDA launches through
+// constant memory), with and without a fence after every launch.
+//
+// Face values follow the CPU LinearFVGradientManager: linear interpolation with FaceInfo::gC() on
+// internal faces, the Dirichlet value on Dirichlet faces, the cell value elsewhere. Every
+// gradient variant is checked against a serial host face loop in the original cell numbering.
+//
 // Cell numbering (native | morton | rcm | scrambled) and face order (native | owner) are options.
 // Every variant is checked against V0 entrywise; V0 is checked against the MOOSE-assembled
 // matrix when its PETSc binary dump is given. All variants use the analytic coefficients of the
@@ -49,6 +68,8 @@ template <typename T>
 using View1 = Kokkos::View<T *, MemSpace>;
 template <typename T>
 using View2L = Kokkos::View<T **, Kokkos::LayoutLeft, MemSpace>; // (side, cell): side fastest
+template <typename T>
+using View2R = Kokkos::View<T **, Kokkos::LayoutRight, MemSpace>; // (side, cell): cell fastest
 
 struct R3
 {
@@ -61,11 +82,33 @@ struct R3
 namespace phys
 {
 constexpr double vx = 1.0, vy = 0.5, vz = 0.25;
-KOKKOS_INLINE_FUNCTION double k(double x, double, double) { return 1.0 + 0.5 * x; }
-KOKKOS_INLINE_FUNCTION double s(double x, double y, double z) { return 1.0 + x * y * z; }
-KOKKOS_INLINE_FUNCTION double g(double x, double y, double z) { return 1.0 + x + y + z; }
+KOKKOS_INLINE_FUNCTION double
+k(double x, double, double)
+{
+  return 1.0 + 0.5 * x;
+}
+KOKKOS_INLINE_FUNCTION double
+s(double x, double y, double z)
+{
+  return 1.0 + x * y * z;
+}
+KOKKOS_INLINE_FUNCTION double
+g(double x, double y, double z)
+{
+  return 1.0 + x + y + z;
+}
 // GeneratedMesh 3D boundary ids: back 0, bottom 1, right 2, top 3, left 4, front 5
-KOKKOS_INLINE_FUNCTION bool isDirichlet(int bid) { return bid == 0 || bid == 1 || bid == 4; }
+KOKKOS_INLINE_FUNCTION bool
+isDirichlet(int bid)
+{
+  return bid == 0 || bid == 1 || bid == 4;
+}
+// Smooth cell field for the gradient variants; its Dirichlet faces use phi at the face centroid
+KOKKOS_INLINE_FUNCTION double
+phi(double x, double y, double z)
+{
+  return 1.0 + x * y + z * z + Kokkos::sin(3.0 * x);
+}
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -158,7 +201,8 @@ readMesh(const std::string & path)
 // Orderings
 // ------------------------------------------------------------------------------------------------
 // Returns perm with perm[old_cell] = new_cell
-std::vector<int> cellOrdering(const HostMesh & m, const std::string & kind)
+std::vector<int>
+cellOrdering(const HostMesh & m, const std::string & kind)
 {
   const int n = m.nc;
   std::vector<int> perm(n);
@@ -236,7 +280,8 @@ std::vector<int> cellOrdering(const HostMesh & m, const std::string & kind)
         q.pop();
         order.push_back(c);
         auto nb = adj[c];
-        std::sort(nb.begin(), nb.end(), [&](int a, int b) { return adj[a].size() < adj[b].size(); });
+        std::sort(
+            nb.begin(), nb.end(), [&](int a, int b) { return adj[a].size() < adj[b].size(); });
         for (int x : nb)
           if (!seen[x])
             seen[x] = 1, q.push(x);
@@ -279,8 +324,18 @@ struct Data
   View1<int> v0_int_cell, v0_int_side, v0_bnd_cell, v0_bnd_side;
   // outputs and scratch
   View1<double> val, rhs;
-  View1<double> fs_dE, fs_dN, fs_rE, fs_rN;        // per-face scratch (V3)
-  View2L<double> hf_d, hf_o, hf_r;                 // half-face scratch (V4)
+  View1<double> fs_dE, fs_dN, fs_rE, fs_rN; // per-face scratch (V3)
+  View2L<double> hf_d, hf_o, hf_r;          // half-face scratch (V4)
+  // gradients: FaceInfo::gC() per face, the side's own interpolation weight per (side, cell) for
+  // G0, the cell field, and the gradient with the components of a cell together (3 * c + d)
+  View1<double> fgc;
+  View2L<double> ds_gc;
+  View1<double> phi, grad;
+  // cell-fastest copies for G0C and G1C, and SoA face geometry for G1CS
+  View2R<double> dsr_area, dsr_gc;
+  View2R<R3> dsr_nrm, dsr_fc;
+  View2R<int> dsr_nb, dsr_bid, elem_faces_r;
+  View1<double> fnx, fny, fnz, fcx, fcy, fcz;
 };
 
 // Host-only information (kept out of Data, which is captured by value in every kernel)
@@ -288,7 +343,7 @@ struct HostInfo
 {
   std::vector<int> new_to_old_cell;
   size_t bytes_face_soa = 0, bytes_side_padded = 0, bytes_elem_faces = 0, bytes_slots = 0,
-         bytes_face_scratch = 0, bytes_hf_scratch = 0;
+         bytes_face_scratch = 0, bytes_hf_scratch = 0, bytes_grad_face = 0, bytes_grad_side = 0;
 };
 
 template <typename V, typename T>
@@ -316,8 +371,24 @@ toDevice2(const std::string & name, const std::vector<T> & h, int n0, int n1)
   return d;
 }
 
+template <typename T>
+View2R<T>
+toDevice2R(const std::string & name, const std::vector<T> & h, int n0, int n1)
+{
+  View2R<T> d(name, n0, n1);
+  auto hm = Kokkos::create_mirror_view(d);
+  for (int j = 0; j < n1; ++j)
+    for (int i = 0; i < n0; ++i)
+      hm(i, j) = h[i + size_t(n0) * j];
+  Kokkos::deep_copy(d, hm);
+  return d;
+}
+
 Data
-build(const HostMesh & m, const std::string & cell_order, const std::string & face_order, HostInfo & H)
+build(const HostMesh & m,
+      const std::string & cell_order,
+      const std::string & face_order,
+      HostInfo & H)
 {
   Data D;
   const auto perm = cellOrdering(m, cell_order);
@@ -355,7 +426,7 @@ build(const HostMesh & m, const std::string & cell_order, const std::string & fa
     throw std::runtime_error("unknown face ordering " + face_order);
 
   std::vector<int> fe(m.nf), fn(m.nf), fse(m.nf), fsn(m.nf), fbid(m.nf);
-  std::vector<double> farea(m.nf), fdcn(m.nf), fdcf(m.nf);
+  std::vector<double> farea(m.nf), fdcn(m.nf), fdcf(m.nf), fgc(m.nf);
   std::vector<R3> fnrm(m.nf), fc(m.nf);
   int max_side = 0;
   for (int i = 0; i < m.nf; ++i)
@@ -367,6 +438,7 @@ build(const HostMesh & m, const std::string & cell_order, const std::string & fa
     fsn[i] = m.sn[f];
     fbid[i] = m.bid[f];
     farea[i] = m.area[f];
+    fgc[i] = m.gc[f];
     fnrm[i] = m.nrm[f];
     fc[i] = m.fc[f];
     const R3 d = m.dcn[f];
@@ -383,7 +455,7 @@ build(const HostMesh & m, const std::string & cell_order, const std::string & fa
   // element -> faces and padded directed-side geometry
   std::vector<int> ef(size_t(S) * NC, -1), ds_nb(size_t(S) * NC, -1), ds_bid(size_t(S) * NC, -1);
   std::vector<double> ds_area(size_t(S) * NC, 0), ds_dcn(size_t(S) * NC, 0),
-      ds_dcf(size_t(S) * NC, 0);
+      ds_dcf(size_t(S) * NC, 0), ds_gc(size_t(S) * NC, 0);
   std::vector<R3> ds_nrm(size_t(S) * NC, R3{0, 0, 0}), ds_fc(size_t(S) * NC, R3{0, 0, 0});
   std::vector<int> v0_ic, v0_is, v0_bc, v0_bs;
   for (int f = 0; f < m.nf; ++f)
@@ -391,6 +463,7 @@ build(const HostMesh & m, const std::string & cell_order, const std::string & fa
     const size_t hE = fse[f] + size_t(S) * fe[f];
     ef[hE] = f;
     ds_area[hE] = farea[f];
+    ds_gc[hE] = fgc[f];
     ds_nrm[hE] = fnrm[f];
     ds_fc[hE] = fc[f];
     if (fn[f] >= 0)
@@ -398,6 +471,7 @@ build(const HostMesh & m, const std::string & cell_order, const std::string & fa
       const size_t hN = fsn[f] + size_t(S) * fn[f];
       ef[hN] = f;
       ds_area[hN] = farea[f];
+      ds_gc[hN] = 1 - fgc[f];
       ds_nrm[hN] = R3{-fnrm[f].x, -fnrm[f].y, -fnrm[f].z};
       ds_fc[hN] = fc[f];
       ds_nb[hE] = fn[f];
@@ -492,6 +566,36 @@ build(const HostMesh & m, const std::string & cell_order, const std::string & fa
   D.hf_d = View2L<double>("hf_d", S, NC);
   D.hf_o = View2L<double>("hf_o", S, NC);
   D.hf_r = View2L<double>("hf_r", S, NC);
+  D.fgc = toDevice<View1<double>>("fgc", fgc);
+  D.ds_gc = toDevice2<double>("ds_gc", ds_gc, S, NC);
+  {
+    std::vector<double> phi(NC);
+    for (int c = 0; c < NC; ++c)
+      phi[c] = phys::phi(cen[c].x, cen[c].y, cen[c].z);
+    D.phi = toDevice<View1<double>>("phi", phi);
+  }
+  D.grad = View1<double>("grad", 3 * size_t(NC));
+  D.dsr_area = toDevice2R<double>("dsr_area", ds_area, S, NC);
+  D.dsr_gc = toDevice2R<double>("dsr_gc", ds_gc, S, NC);
+  D.dsr_nrm = toDevice2R<R3>("dsr_nrm", ds_nrm, S, NC);
+  D.dsr_fc = toDevice2R<R3>("dsr_fc", ds_fc, S, NC);
+  D.dsr_nb = toDevice2R<int>("dsr_nb", ds_nb, S, NC);
+  D.dsr_bid = toDevice2R<int>("dsr_bid", ds_bid, S, NC);
+  D.elem_faces_r = toDevice2R<int>("elem_faces_r", ef, S, NC);
+  {
+    std::vector<double> nx(m.nf), ny(m.nf), nz(m.nf), cx(m.nf), cy(m.nf), cz(m.nf);
+    for (int f = 0; f < m.nf; ++f)
+    {
+      nx[f] = fnrm[f].x, ny[f] = fnrm[f].y, nz[f] = fnrm[f].z;
+      cx[f] = fc[f].x, cy[f] = fc[f].y, cz[f] = fc[f].z;
+    }
+    D.fnx = toDevice<View1<double>>("fnx", nx);
+    D.fny = toDevice<View1<double>>("fny", ny);
+    D.fnz = toDevice<View1<double>>("fnz", nz);
+    D.fcx = toDevice<View1<double>>("fcx", cx);
+    D.fcy = toDevice<View1<double>>("fcy", cy);
+    D.fcz = toDevice<View1<double>>("fcz", cz);
+  }
 
   const size_t F = m.nf, C = NC, SC = size_t(S) * NC;
   // face SoA used by V1-V4: fe, fn, fse, fsn, fbid, farea, fdcn, fdcf, fnrm, fc
@@ -503,6 +607,10 @@ build(const HostMesh & m, const std::string & cell_order, const std::string & fa
   H.bytes_slots = (C + 2 * F) * sizeof(int) + SC * sizeof(int);
   H.bytes_face_scratch = 4 * F * sizeof(double);
   H.bytes_hf_scratch = 3 * SC * sizeof(double);
+  // gradient inputs: G1-G3 read fe, fn, fbid, farea, fgc, fnrm, fc (+ elem_faces for G1);
+  // G0 reads ds_nb, ds_bid, ds_area, ds_gc, ds_nrm, ds_fc
+  H.bytes_grad_face = F * (3 * sizeof(int) + 2 * sizeof(double) + 2 * sizeof(R3));
+  H.bytes_grad_side = SC * (2 * sizeof(int) + 2 * sizeof(double) + 2 * sizeof(R3));
   return D;
 }
 
@@ -628,8 +736,8 @@ assembleV0(Data & D, std::vector<double> & t)
         if (!phys::isDirichlet(d.ds_bid(s, c)))
           return;
         const R3 x = d.ds_fc(s, c);
-        const double v =
-            -dot(d.ds_nrm(s, c), phys::vx, phys::vy, phys::vz) * d.ds_area(s, c) * phys::g(x.x, x.y, x.z);
+        const double v = -dot(d.ds_nrm(s, c), phys::vx, phys::vy, phys::vz) * d.ds_area(s, c) *
+                         phys::g(x.x, x.y, x.z);
         Kokkos::atomic_add(&d.rhs(c), v);
       });
   Kokkos::fence();
@@ -734,6 +842,46 @@ assembleFaceAtomic(Data & D, std::vector<double> & t)
   };
   pass(std::integral_constant<int, 0>{});
   pass(std::integral_constant<int, 1>{});
+  Kokkos::fence();
+  t[0] += tm.seconds();
+  tm.reset();
+  Kokkos::parallel_for(
+      "src", Policy(0, d.nc), KOKKOS_LAMBDA(int c) {
+        const R3 x = d.cen(c);
+        d.rhs(c) += phys::s(x.x, x.y, x.z) * d.vol(c);
+      });
+  Kokkos::fence();
+  t[2] += tm.seconds();
+}
+
+// V2F: V2 with the diffusion and advection face passes fused into one kernel
+void
+assembleFaceAtomicFused(Data & D, std::vector<double> & t)
+{
+  auto d = D;
+  Kokkos::Timer tm;
+  Kokkos::parallel_for(
+      "face_atomic_fused", Policy(0, d.nf), KOKKOS_LAMBDA(int f) {
+        const auto a = faceTerms<0>(d, f);
+        const auto b = faceTerms<1>(d, f);
+        const int E = d.fe(f);
+        const double dE = a.dE + b.dE, rE = a.rE + b.rE;
+        if (dE != 0)
+          Kokkos::atomic_add(&d.val(d.diag_slot(E)), dE);
+        if (rE != 0)
+          Kokkos::atomic_add(&d.rhs(E), rE);
+        if (f < d.n_internal)
+        {
+          const int N = d.fn(f);
+          const double oEN = a.oEN + b.oEN, dN = a.dN + b.dN, oNE = a.oNE + b.oNE;
+          if (oEN != 0)
+            Kokkos::atomic_add(&d.val(d.slot_EN(f)), oEN);
+          if (dN != 0)
+            Kokkos::atomic_add(&d.val(d.diag_slot(N)), dN);
+          if (oNE != 0)
+            Kokkos::atomic_add(&d.val(d.slot_NE(f)), oNE);
+        }
+      });
   Kokkos::fence();
   t[0] += tm.seconds();
   tm.reset();
@@ -855,6 +1003,190 @@ assembleHalfFaceGather(Data & D, std::vector<double> & t)
 }
 
 // ------------------------------------------------------------------------------------------------
+// Green-Gauss cell gradients
+// ------------------------------------------------------------------------------------------------
+// Value of the field on a boundary face: the Dirichlet value, else the cell value
+KOKKOS_INLINE_FUNCTION double
+boundaryFaceValue(int bid, const R3 & x, double phi_c)
+{
+  return phys::isDirichlet(bid) ? phys::phi(x.x, x.y, x.z) : phi_c;
+}
+
+// G0/G0C: per-cell gather over the padded per-(side, cell) geometry (side- or cell-fastest)
+template <typename VI, typename VD, typename VR3>
+void
+gradientSideGather(Data & D, VI ds_nb, VI ds_bid, VD ds_area, VD ds_gc, VR3 ds_nrm, VR3 ds_fc)
+{
+  auto d = D;
+  const int S = d.max_sides;
+  Kokkos::parallel_for(
+      "G0_side_gather", Policy(0, d.nc), KOKKOS_LAMBDA(int c) {
+        const double phi_c = d.phi(c);
+        double gx = 0, gy = 0, gz = 0;
+        for (int s = 0; s < S; ++s)
+        {
+          const int nb = ds_nb(s, c);
+          double pf;
+          if (nb >= 0)
+          {
+            const double w = ds_gc(s, c);
+            pf = w * phi_c + (1 - w) * d.phi(nb);
+          }
+          else
+          {
+            const int bid = ds_bid(s, c);
+            if (bid < 0)
+              continue; // padding: this cell has fewer sides
+            pf = boundaryFaceValue(bid, ds_fc(s, c), phi_c);
+          }
+          const double w = pf * ds_area(s, c);
+          const R3 n = ds_nrm(s, c);
+          gx += w * n.x, gy += w * n.y, gz += w * n.z;
+        }
+        const double inv = 1 / d.vol(c);
+        d.grad(3 * c) = gx * inv, d.grad(3 * c + 1) = gy * inv, d.grad(3 * c + 2) = gz * inv;
+      });
+  Kokkos::fence();
+}
+
+// G1/G1C/G1CS: per-cell gather over the face arrays through elem_faces (side- or cell-fastest),
+// with face normals and centroids as R3 (AoS) or as separate x, y, z arrays (SoA)
+template <bool SoA, typename VEF>
+void
+gradientFaceGather(Data & D, VEF elem_faces)
+{
+  auto d = D;
+  const int S = d.max_sides;
+  Kokkos::parallel_for(
+      "G1_face_gather", Policy(0, d.nc), KOKKOS_LAMBDA(int c) {
+        const double phi_c = d.phi(c);
+        double gx = 0, gy = 0, gz = 0;
+        for (int s = 0; s < S; ++s)
+        {
+          const int f = elem_faces(s, c);
+          if (f < 0)
+            continue;
+          double pf;
+          if (f < d.n_internal)
+          {
+            const double w = d.fgc(f);
+            pf = w * d.phi(d.fe(f)) + (1 - w) * d.phi(d.fn(f));
+          }
+          else
+          {
+            const R3 x = SoA ? R3{d.fcx(f), d.fcy(f), d.fcz(f)} : d.fc(f);
+            pf = boundaryFaceValue(d.fbid(f), x, phi_c);
+          }
+          const double w = (d.fe(f) == c ? pf : -pf) * d.farea(f);
+          const R3 n = SoA ? R3{d.fnx(f), d.fny(f), d.fnz(f)} : d.fnrm(f);
+          gx += w * n.x, gy += w * n.y, gz += w * n.z;
+        }
+        const double inv = 1 / d.vol(c);
+        d.grad(3 * c) = gx * inv, d.grad(3 * c + 1) = gy * inv, d.grad(3 * c + 2) = gz * inv;
+      });
+  Kokkos::fence();
+}
+
+// G2 (FoldVolume = false): face pass with atomics, then a volume pass
+// G3 (FoldVolume = true): 1/V folded into the atomic adds, single face pass
+template <bool FoldVolume>
+void
+gradientFaceAtomic(Data & D)
+{
+  auto d = D;
+  Kokkos::deep_copy(d.grad, 0.0);
+  Kokkos::parallel_for(
+      "G2_G3_face_atomic", Policy(0, d.nf), KOKKOS_LAMBDA(int f) {
+        const int E = d.fe(f);
+        const double phi_E = d.phi(E);
+        double pf;
+        if (f < d.n_internal)
+        {
+          const double w = d.fgc(f);
+          pf = w * phi_E + (1 - w) * d.phi(d.fn(f));
+        }
+        else
+          pf = boundaryFaceValue(d.fbid(f), d.fc(f), phi_E);
+        const R3 n = d.fnrm(f);
+        const double w = pf * d.farea(f);
+        const double sE = FoldVolume ? w / d.vol(E) : w;
+        Kokkos::atomic_add(&d.grad(3 * E), sE * n.x);
+        Kokkos::atomic_add(&d.grad(3 * E + 1), sE * n.y);
+        Kokkos::atomic_add(&d.grad(3 * E + 2), sE * n.z);
+        if (f < d.n_internal)
+        {
+          const int N = d.fn(f);
+          const double sN = FoldVolume ? w / d.vol(N) : w;
+          Kokkos::atomic_add(&d.grad(3 * N), -sN * n.x);
+          Kokkos::atomic_add(&d.grad(3 * N + 1), -sN * n.y);
+          Kokkos::atomic_add(&d.grad(3 * N + 2), -sN * n.z);
+        }
+      });
+  if (!FoldVolume)
+    Kokkos::parallel_for(
+        "G2_volume", Policy(0, d.nc), KOKKOS_LAMBDA(int c) {
+          const double inv = 1 / d.vol(c);
+          d.grad(3 * c) *= inv, d.grad(3 * c + 1) *= inv, d.grad(3 * c + 2) *= inv;
+        });
+  Kokkos::fence();
+}
+
+// Serial host reference in the original cell numbering, as LinearFVGradientManager computes it
+std::vector<double>
+referenceGradient(const HostMesh & m)
+{
+  std::vector<double> phi(m.nc), g(3 * size_t(m.nc), 0.0);
+  for (int64_t c = 0; c < m.nc; ++c)
+    phi[c] = phys::phi(m.cen[c].x, m.cen[c].y, m.cen[c].z);
+  for (int64_t f = 0; f < m.nf; ++f)
+  {
+    const int64_t E = m.fe[f];
+    double pf;
+    if (m.fn[f] >= 0)
+      pf = m.gc[f] * phi[E] + (1 - m.gc[f]) * phi[m.fn[f]];
+    else
+      pf = boundaryFaceValue(m.bid[f], m.fc[f], phi[E]);
+    const double w = pf * m.area[f];
+    const double c[3] = {w * m.nrm[f].x, w * m.nrm[f].y, w * m.nrm[f].z};
+    for (int d = 0; d < 3; ++d)
+    {
+      g[3 * E + d] += c[d];
+      if (m.fn[f] >= 0)
+        g[3 * m.fn[f] + d] -= c[d];
+    }
+  }
+  for (int64_t c = 0; c < m.nc; ++c)
+    for (int d = 0; d < 3; ++d)
+      g[3 * c + d] /= m.vol[c];
+  return g;
+}
+
+// Max |difference| relative to the largest reference gradient entry
+double
+gradientDiff(const std::vector<double> & ref, const Data & D, const HostInfo & H)
+{
+  auto g = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), D.grad);
+  double scale = 0, worst = 0;
+  for (double x : ref)
+    scale = std::max(scale, std::abs(x));
+  for (int c = 0; c < D.nc; ++c)
+    for (int d = 0; d < 3; ++d)
+      worst = std::max(worst, std::abs(g(3 * c + d) - ref[3 * size_t(H.new_to_old_cell[c]) + d]));
+  return worst / scale;
+}
+
+uint64_t
+hashGradient(const Data & D)
+{
+  auto g = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), D.grad);
+  uint64_t h = 1469598103934665603ULL;
+  auto c = reinterpret_cast<const unsigned char *>(g.data());
+  for (size_t i = 0; i < g.size() * sizeof(double); ++i)
+    h = (h ^ c[i]) * 1099511628211ULL;
+  return h;
+}
+
+// ------------------------------------------------------------------------------------------------
 // Comparison helpers (host), in the original cell numbering
 // ------------------------------------------------------------------------------------------------
 struct HostSystem
@@ -940,7 +1272,10 @@ be(const unsigned char * p)
 }
 
 bool
-readPetscSystem(const std::string & mat, const std::string & vec, const HostMesh & m, HostSystem & out)
+readPetscSystem(const std::string & mat,
+                const std::string & vec,
+                const HostMesh & m,
+                HostSystem & out)
 {
   auto slurp = [](const std::string & p)
   {
@@ -952,7 +1287,8 @@ readPetscSystem(const std::string & mat, const std::string & vec, const HostMesh
     return false;
   const bool i64 = be<int32_t>(A.data()) != 1211216;
   const size_t is = i64 ? 8 : 4;
-  auto geti = [&](const unsigned char * p) { return i64 ? be<int64_t>(p) : int64_t(be<int32_t>(p)); };
+  auto geti = [&](const unsigned char * p)
+  { return i64 ? be<int64_t>(p) : int64_t(be<int32_t>(p)); };
   const int64_t M = geti(A.data() + is), nz = geti(A.data() + 3 * is);
   const unsigned char * p = A.data() + 4 * is;
   std::vector<int64_t> rl(M), cols(nz);
@@ -979,6 +1315,42 @@ readPetscSystem(const std::string & mat, const std::string & vec, const HostMesh
 }
 
 // ------------------------------------------------------------------------------------------------
+// Launch cost
+// ------------------------------------------------------------------------------------------------
+template <int Bytes>
+struct PaddedFunctor
+{
+  View1<double> out;
+  char pad[Bytes];
+  KOKKOS_INLINE_FUNCTION void operator()(int i) const { out(i) += pad[i % Bytes]; }
+};
+
+template <int Bytes>
+void
+launchBench(int n, int launches)
+{
+  PaddedFunctor<Bytes> f;
+  f.out = View1<double>("out", n);
+  for (int i = 0; i < Bytes; ++i)
+    f.pad[i] = 0;
+  for (const bool fence_each : {true, false})
+  {
+    for (int w = 0; w < 10; ++w)
+      Kokkos::parallel_for("launch", Policy(0, n), f);
+    Kokkos::fence();
+    Kokkos::Timer tm;
+    for (int l = 0; l < launches; ++l)
+    {
+      Kokkos::parallel_for("launch", Policy(0, n), f);
+      if (fence_each)
+        Kokkos::fence();
+    }
+    Kokkos::fence();
+    std::printf("L,%zu,%d,%d,%.3f\n", sizeof(f), n, int(fence_each), tm.seconds() / launches * 1e6);
+  }
+}
+
+// ------------------------------------------------------------------------------------------------
 int
 main(int argc, char ** argv)
 {
@@ -986,8 +1358,9 @@ main(int argc, char ** argv)
   int rc = 0;
   {
     std::string mesh_file, ref_mat, ref_vec, cell_order = "native", face_order = "native";
-    std::string variants = "V0,V1,V2,V3,V4";
+    std::string variants = "V0,V1,V2,V2F,V3,V4", grad_variants = "";
     int reps = 20;
+    bool launch_bench = false;
     for (int i = 1; i < argc; ++i)
     {
       std::string a = argv[i];
@@ -1003,15 +1376,34 @@ main(int argc, char ** argv)
       else if (a == "--face-order")
         face_order = next();
       else if (a == "--variants")
-        variants = next();
+        variants = next() == "none" ? std::string() : std::string(argv[i]);
+      else if (a == "--grad-variants")
+        grad_variants = next();
       else if (a == "--reps")
         reps = std::stoi(next());
+      else if (a == "--launch-bench")
+        launch_bench = true;
+    }
+    if (launch_bench)
+    {
+      std::printf("# launch cost, threads=%d\nlaunch,functor_bytes,n,fence_each,us_per_launch\n",
+                  ExecSpace().concurrency());
+      for (const int n : {1, 100000, 2000000})
+      {
+        launchBench<64>(n, 2000);
+        launchBench<6144>(n, 2000);
+      }
+      // No views are alive in this scope yet
+      Kokkos::finalize();
+      return 0;
     }
     if (mesh_file.empty())
     {
-      std::fprintf(stderr, "usage: fv_layout_bench --mesh FILE [--ref-mat A.bin --ref-rhs b.bin] "
-                           "[--cell-order native|morton|rcm|scrambled] [--face-order native|owner] "
-                           "[--variants V0,V1,...] [--reps N] [--kokkos-num-threads N]\n");
+      std::fprintf(stderr,
+                   "usage: fv_layout_bench --mesh FILE [--ref-mat A.bin --ref-rhs b.bin] "
+                   "[--cell-order native|morton|rcm|scrambled] [--face-order native|owner] "
+                   "[--variants V0,V1,...|none] [--grad-variants G0,G1,G2,G3] [--reps N] "
+                   "[--kokkos-num-threads N]\n");
       Kokkos::finalize();
       return 2;
     }
@@ -1022,13 +1414,23 @@ main(int argc, char ** argv)
 
     std::printf("# mesh=%s cells=%lld faces=%lld internal=%d max_sides=%d nnz=%d threads=%d "
                 "cell_order=%s face_order=%s\n",
-                mesh_file.c_str(), (long long)m.nc, (long long)m.nf, D.n_internal, D.max_sides,
-                D.nnz, ExecSpace().concurrency(), cell_order.c_str(), face_order.c_str());
+                mesh_file.c_str(),
+                (long long)m.nc,
+                (long long)m.nf,
+                D.n_internal,
+                D.max_sides,
+                D.nnz,
+                ExecSpace().concurrency(),
+                cell_order.c_str(),
+                face_order.c_str());
     std::printf("# bytes/cell: face_soa=%.1f side_padded(V0)=%.1f elem_faces=%.1f slots=%.1f "
                 "face_scratch(V3)=%.1f halfface_scratch(V4)=%.1f\n",
-                double(H.bytes_face_soa) / m.nc, double(H.bytes_side_padded) / m.nc,
-                double(H.bytes_elem_faces) / m.nc, double(H.bytes_slots) / m.nc,
-                double(H.bytes_face_scratch) / m.nc, double(H.bytes_hf_scratch) / m.nc);
+                double(H.bytes_face_soa) / m.nc,
+                double(H.bytes_side_padded) / m.nc,
+                double(H.bytes_elem_faces) / m.nc,
+                double(H.bytes_slots) / m.nc,
+                double(H.bytes_face_scratch) / m.nc,
+                double(H.bytes_hf_scratch) / m.nc);
 
     auto run = [&](const std::string & v, std::vector<double> & t)
     {
@@ -1041,6 +1443,8 @@ main(int argc, char ** argv)
         assembleFaceAtomic<false>(D, t);
       else if (v == "V2")
         assembleFaceAtomic<true>(D, t);
+      else if (v == "V2F")
+        assembleFaceAtomicFused(D, t);
       else if (v == "V3")
         assembleFaceGather(D, t);
       else if (v == "V4")
@@ -1049,54 +1453,125 @@ main(int argc, char ** argv)
         throw std::runtime_error("unknown variant " + v);
     };
 
-    // Reference: V0
-    std::vector<double> tmp(3, 0.0);
-    run("V0", tmp);
-    const auto ref = toHost(D, H);
-    if (!ref_mat.empty())
+    // Gradient variants
+    if (!grad_variants.empty())
     {
-      HostSystem moose;
-      if (readPetscSystem(ref_mat, ref_vec, m, moose))
-        std::printf("# V0 vs MOOSE Kokkos assembly: max rel diff = %.3e\n", maxRelDiff(moose, ref));
-      else
-        std::printf("# could not read MOOSE reference\n");
+      std::printf("# gradient bytes/cell: face_soa=%.1f (+ elem_faces %.1f) side_padded=%.1f "
+                  "grad=24.0\n",
+                  double(H.bytes_grad_face) / m.nc,
+                  double(H.bytes_elem_faces) / m.nc,
+                  double(H.bytes_grad_side) / m.nc);
+      const auto gref = referenceGradient(m);
+      std::printf("gvariant,max_rel_diff_vs_ref,distinct_hashes,ms,ns_per_cell\n");
+      size_t gpos = 0;
+      while (gpos < grad_variants.size())
+      {
+        const auto comma = grad_variants.find(',', gpos);
+        const auto v = grad_variants.substr(
+            gpos, comma == std::string::npos ? std::string::npos : comma - gpos);
+        gpos = comma == std::string::npos ? grad_variants.size() : comma + 1;
+
+        auto run_grad = [&]()
+        {
+          if (v == "G0")
+            gradientSideGather(D, D.ds_nb, D.ds_bid, D.ds_area, D.ds_gc, D.ds_nrm, D.ds_fc);
+          else if (v == "G0C")
+            gradientSideGather(D, D.dsr_nb, D.dsr_bid, D.dsr_area, D.dsr_gc, D.dsr_nrm, D.dsr_fc);
+          else if (v == "G1")
+            gradientFaceGather<false>(D, D.elem_faces);
+          else if (v == "G1C")
+            gradientFaceGather<false>(D, D.elem_faces_r);
+          else if (v == "G1CS")
+            gradientFaceGather<true>(D, D.elem_faces_r);
+          else if (v == "G2")
+            gradientFaceAtomic<false>(D);
+          else if (v == "G3")
+            gradientFaceAtomic<true>(D);
+          else
+            throw std::runtime_error("unknown gradient variant " + v);
+        };
+        run_grad();
+        run_grad();
+        const double diff = gradientDiff(gref, D, H);
+        std::vector<double> times;
+        std::set<uint64_t> hashes;
+        for (int r = 0; r < reps; ++r)
+        {
+          Kokkos::fence();
+          Kokkos::Timer tm;
+          run_grad();
+          times.push_back(tm.seconds());
+          hashes.insert(hashGradient(D));
+        }
+        std::nth_element(times.begin(), times.begin() + times.size() / 2, times.end());
+        const double t = times[times.size() / 2];
+        std::printf(
+            "%s,%.3e,%zu,%.3f,%.2f\n", v.c_str(), diff, hashes.size(), t * 1e3, t / m.nc * 1e9);
+        if (diff > 1e-12)
+          rc = 1;
+      }
     }
 
-    std::printf("variant,max_rel_diff_vs_V0,distinct_hashes,face_ms,boundary_ms,cell_ms,total_ms,"
-                "ns_per_cell\n");
-    size_t pos = 0;
-    while (pos < variants.size())
+    if (!variants.empty())
     {
-      const auto comma = variants.find(',', pos);
-      const auto v = variants.substr(pos, comma == std::string::npos ? std::string::npos : comma - pos);
-      pos = comma == std::string::npos ? variants.size() : comma + 1;
-
-      std::vector<double> warm(3, 0.0);
-      run(v, warm);
-      run(v, warm);
-      const double diff = maxRelDiff(ref, toHost(D, H));
-      std::vector<std::vector<double>> times;
-      std::set<uint64_t> hashes;
-      for (int r = 0; r < reps; ++r)
+      // Reference: V0
+      std::vector<double> tmp(3, 0.0);
+      run("V0", tmp);
+      const auto ref = toHost(D, H);
+      if (!ref_mat.empty())
       {
-        std::vector<double> t(3, 0.0);
-        run(v, t);
-        times.push_back(t);
-        hashes.insert(hashSystem(D));
+        HostSystem moose;
+        if (readPetscSystem(ref_mat, ref_vec, m, moose))
+          std::printf("# V0 vs MOOSE Kokkos assembly: max rel diff = %.3e\n",
+                      maxRelDiff(moose, ref));
+        else
+          std::printf("# could not read MOOSE reference\n");
       }
-      auto med = [&](int j)
+
+      std::printf("variant,max_rel_diff_vs_V0,distinct_hashes,face_ms,boundary_ms,cell_ms,total_ms,"
+                  "ns_per_cell\n");
+      size_t pos = 0;
+      while (pos < variants.size())
       {
-        std::vector<double> x;
-        for (auto & t : times)
-          x.push_back(j < 0 ? t[0] + t[1] + t[2] : t[j]);
-        std::nth_element(x.begin(), x.begin() + x.size() / 2, x.end());
-        return x[x.size() / 2];
-      };
-      const double tot = med(-1);
-      std::printf("%s,%.3e,%zu,%.3f,%.3f,%.3f,%.3f,%.2f\n", v.c_str(), diff, hashes.size(),
-                  med(0) * 1e3, med(1) * 1e3, med(2) * 1e3, tot * 1e3, tot / m.nc * 1e9);
-      if (diff > 1e-11)
-        rc = 1;
+        const auto comma = variants.find(',', pos);
+        const auto v =
+            variants.substr(pos, comma == std::string::npos ? std::string::npos : comma - pos);
+        pos = comma == std::string::npos ? variants.size() : comma + 1;
+
+        std::vector<double> warm(3, 0.0);
+        run(v, warm);
+        run(v, warm);
+        const double diff = maxRelDiff(ref, toHost(D, H));
+        std::vector<std::vector<double>> times;
+        std::set<uint64_t> hashes;
+        for (int r = 0; r < reps; ++r)
+        {
+          std::vector<double> t(3, 0.0);
+          run(v, t);
+          times.push_back(t);
+          hashes.insert(hashSystem(D));
+        }
+        auto med = [&](int j)
+        {
+          std::vector<double> x;
+          for (auto & t : times)
+            x.push_back(j < 0 ? t[0] + t[1] + t[2] : t[j]);
+          std::nth_element(x.begin(), x.begin() + x.size() / 2, x.end());
+          return x[x.size() / 2];
+        };
+        const double tot = med(-1);
+        std::printf("%s,%.3e,%zu,%.3f,%.3f,%.3f,%.3f,%.2f\n",
+                    v.c_str(),
+                    diff,
+                    hashes.size(),
+                    med(0) * 1e3,
+                    med(1) * 1e3,
+                    med(2) * 1e3,
+                    tot * 1e3,
+                    tot / m.nc * 1e9);
+        if (diff > 1e-11)
+          rc = 1;
+      }
     }
   }
   Kokkos::finalize();

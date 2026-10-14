@@ -1,0 +1,4 @@
+variant,elem_type,skew,n,cells,np,threads,rep,steps,dt,step_ms,assembly_ms,ksp_ms,kokkos_ms,host_fv_loop_ms,host_gradients_ms,ksp_its_mean,u_avg_final,petsc_args,label,traj_diff_first,traj_diff_last,traj_diff_max
+cpu,HEX8,0.0,32,0,1,1,0,10,0.01,54.59085839999998,25.3672248,29.14577949999999,0.0,21.164395900000002,8.7026503,112,1.9434427051688,,items123_parity,,,
+kokkos,HEX8,0.0,32,0,1,4,0,10,0.01,33.75667910000001,4.6974915,28.977171000000002,4.679979299999999,0.0,0.0,112,1.9434427051688,,items123_parity,,,
+kokkos_vs_cpu,,,32,,1,4,0,,,,,,,,,,,,,3.29727862211117e-16,4.624676528929969e-16,4.695424419270345e-16

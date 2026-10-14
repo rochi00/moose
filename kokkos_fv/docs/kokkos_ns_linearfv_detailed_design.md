@@ -1,6 +1,18 @@
 # Kokkos Navier-Stokes Linear FV: Detailed Design
 
-**Status:** proposal. Nothing here has been implemented or benchmarked.
+**Status:** proposal, partly implemented. On the branch `rc/kokkos_moose_navier_stokes`, the
+existing Kokkos linear FV objects (which still use the per-side layout, not the face SoA of
+section 3) have:
+
+- precomputed matrix slots;
+- the empty host loop skipped, and an error on systems that mix Kokkos and host linear FV objects
+  (section 10);
+- one fence per assembly, with no device allocations per dispatch;
+- a per-side coefficient cache;
+- device PETSc types by default on GPU builds;
+- `--kokkos-threads`.
+
+See `findings_2026-10-12.md` and `findings_2026-10-14.md`. Nothing else here is implemented.
 
 **Baseline:** MOOSE `next` at `410cc90c7e`. Paths are relative to the `moose/` repository root.
 
@@ -693,6 +705,70 @@ The CPU keeps `std::map<const Elem *, ...>` wall maps and allocates vectors per 
   gather: if `wall_bounded[c]`, the row comes only from the TKE/TKED elemental pin. This replaces
   the CPU kernels' direct matrix writes that bypass tags.
 
+### 7.2 Porting inventory
+
+Everything in `modules/navier_stokes` that a GPU-resident linear FV solve needs, in dependency
+order. Groups 0 and 1 are a usable laminar SIMPLE/PIMPLE solver; groups 2 and 3 add physics. The
+groups map onto the phases of section 14 (group 0 is phases 0-1, group 1 is phase 2, group 2 is
+phase 3, group 3 is phase 4).
+
+**Group 0: framework prerequisites.** Every navier_stokes kernel depends on these. Today's Kokkos
+linear FV objects lack all of them.
+
+| Piece | Today (Kokkos linear FV on the branch) | Needed for | Design |
+|---|---|---|---|
+| Cell gradients on device (Green-Gauss, optional limiter) | None; kernels never read gradients | Pressure gradient, non-orthogonal correction (NOC), deviatoric stress, higher-order advection | 6.2 |
+| Property arrays (`rho`, `mu`, `cp`, `k`, ...) | Parsed functions only | Every navier_stokes kernel; replaces functor materials and the virtual calls of fluid-property objects | 6.5 |
+| Advection with a per-face flux and interpolation methods | Constant velocity, upwind only | Momentum, energy and scalar advection with the Rhie-Chow mass flux | 5.5 |
+| Time derivative | Test-only object | PIMPLE and transient SIMPLE | 7 |
+| Reading variables of other systems | None | Velocity components in momentum (deviatoric terms, symmetry BC), velocity data in pressure | 3.6 |
+| Framework BC set | Functor Dirichlet and Neumann only | Robin, extrapolated, outflow, symmetry | 5.3 |
+| Non-orthogonal correction | None (needs gradients) | Diffusion and momentum on skewed meshes | 4.4, phase 1 |
+
+**Group 1: laminar incompressible SIMPLE/PIMPLE.**
+
+| CPU object | Role | What changes on device |
+|---|---|---|
+| `LinearWCNSFVMomentumFlux` | Momentum advection with `mdot`, viscous terms, NOC, optional deviatoric terms | Face pass reading `mdot`, `mu`, u_i and all velocity gradients (section 7 table) |
+| `LinearFVMomentumPressure` | `-dp/dx_i V` source in the momentum RHS | Cell pass reading the coupling pressure gradient |
+| `LinearFVPressureCorrectionDiffusion` | Pressure equation with the per-face `rho Ainv` coefficient | Face pass using `pressureDiffusionFace` (section 7) |
+| `LinearFVDivergence` | RHS divergence of `HbyA` | Face pass, RHS only |
+| `LinearFVExtrapolatedPressureBC`, `LinearFVNormalVelocityFunctorDirichletBC`, `LinearFVVelocitySymmetryBC`, `LinearFVPressureSymmetryBC`, `LinearFVPressureFluxBC` | Flow BCs | BC relation arrays (5.3); symmetry and pressure-flux BCs read other components, `HbyA_f` and `rhoAinv_f` |
+| `RhieChowMassFlux` | Face mass flux, `HbyA`, `Ainv`, velocity correction | `KokkosRhieChowMassFlux` (8.1). The face maps keyed by `FaceInfo::id()` become face arrays. `computeHbyA`, `populateCouplingFunctors` and `computeFaceMassFlux` become device passes (8.2 steps 8, 9, 13); today they are serial host loops, and the last two call kernel and BC hooks once per face. `updateCellVelocity` is already vector operations (step 16). |
+| `SegregatedSolverUtils` | Equation and field relaxation, normalization factor, pressure pin | The row-sum loops (`get_row`) in equation relaxation and SIMPLEC become the fused relaxation and recorded row sums of the gather (4.6). The normalization factor (`MatMult`), field relaxation and pressure pin are already PETSc operations on device vectors. |
+
+**Group 2: energy and scalar transport.**
+
+- Kernels: `LinearFVEnergyAdvection`, `LinearFVScalarAdvection`, `LinearFVVolumetricHeatTransfer`.
+- `LinearFVEnthalpyFunctorMaterial`. Its lambdas become property expressions (6.5).
+- `LinearFVConvectiveHeatTransferBC`.
+- Conjugate heat transfer: `LinearFVRobinCHTBC`, `LinearFVDirichletCHTBC`, and the `CHTHandler`
+  fixed-point loop over interface faces, with its face maps.
+- The aux recovery of `T` from `h`, which runs every iteration (8.6).
+
+**Group 3: turbulence, multiphase, porous and buoyancy.**
+
+- **k-epsilon:** `LinearFVTurbulentAdvection`, `LinearFVTurbulentDiffusion`,
+  `LinearFVTKESourceSink`, `LinearFVTKEDSourceSink`, `LinearFVTurbulentViscosityWallFunctionBC`,
+  and the `mu_t` functor materials (`INSFVkEpsilonViscosityFunctorMaterial`,
+  `MixingLengthTurbulentViscosityFunctorMaterial`). These are the hardest objects: per-element
+  `std::map` wall data, per-cell allocations, iterative y+ solves, and matrix writes that bypass
+  tags. See 7.1.
+- **Two-phase mixture:** `LinearWCNSFV2PMomentumDriftFlux`, `NSFVMixtureFunctorMaterial`,
+  `LinearFVPhaseChangeSource`.
+- **Other sources:** `LinearFVMomentumFriction` (`LinearFrictionFactorFunctorMaterial`),
+  `LinearFVMomentumBuoyancy`, `LinearFVMomentumBoussinesq`, `LinearFVRZViscousSource`.
+- `FVReconstructedPressureGradient`, with its dense least-squares solve per cell.
+
+**Not ported.**
+
+- **The executioners** (`SIMPLE`, `PIMPLE`, `LinearAssemblySegregatedSolve`, `SIMPLESolve`,
+  `PIMPLESolve`). Their control flow stays on the host, and every step they call runs on the
+  device (8.6). Q5 asks whether the Kokkos-aware solve is a mode of
+  `LinearAssemblySegregatedSolve` or a separate class.
+- **The `WCNSLinearFV*Physics` actions.** They only need to create the Kokkos objects.
+- **Fluid-property user objects.** These are a non-goal (1.3).
+
 ---
 
 ## 8. Rhie-Chow and SIMPLE on device
@@ -712,7 +788,7 @@ exchange, `R` a scalar device-to-host read.
 | 1 | Snapshot grad p for coupling | device copy into the coupling-state vector | |
 | 2 | Momentum gradients | cell gathers for u, v, w into one block vector | X1 |
 | 3 | Assemble the momentum matrix | A0-A4 for the u system, including the momentum-pressure source and fused relaxation | F1 |
-| 4 | Share across components (R7) | if the velocity BCs are component-independent (7.2), assemble only the RHS for v and w (`ComputationMode::RHS`) and reuse u's matrix values | |
+| 4 | Share across components (R7) | if the velocity BCs are component-independent (8.3), assemble only the RHS for v and w (`ComputationMode::RHS`) and reuse u's matrix values | |
 | 5 | Normalization factors | 2 `MatMult` + vector operations per component; batch the 3 norms into one reduction where PETSc allows | R (x3 or x1) |
 | 6 | Solve u, v, w | one KSP, preconditioner set up once, three solves; tolerances looser on non-final outer iterations | R (KSP) |
 | 7 | Ghost update u, v, w | libMesh localization of each solution | X (3) |
@@ -771,6 +847,62 @@ reads outside the KSPs.
   factor. Keep this exactly, so convergence histories are comparable with the CPU.
 - That makes 2 scalar reads per equation per iteration. That is acceptable: it is roughly 10 reads
   per iteration, against hundreds of kernels.
+
+### 8.6 Host role and device residency
+
+**Rule.** Every per-cell, per-face and per-nonzero computation of a SIMPLE or PIMPLE iteration,
+and all the data it touches, is on the device. Only the control flow stays on the host: which
+step runs next, how many corrector passes, when to stop.
+
+**The control flow cannot move to the device:**
+
+1. **The linear solves are `KSPSolve` calls.** With PETSc's Kokkos backend, every vector and
+   matrix operation of the Krylov method runs on the device. The Krylov loop and its convergence
+   test are host code, and no device kernel can call PETSc.
+2. **The steps need global synchronization.** Each Krylov iteration, and each SIMPLE step that
+   depends on the previous one, needs a reduction over all cells and, with several GPUs, over MPI.
+   A kernel cannot wait for the whole device or call MPI, so the host sequences the launches.
+3. **Convergence decisions need a scalar on the host.** Stopping SIMPLE, or the corrector count of
+   PIMPLE, depends on residual norms, so each check costs one small device-to-host read.
+
+GPU CFD codes (PETSc's and AmgX's GPU paths, SPUMA, NekRS) are structured the same way. What
+matters is that the host only launches kernels and reads scalars.
+
+**What the host does per iteration:**
+
+- launch the assembly, relaxation, gradient, Rhie-Chow and correction kernels;
+- call `KSPSolve` on device-resident matrices and vectors;
+- read the scalars in 8.2 and 8.5: normalization factors and KSP initial residuals, about 10 per
+  flow iteration.
+
+**Host work today that must move to the device.** Each of these is a serial host loop, or a
+mesh-sized host-device copy, every iteration.
+
+| Today | On device |
+|---|---|
+| `RhieChowMassFlux::computeHbyA`, `populateCouplingFunctors`, `computeFaceMassFlux` (serial host loops, face hash maps) | Device passes, 8.2 steps 8, 9, 13 |
+| `SegregatedSolverUtils` row sums through `get_row` (equation relaxation, SIMPLEC) | Fused into the gather (4.6) |
+| Gradient computation and the pressure-gradient snapshot | Block-vector gradients (6.2) and a device copy (8.2 step 1) |
+| Per-iteration aux kernels and user objects (`T` from `h`, `mu_t`, wall functions) | Kokkos aux kernels and user objects only (section 10) |
+| Kokkos assembly copying solution vectors in and the matrix out through host memory | Device PETSc types, so these are device-to-device copies (implemented on the branch for GPU builds) |
+
+**Reducing the remaining host involvement:**
+
+- **Fewer launches:** fuse the face passes, and capture fixed launch sequences between MPI points
+  with `Kokkos::Graph` (13.4).
+- **Fewer scalar reads:** write the residuals of all equations into one device array and read it
+  once per iteration. Optionally check SIMPLE convergence only every k iterations, if parity
+  tests show the outer iteration count does not change materially.
+- **Fewer reductions inside the solves:** Krylov methods with fewer global reductions (BiCGStab,
+  pipelined variants). The GPU campaign measured BiCGStab with Jacobi 1.7x faster than GMRES(30),
+  and GMRES did not converge at 2.1M cells within 500 iterations.
+- **PIMPLE:** the number of correctors is fixed (`num_piso_iterations`), so the correctors add no
+  convergence reads. The time-step loop adds only the scalars that time stepping needs.
+
+**Verification.** No mesh-sized host traffic in the iteration loop (target in 1.2). Check with
+Nsight Systems or rocprof, and on CPU builds with the event counter
+(`bench/tools/kokkos_event_counter.cpp`), which reports allocations, fences and launches by
+calling function.
 
 ---
 
@@ -923,19 +1055,37 @@ After phase 2 profiling:
 ### 15.2 Open questions
 
 Q1-Q6 are carried over from the overview. Q1 (flat ranges) and Q2 (build from `FaceInfo`) are
-assumed resolved as recommended there; the rest are listed below with Q7-Q10 added.
+assumed resolved as recommended there. Q7-Q10 were added with this design, and Q11-Q19 on
+2026-10-14 for the GPU campaign.
 
-- **Q3.** Replace or coexist with the existing Kokkos linear FV `(side, elem)` path.
-- **Q4.** Do device ghost updates work for libMesh's ghosted vectors with PETSc Kokkos vector
-  types? This decides between PETSc block vectors and the custom exchange (6.2).
+**Measurement questions** are answered by `bench/run_gpu_campaign.sh`; the section names are in
+the last column. CPU results to date are in `findings_2026-10-14.md` and
+`bench/results/GRADIENT_RESULTS_2026-10-14_openmp_m4max.md`.
+
+| Q | Question | Status or CPU evidence | Campaign section |
+|---|---|---|---|
+| Q4 | Are ghost updates of libMesh's ghosted vectors with Kokkos vector types done on the device? Decides between PETSc vectors and the custom exchange (6.2). | Open | `q4` (`-log_view` copy counts on 2-4 ranks) |
+| Q7 | Size of Kokkos linear FV functors, and the CUDA launch path (5.7) | **Answered.** Dispatched objects are 4.8-7.5 KB (advection 4824 B, BCs 5408 B, diffusion 6440 B, source 7536 B). Kokkos CUDA passes functors under 512 B as kernel arguments and stages 512 B-32 KB through constant memory, so every linear FV launch takes the constant-memory path. Its cost is Q14. | (Q14) |
+| Q8 | Does PETSc's Kokkos backend run on Kokkos's default execution space instance? If so, ordering does not need the fence before `MatSetValuesCOO`. | Open on GPUs. Trivially yes on OpenMP. | `q8` (`tools/petsc_kokkos_probe.cpp`) |
+| Q9 | Is `MatSetValuesCOO` on AIJKOKKOS cheap for owned-row, sorted, duplicate-free COO lists? | Open | `overhead` (`kokkos_mat_set_values` section), `q4` (`MatSetValuesCOO` row) |
+| Q11 | Gradient layout: padded per-(side, cell) side data (G0, G0C) or the face array through `elem_faces` (G1, G1C, G1CS); gather or atomics (G2, G3) | CPU: gathers beat atomics by 1.5-1.8x and are deterministic; G0 beats G1 by 1.0-1.4x at 432 against 280 B/cell; G1 needs good numbering | `miniapp` (gradient sweep) |
+| Q12 | Face normals and centroids as `R3` (AoS) or separate x, y, z arrays (SoA); per-cell tables side- or cell-fastest | Open; the CPU differences are within noise on the small meshes | `miniapp` (G1 vs G1C vs G1CS, G0 vs G0C) |
+| Q13 | Fusing the face passes of all flux kernels of a variable (13.4) | CPU: the fused pass (V2F) is about 1.7x faster than V2 on the test meshes | `miniapp` (layout sweep) |
+| Q14 | Launch cost, and the cost of the constant-memory launch path for 6 KB functors | CPU (OpenMP): about 9 us per launch; the 6 KB functor adds about 1 us | `miniapp` (`--launch-bench`) |
+| Q15 | Cost of the parsed-function interpreter on device (divergence, registers) | CPU: replacing the parsed diffusion coefficient with a constant cuts assembly by about 30% at 4k cells | `coefficients` |
+| Q16 | Linear solvers on device: CG with Jacobi, BoomerAMG or GAMG with reuse for Poisson; GMRES, BiCGStab or pipelined BiCGStab for advection-diffusion (8.4) | Earlier GPU run: BiCGStab with Jacobi 1.7x faster than GMRES(30) | `solvers` |
+| Q17 | Ranks per GPU and multi-GPU scaling, including halo cost (section 9) | Open | `ranks` |
+| Q18 | Cell numbering and face order on the GPU (native, RCM or Morton with owner-sorted faces, scrambled) | CPU: RCM with owner sorting needed for imported meshes; scrambled numbering costs G1 7-12x | `miniapp` (both sweeps) |
+| Q19 | Per-assembly host overhead after the fence and allocation changes, and the default device types | CPU: allocations per assembly 26 to 3, fences about 220 to 54. Earlier GPU run: about 2 ms per assembly before. | `overhead`, `types` |
+
+**Design decisions** (not measurements):
+
+- **Q3.** Replace or coexist with the existing Kokkos linear FV `(side, elem)` path. Q11 and Q12
+  inform it.
 - **Q5.** Should the Kokkos-aware solve be a mode of `LinearAssemblySegregatedSolve` or a separate
   class?
-- **Q6.** Target hardware for the benchmarks: NVIDIA only, or AMD as well.
-- **Q7.** `sizeof` of typical Kokkos linear FV objects, and the Kokkos CUDA launch path on the
-  target toolchain (5.7).
-- **Q8.** Does PETSc's Kokkos backend share Kokkos's default execution space instance? If so, the
-  fence before `MatSetValuesCOO` is unnecessary.
-- **Q9.** Does `MatSetPreallocationCOO`/`MatSetValuesCOO` on AIJKOKKOS take a fast path for a
-  sorted, duplicate-free, owned-rows-only COO list?
-- **Q10.** Should the CPU object policy (section 10) be an error or a warning by default? An error
-  protects performance. A warning keeps today's Kokkos-MOOSE mix-and-match behavior.
+- **Q6.** Target hardware for the benchmarks: NVIDIA only, or AMD as well. The campaign runs on
+  either.
+- **Q10. Resolved:** an error by default. A linear system that mixes Kokkos and non-Kokkos linear
+  FV objects errors unless `Problem/allow_mixed_kokkos_linear_fv = true`; implemented on the
+  branch.

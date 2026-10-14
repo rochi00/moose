@@ -123,3 +123,18 @@ cmake -S miniapp -B miniapp/build -DCMAKE_BUILD_TYPE=Release -DKokkos_DIR=$CONDA
 cmake --build miniapp/build
 miniapp/run_layout_bench.sh            # writes results/layout_<timestamp>.csv
 ```
+
+## Kokkos thread count and event counts
+
+- `bench.py --threads` sets `KOKKOS_NUM_THREADS`. Outside the harness, `--kokkos-threads=<n>` on
+  the MOOSE command line does the same and takes precedence. Linear FV problems cannot use
+  `--n-threads` above 1 (see `../docs/findings_2026-10-14.md`, section 6).
+- `tools/kokkos_event_counter.cpp` is a Kokkos Tools library that counts allocations, fences and
+  kernel launches per calling MOOSE function:
+
+  ```bash
+  c++ -O2 -std=c++17 -shared -fPIC tools/kokkos_event_counter.cpp -o libkec.so
+  KOKKOS_TOOLS_LIBS=$PWD/libkec.so KEC_OUT=counts.txt ../../test/moose_test-opt -i inputs/advdiff_kokkos.i n=8 steps=2
+  ```
+
+  Run with two step counts and subtract to get per-assembly counts.

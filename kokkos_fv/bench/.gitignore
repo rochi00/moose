@@ -7,3 +7,4 @@ __pycache__/
 !results/*.csv
 !results/*.json
 !miniapp/CMakeLists.txt
+*.so

@@ -5,7 +5,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 BIN="$HERE/build/fv_layout_bench"
-MESHES="$HERE/../meshes"
+MESHES="${MESHES:-$HERE/../meshes}"
 OUT="$HERE/../results/layout_$(date +%Y%m%d-%H%M%S).csv"
 REPS="${1:-10}"
 export OMP_PROC_BIND=spread OMP_PLACES=threads
@@ -27,8 +27,9 @@ for mesh in hex8_n64 hex8_n128 hexskew_n128 tet4_n40; do
       run "$mesh" 8 "$co" "$fo"
     done
   done
-  # thread scaling for the baseline ordering and the proposed ordering
-  for threads in 1 4; do
+  # thread scaling for the baseline ordering and the proposed ordering (host backends only; set
+  # SCALING_THREADS="" on a GPU, where the thread count does not apply)
+  for threads in ${SCALING_THREADS-1 4}; do
     run "$mesh" "$threads" native native
     run "$mesh" "$threads" morton owner
   done
