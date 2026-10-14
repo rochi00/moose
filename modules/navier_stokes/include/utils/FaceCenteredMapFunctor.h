@@ -21,8 +21,8 @@ class FaceCenteredMapFunctor : public FaceFunctorBase<T>, public Map
 {
 public:
   using Base = FaceFunctorBase<T>;
-  using typename Base::ValueType;
   using typename Base::StateArg;
+  using typename Base::ValueType;
 
   FaceCenteredMapFunctor(const MooseMesh & mesh, const std::string & name) : Base(mesh, name) {}
 

@@ -76,8 +76,8 @@ LinearFVPrghTotalPressureBC::dynamicPressureCorrection() const
   const auto & elem_info = fluidElemInfo();
   const auto state = determineState();
   // Only the normal component of the incoming velocity carries dynamic pressure through the patch.
-  const Real normal_speed =
-      NS::linearFVCellVelocity(_velocity_vars, _dim, elem_info, state) * _current_face_info->normal();
+  const Real normal_speed = NS::linearFVCellVelocity(_velocity_vars, _dim, elem_info, state) *
+                            _current_face_info->normal();
   const Real speed_squared = normal_speed * normal_speed;
 
   const Real rho = _density(functorFaceArg(_density, *_current_face_info), state);

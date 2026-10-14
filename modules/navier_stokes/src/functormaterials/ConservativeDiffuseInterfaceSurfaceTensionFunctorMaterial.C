@@ -196,7 +196,7 @@ ConservativeDiffuseInterfaceSurfaceTensionFunctorMaterial::forceDensity(
 
 Real
 ConservativeDiffuseInterfaceSurfaceTensionFunctorMaterial::curvature(const Moose::NodeArg &,
-                                                                    const Moose::StateArg &) const
+                                                                     const Moose::StateArg &) const
 {
   mooseError("The interface curvature is a cell quantity and has no nodal value.");
 }

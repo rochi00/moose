@@ -118,7 +118,6 @@ reconstructCellVectorFromFaceNormalScalars(const MooseMesh & moose_mesh,
 }
 }
 
-
 struct ConservativeDiffuseInterfaceRhieChowMassFlux::MomentumPredictorOperator
 {
   Real relaxation_parameter = 1.0;
@@ -141,7 +140,8 @@ struct ConservativeDiffuseInterfaceRhieChowMassFlux::MomentumPredictorOperator
 };
 
 const ConservativeDiffuseInterfaceRhieChowMassFlux::MomentumPredictorOperator *
-ConservativeDiffuseInterfaceRhieChowMassFlux::cachedMomentumPredictorOperator(const unsigned int system_i) const
+ConservativeDiffuseInterfaceRhieChowMassFlux::cachedMomentumPredictorOperator(
+    const unsigned int system_i) const
 {
   if (system_i >= _momentum_predictor_operators.size())
     return nullptr;
@@ -149,9 +149,9 @@ ConservativeDiffuseInterfaceRhieChowMassFlux::cachedMomentumPredictorOperator(co
   return _momentum_predictor_operators[system_i].get();
 }
 
-
 void
-ConservativeDiffuseInterfaceRhieChowMassFlux::beginMomentumPredictorAssembly(const unsigned int system_i)
+ConservativeDiffuseInterfaceRhieChowMassFlux::beginMomentumPredictorAssembly(
+    const unsigned int system_i)
 {
   // The first component starts a new vector operator.
   if (system_i == 0)
@@ -194,10 +194,11 @@ ConservativeDiffuseInterfaceRhieChowMassFlux::beginMomentumPredictorAssembly(con
 }
 
 void
-ConservativeDiffuseInterfaceRhieChowMassFlux::momentumPredictorAssembled(const unsigned int system_i,
-                                                             SparseMatrix<Number> & matrix,
-                                                             const NumericVector<Number> & rhs,
-                                                             const Real relaxation_parameter)
+ConservativeDiffuseInterfaceRhieChowMassFlux::momentumPredictorAssembled(
+    const unsigned int system_i,
+    SparseMatrix<Number> & matrix,
+    const NumericVector<Number> & rhs,
+    const Real relaxation_parameter)
 {
   mooseAssert(system_i < _momentum_predictor_operators.size() &&
                   _momentum_predictor_operators[system_i],
@@ -451,8 +452,9 @@ ConservativeDiffuseInterfaceRhieChowMassFlux::finalizeCachedMomentumPredictorOpe
 }
 
 void
-ConservativeDiffuseInterfaceRhieChowMassFlux::computePredictorOperator(
-    const unsigned int system_i, NumericVector<Number> & HbyA, NumericVector<Number> & Ainv)
+ConservativeDiffuseInterfaceRhieChowMassFlux::computePredictorOperator(const unsigned int system_i,
+                                                                       NumericVector<Number> & HbyA,
+                                                                       NumericVector<Number> & Ainv)
 {
   mooseAssert(_predictor_ready,
               "The momentum predictor operator must be assembled and finalized before H/A.");
@@ -477,7 +479,6 @@ ConservativeDiffuseInterfaceRhieChowMassFlux::computePredictorOperator(
   Ainv = *predictor->pressure_coupling_diagonal_raw;
   Ainv.close();
 }
-
 
 Real
 ConservativeDiffuseInterfaceRhieChowMassFlux::maxCourant(const Real dt) const
@@ -638,8 +639,8 @@ ConservativeDiffuseInterfaceRhieChowMassFlux::boundaryVelocityValue(
 }
 
 Real
-ConservativeDiffuseInterfaceRhieChowMassFlux::boundaryVolumetricFluxTarget(const FaceInfo * fi,
-                                               const Moose::StateArg & time_arg) const
+ConservativeDiffuseInterfaceRhieChowMassFlux::boundaryVolumetricFluxTarget(
+    const FaceInfo * fi, const Moose::StateArg & time_arg) const
 {
   mooseAssert(fi && !_vel[0]->isInternalFace(*fi),
               "boundaryVolumetricFluxTarget should only be called on boundary faces.");
@@ -693,8 +694,8 @@ ConservativeDiffuseInterfaceRhieChowMassFlux::interpolateMomentumVectorReadersTo
 }
 
 Real
-ConservativeDiffuseInterfaceRhieChowMassFlux::computeFaceNormalAinv(const RealVectorValue & face_ainv,
-                                        const RealVectorValue & face_normal) const
+ConservativeDiffuseInterfaceRhieChowMassFlux::computeFaceNormalAinv(
+    const RealVectorValue & face_ainv, const RealVectorValue & face_normal) const
 {
   Real normal_ainv = 0.0;
   for (const auto dim_i : make_range(_dim))
@@ -787,7 +788,8 @@ ConservativeDiffuseInterfaceRhieChowMassFlux::ConservativeDiffuseInterfaceRhieCh
     UserObject::_subproblem.addFunctor("corrected_face_phi", _corrected_face_phi, tid);
     UserObject::_subproblem.addFunctor(
         "previous_timestep_corrected_face_phi", _previous_timestep_corrected_face_phi, tid);
-    UserObject::_subproblem.addFunctor("lagged_corrected_face_phi", _lagged_corrected_face_phi, tid);
+    UserObject::_subproblem.addFunctor(
+        "lagged_corrected_face_phi", _lagged_corrected_face_phi, tid);
     UserObject::_subproblem.addFunctor("pressure_coupled_cell_reconstruction_scalar",
                                        _pressure_coupled_cell_reconstruction_scalar,
                                        tid);
@@ -953,8 +955,7 @@ ConservativeDiffuseInterfaceRhieChowMassFlux::pressureBoundaryTargetFlux(
 }
 
 Real
-ConservativeDiffuseInterfaceRhieChowMassFlux::pressureBoundaryNormalAinv(
-    const FaceInfo * fi) const
+ConservativeDiffuseInterfaceRhieChowMassFlux::pressureBoundaryNormalAinv(const FaceInfo * fi) const
 {
   if (!fi)
     return 0.0;
@@ -1158,14 +1159,13 @@ ConservativeDiffuseInterfaceRhieChowMassFlux::computeFaceMassFlux()
 
   cacheCurrentCorrectedVolumetricFlux();
 
-
   const auto time_arg = Moose::currentState();
   for (const auto * fi : _flow_face_info)
   {
     // Keep the pressure-corrected face flux as the source of truth. Do not reconstruct cell U and
     // project it back to faces here; that round trip is not an exact inverse.
-    _face_mass_flux[fi->id()] = transportMassFluxDensityFromVolumetricPhi(
-        fi, _corrected_face_phi.evaluate(fi), time_arg);
+    _face_mass_flux[fi->id()] =
+        transportMassFluxDensityFromVolumetricPhi(fi, _corrected_face_phi.evaluate(fi), time_arg);
   }
 }
 
@@ -1367,8 +1367,7 @@ ConservativeDiffuseInterfaceRhieChowMassFlux::surfaceTensionForceDensity(
 {
   // The force itself belongs to a functor material. What belongs here is only whether this
   // corrector may use it, which is startup projection state no material can see.
-  if (!surfaceTensionEnabled() || _startup_projection_active ||
-      !elem_info.elem())
+  if (!surfaceTensionEnabled() || _startup_projection_active || !elem_info.elem())
     return RealVectorValue();
 
   return (*_surface_tension_force)(makeElemArg(elem_info.elem()), time_arg);
@@ -1412,10 +1411,7 @@ ConservativeDiffuseInterfaceRhieChowMassFlux::updateAdditionalPressureFluxFuncto
   for (const auto * fi : _flow_face_info)
   {
     const auto predictor_state =
-        buildMomentumPredictorFaceState(fi,
-                                        hbya_readers,
-                                        nullptr,
-                                        time_arg);
+        buildMomentumPredictorFaceState(fi, hbya_readers, nullptr, time_arg);
 
     const Real face_measure = NS::faceMeasure(*fi);
     // FaceMomentumPredictorState carries H/A with the sign it is stored in, so that the velocity
@@ -1440,8 +1436,8 @@ ConservativeDiffuseInterfaceRhieChowMassFlux::updateAdditionalPressureFluxFuncto
       const Real sn_grad_rho = computeFaceNormalDensityGradient(fi, time_arg);
       hydrostatic_flux = -ghf * sn_grad_rho * normal_pressure_ainv;
 
-      surface_tension_flux = surfaceTensionFaceNormalForceDensity(fi, time_arg) *
-                             normal_pressure_ainv;
+      surface_tension_flux =
+          surfaceTensionFaceNormalForceDensity(fi, time_arg) * normal_pressure_ainv;
     }
 
     const Real phig_flux = (hydrostatic_flux + surface_tension_flux) * face_measure;

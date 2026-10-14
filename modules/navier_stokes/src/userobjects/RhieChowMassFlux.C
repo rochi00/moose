@@ -1154,11 +1154,7 @@ RhieChowMassFlux::populateCouplingFunctors(
   // We loop through the faces and populate the coupling fields (face H/A and 1/A)
   for (auto & fi : _flow_face_info)
   {
-    const auto state =
-        buildMomentumPredictorFaceState(fi,
-                                        hbya_reader,
-                                        &ainv_reader,
-                                        time_arg);
+    const auto state = buildMomentumPredictorFaceState(fi, hbya_reader, &ainv_reader, time_arg);
     _Ainv[fi->id()] = state.face_density_weighted_ainv;
     // Lastly, we populate the face flux resulted by H/A
     _HbyA_flux[fi->id()] = state.density_weighted_face_hbya * fi->normal();

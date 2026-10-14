@@ -62,10 +62,9 @@ WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::validParams()
       "surface_tension_coefficient",
       "",
       "Surface-tension coefficient functor. Leave empty to disable capillary forcing.");
-  params.addParamNamesToGroup(
-      "create_geometry_functors volume_fraction_functor geometry_delta_n "
-      "surface_tension_coefficient",
-      "Diffuse Interface Geometry");
+  params.addParamNamesToGroup("create_geometry_functors volume_fraction_functor geometry_delta_n "
+                              "surface_tension_coefficient",
+                              "Diffuse Interface Geometry");
 
   return params;
 }
@@ -136,8 +135,8 @@ WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::addOutletBC()
       // velocity and extrapolates the normal one. Every backflow switch reads the flux frozen for
       // this outer iteration, so that the boundary value cannot depend on the pressure equation
       // that evaluates it.
-      const std::string bc_type =
-          pressure_outlet ? "LinearFVPressureInletOutletVelocityBC" : "LinearFVAdvectionDiffusionOutflowBC";
+      const std::string bc_type = pressure_outlet ? "LinearFVPressureInletOutletVelocityBC"
+                                                  : "LinearFVAdvectionDiffusionOutflowBC";
       InputParameters params = getFactory().getValidParams(bc_type);
       params.set<std::vector<BoundaryName>>("boundary") = {outlet_bdy};
       params.set<bool>("use_two_term_expansion") = getParam<bool>("momentum_two_term_bc_expansion");
@@ -152,8 +151,7 @@ WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::addOutletBC()
       {
         params.set<LinearVariableName>("variable") = _velocity_names[d];
         if (pressure_outlet)
-          params.set<MooseEnum>("momentum_component") =
-              MooseEnum("x=0 y=1 z=2", NS::directions[d]);
+          params.set<MooseEnum>("momentum_component") = MooseEnum("x=0 y=1 z=2", NS::directions[d]);
         getProblem().addLinearFVBC(bc_type, _velocity_names[d] + "_" + outlet_bdy, params);
       }
     }
@@ -258,7 +256,8 @@ WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::addRhieChowUserObjects()
 
   // The flow coupling is owned by this physics: a diffuse-interface Rhie-Chow object on these
   // blocks is reused, a stock one on overlapping blocks is an input error
-  const auto this_block_ids = getSubdomainIDs(std::set<SubdomainName>(_blocks.begin(), _blocks.end()));
+  const auto this_block_ids =
+      getSubdomainIDs(std::set<SubdomainName>(_blocks.begin(), _blocks.end()));
   std::vector<UserObject *> objs;
   getProblem()
       .theWarehouse()

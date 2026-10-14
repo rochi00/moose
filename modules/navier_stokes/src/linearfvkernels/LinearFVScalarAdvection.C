@@ -25,8 +25,7 @@ LinearFVScalarAdvection::validParams()
       "The rhie-chow user-object which is used to determine the face velocity. Required unless "
       "'face_flux' supplies the flux directly.");
   params.addParam<MooseFunctorName>(
-      "face_flux",
-      "A volumetric face flux to use in place of the Rhie-Chow user object.");
+      "face_flux", "A volumetric face flux to use in place of the Rhie-Chow user object.");
   params.addRequiredParam<InterpolationMethodName>(
       "advected_interp_method_name",
       "Name of the FVInterpolationMethod to use for the advected quantity.");
@@ -57,7 +56,6 @@ LinearFVScalarAdvection::LinearFVScalarAdvection(const InputParameters & params)
   if (!_mass_flux_provider && !_face_flux)
     paramError("rhie_chow_user_object",
                "Either this parameter or 'face_flux' must supply the face flux.");
-
 }
 
 Real
@@ -120,9 +118,8 @@ LinearFVScalarAdvection::setupFaceData(const FaceInfo * face_info)
 
   // Caching the velocity on the face which will be reused in the advection term's matrix and right
   // hand side contributions
-  _volumetric_face_flux = _face_flux
-                              ? (*_face_flux)(makeCDFace(*face_info), determineState())
-                              : _mass_flux_provider->getVolumetricFaceFlux(*face_info);
+  _volumetric_face_flux = _face_flux ? (*_face_flux)(makeCDFace(*face_info), determineState())
+                                     : _mass_flux_provider->getVolumetricFaceFlux(*face_info);
 
   // Adjust volumetric face flux using the slip velocity
   // TODO: add boundaries
