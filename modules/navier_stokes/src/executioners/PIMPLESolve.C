@@ -12,6 +12,10 @@
 #include "SegregatedSolverUtils.h"
 #include "LinearSystem.h"
 
+#include <limits>
+
+using namespace libMesh;
+
 InputParameters
 PIMPLESolve::validParams()
 {
@@ -19,7 +23,8 @@ PIMPLESolve::validParams()
   params.addParam<unsigned int>(
       "num_piso_iterations",
       0,
-      "The number of PISO iterations without recomputing the momentum matrix.");
+      "The maximum number of additional PISO pressure-correction stages without recomputing the "
+      "momentum matrix.");
 
   return params;
 }
@@ -58,4 +63,37 @@ PIMPLESolve::correctVelocity(const bool /*recompute_face_mass_flux*/,
   }
 
   return residual;
+}
+
+void
+PIMPLESolve::advanceSystemOuterIterationHistory(const std::vector<LinearSystem *> & systems) const
+{
+  for (auto * system : systems)
+  {
+    unsigned int max_state = 0;
+    while (system->hasSolutionState(max_state + 1, Moose::SolutionIterationType::Nonlinear))
+      ++max_state;
+
+    for (unsigned int state = max_state; state > 1; --state)
+    {
+      auto & nonlinear_state =
+          system->solutionState(state, Moose::SolutionIterationType::Nonlinear);
+      nonlinear_state = system->solutionState(state - 1, Moose::SolutionIterationType::Nonlinear);
+      nonlinear_state.close();
+    }
+
+    if (max_state >= 1)
+    {
+      auto & previous_outer_solution =
+          system->solutionState(1, Moose::SolutionIterationType::Nonlinear);
+      previous_outer_solution = *(system->system().current_local_solution);
+      previous_outer_solution.close();
+    }
+  }
+}
+
+void
+PIMPLESolve::advancePressureOuterIterationHistory() const
+{
+  advanceSystemOuterIterationHistory({&_pressure_system});
 }

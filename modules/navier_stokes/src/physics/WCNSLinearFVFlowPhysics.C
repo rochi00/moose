@@ -202,8 +202,10 @@ WCNSLinearFVFlowPhysics::addFVKernels()
   // Momentum equation: flux terms
   addMomentumFluxKernels();
 
-  // Momentum equation: pressure term
-  addMomentumPressureKernels();
+  // Momentum equation: pressure term, unless the Rhie-Chow object assembles the predictor without
+  // it and supplies that force itself
+  if (!pressureCorrectionProvider().splitMomentumPredictorOperator())
+    addMomentumPressureKernels();
 
   // Momentum equation: friction term
   if (_friction_types.size())
@@ -240,6 +242,10 @@ WCNSLinearFVFlowPhysics::addPressureCorrectionKernels()
     assignBlocks(params, _blocks);
     params.set<LinearVariableName>("variable") = _pressure_name;
     params.set<MooseFunctorName>("face_flux") = "HbyA";
+    // Whether that flux carries the face area is the Rhie-Chow object's convention, which it also
+    // uses for its own boundary bookkeeping, so the pressure equation asks rather than assumes
+    params.set<bool>("face_flux_is_integrated") =
+        pressureCorrectionProvider().pressureCorrectionFluxIsIntegrated();
     params.set<bool>("force_boundary_execution") = true;
 
     getProblem().addLinearFVKernel(kernel_type, kernel_name, params);
@@ -644,6 +650,26 @@ WCNSLinearFVFlowPhysics::addUserObjects()
   mooseAssert(!_porous_medium_treatment, "Not implemented");
   // Rhie Chow user object for interpolation velocities
   addRhieChowUserObjects();
+}
+
+const RhieChowMassFlux &
+WCNSLinearFVFlowPhysics::pressureCorrectionProvider() const
+{
+  std::vector<UserObject *> objs;
+  getProblem()
+      .theWarehouse()
+      .query()
+      .condition<AttribSystem>("UserObject")
+      .condition<AttribThread>(0)
+      .queryInto(objs);
+
+  for (const auto & obj : objs)
+    if (const auto rc_obj = dynamic_cast<RhieChowMassFlux *>(obj))
+      if (rc_obj->blocks() == _blocks || rc_obj->blocks().empty() || _blocks.empty())
+        return *rc_obj;
+
+  mooseError("No Rhie-Chow mass flux user object is available to this flow physics. User objects "
+             "are created before flux kernels, so one should exist by now.");
 }
 
 void

@@ -37,9 +37,13 @@ private:
   virtual void addScalarAdvectionKernels() override;
   virtual void addScalarSourceKernels() override;
 
+protected:
   /// Functions adding boundary conditions for the incompressible simulation.
   /// These are used for weakly-compressible simulations as well.
+  /// The inlet condition is reachable by derived physics that reuse it unchanged.
   virtual void addScalarInletBC() override;
+
+private:
   virtual void addScalarWallBC() override {};
   virtual void addScalarOutletBC() override;
 

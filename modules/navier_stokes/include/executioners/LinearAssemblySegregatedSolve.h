@@ -44,6 +44,40 @@ protected:
   virtual std::vector<std::pair<unsigned int, Real>> solveMomentumPredictor() override;
   virtual std::pair<unsigned int, Real> solvePressureCorrector() override;
 
+  struct MomentumPredictorAssembly
+  {
+    LinearImplicitSystem * system = nullptr;
+    NumericVector<Number> * solution = nullptr;
+    NumericVector<Number> * rhs = nullptr;
+    SparseMatrix<Number> * matrix = nullptr;
+  };
+
+  MomentumPredictorAssembly
+  assembleMomentumPredictorOperator(const unsigned int system_i,
+                                    const bool prepare_without_solve = false);
+
+  /**
+   * Lets a derived solve refresh whatever pressure-equation sources it owns once H/A has been
+   * computed and before the pressure corrector is assembled. The reduced-pressure diffuse
+   * interface solve publishes its surface-tension, hydrostatic and transient-projection face
+   * fluxes here; they are part of the pressure equation, so they have to be rebuilt for every
+   * corrector rather than only at startup.
+   */
+  virtual void postPreparePressureCorrectorState() {}
+
+  /**
+   * Relaxes the solved pressure towards the field the next momentum predictor will use. Runs
+   * after the provider has formed its unrelaxed-pressure candidate and before the provider
+   * publishes relaxed feedback, so the ordering around it is load bearing.
+   */
+  virtual void relaxPressureForNextPredictor();
+
+  /**
+   * Lets a derived solve refresh state that depends on the published corrected velocity, which is
+   * only valid once the corrector has written it.
+   */
+  virtual void postPublishPressureCorrectedState() {}
+
   /// Computes new velocity field based on computed pressure gradients
   /// @param recompute_face_mass_flux If we want to recompute the face flux too
   /// @param solver_params Dummy solver parameter object for the linear solve
@@ -96,6 +130,13 @@ protected:
     /// If we dont have anything we just set this to true.
     bool converged = false;
   };
+
+  virtual void initializeSolveLoop(const SolverParams & solver_params);
+  virtual void preMomentumPressureIteration(ResidualStorage & residual_storage,
+                                            const SolverParams & solver_params);
+  virtual bool shouldAssembleMomentumPredictorWithoutSolve() const;
+  virtual void assembleMomentumPredictorWithoutSolve();
+  virtual bool shouldSolveActiveScalarsAfterFlowLoop() const;
 
   /**
    * Build residual/tolerance vectors and associated indices for all enabled systems.
@@ -234,4 +275,7 @@ protected:
 
   // Handler object for CHT problems
   NS::FV::CHTHandler _cht;
+
+  /// Current outer SIMPLE/PIMPLE iteration, set by derived executioners when relevant.
+  unsigned int _current_outer_iteration = 0;
 };

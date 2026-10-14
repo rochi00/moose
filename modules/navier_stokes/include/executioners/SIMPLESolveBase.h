@@ -112,6 +112,12 @@ protected:
   /// The user-defined relaxation parameter for the pressure variable
   const Real _pressure_variable_relaxation;
 
+  /// Apply the configured momentum matrix relaxation policy to a predictor matrix/RHS pair.
+  void applyMomentumEquationRelaxation(SparseMatrix<Number> & matrix,
+                                       NumericVector<Number> & rhs,
+                                       const NumericVector<Number> & solution,
+                                       NumericVector<Number> & diff_diagonal) const;
+
   /// If the pressure needs to be pinned
   const bool _pin_pressure;
 
