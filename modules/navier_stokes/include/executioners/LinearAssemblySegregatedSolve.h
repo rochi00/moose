@@ -65,21 +65,7 @@ protected:
    * fluxes here; they are part of the pressure equation, so they have to be rebuilt for every
    * corrector rather than only at startup.
    */
-  virtual void postPreparePressureCorrectorState(const bool) {}
-
-  /**
-   * How many extra pressure solves the corrector performs to carry the explicit non-orthogonal
-   * correction. Zero means one solve, which is the only thing a mesh without non-orthogonality
-   * needs.
-   */
-  virtual unsigned int numPressureNonorthogonalCorrectors() const { return 0; }
-
-  /**
-   * Installs whatever a derived solve needs between two non-orthogonal pressure solves, so the
-   * next pass sees the gradients of the pressure the previous pass produced.
-   * @param final_nonorthogonal_corrector whether this was the last pressure solve
-   */
-  virtual void postPressureCorrectorSolve(const bool final_nonorthogonal_corrector) {}
+  virtual void postPreparePressureCorrectorState() {}
 
   /**
    * Relaxes the solved pressure towards the field the next momentum predictor will use. Runs
@@ -147,16 +133,12 @@ protected:
     bool converged = false;
   };
 
-  virtual void preSolveSetup(const SolverParams & solver_params);
-  virtual void addIterationResiduals(ResidualStorage & residual_storage);
   virtual void initializeSolveLoop(const SolverParams & solver_params);
   virtual void preMomentumPressureIteration(ResidualStorage & residual_storage,
                                             const SolverParams & solver_params);
-  virtual bool shouldCopyMomentumNonlinearSolutionHistory() const;
   virtual bool shouldAssembleMomentumPredictorWithoutSolve() const;
   virtual void assembleMomentumPredictorWithoutSolve();
   virtual bool shouldSolveActiveScalarsAfterFlowLoop() const;
-  virtual void finalizeSolve(const bool converged);
 
   /**
    * Build residual/tolerance vectors and associated indices for all enabled systems.

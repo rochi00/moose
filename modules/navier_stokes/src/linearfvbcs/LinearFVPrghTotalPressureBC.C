@@ -33,10 +33,6 @@ LinearFVPrghTotalPressureBC::validParams()
   params.addParam<Point>("reference_pressure_point",
                          Point(0.0, 0.0, 0.0),
                          "The point used to form gh for the p_rgh hydrostatic offset.");
-  params.addParam<bool>(
-      "use_normal_velocity_only",
-      true,
-      "Use only the extrapolated normal velocity in the dynamic-pressure correction.");
   return params;
 }
 
@@ -47,8 +43,7 @@ LinearFVPrghTotalPressureBC::LinearFVPrghTotalPressureBC(const InputParameters &
     _density(getFunctor<Real>(NS::density)),
     _face_flux(getFunctor<Real>("face_flux")),
     _gravity(getParam<RealVectorValue>("gravity")),
-    _reference_pressure_point(getParam<Point>("reference_pressure_point")),
-    _use_normal_velocity_only(getParam<bool>("use_normal_velocity_only"))
+    _reference_pressure_point(getParam<Point>("reference_pressure_point"))
 {
 }
 
@@ -80,21 +75,10 @@ LinearFVPrghTotalPressureBC::dynamicPressureCorrection() const
 
   const auto & elem_info = fluidElemInfo();
   const auto state = determineState();
-  const RealVectorValue velocity = NS::linearFVCellVelocity(_velocity_vars, _dim, elem_info, state);
-  Real speed_squared = velocity.norm_sq();
-
-  if (_use_normal_velocity_only)
-  {
-    const RealVectorValue normal = _current_face_info->normal();
-    const Real normal_magnitude = normal.norm();
-    if (normal_magnitude <= libMesh::TOLERANCE)
-      speed_squared = 0.0;
-    else
-    {
-      const Real normal_speed = velocity * (normal / normal_magnitude);
-      speed_squared = normal_speed * normal_speed;
-    }
-  }
+  // Only the normal component of the incoming velocity carries dynamic pressure through the patch.
+  const Real normal_speed =
+      NS::linearFVCellVelocity(_velocity_vars, _dim, elem_info, state) * _current_face_info->normal();
+  const Real speed_squared = normal_speed * normal_speed;
 
   const Real rho = _density(functorFaceArg(_density, *_current_face_info), state);
   return 0.5 * rho * speed_squared;

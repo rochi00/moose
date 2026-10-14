@@ -25,21 +25,13 @@ PIMPLESolve::validParams()
       0,
       "The maximum number of additional PISO pressure-correction stages without recomputing the "
       "momentum matrix.");
-  params.addParam<unsigned int>(
-      "num_pressure_nonorthogonal_correctors",
-      0,
-      "Number of additional non-final pressure equation solves inside each pressure-corrector "
-      "stage. A value of 0 means one final pressure solve, 1 means one non-final solve followed "
-      "by one final solve, etc.");
 
   return params;
 }
 
 PIMPLESolve::PIMPLESolve(Executioner & ex)
   : LinearAssemblySegregatedSolve(ex),
-    _num_piso_iterations(getParam<unsigned int>("num_piso_iterations")),
-    _num_pressure_nonorthogonal_correctors(
-        getParam<unsigned int>("num_pressure_nonorthogonal_correctors"))
+    _num_piso_iterations(getParam<unsigned int>("num_piso_iterations"))
 {
 }
 
@@ -70,18 +62,7 @@ PIMPLESolve::correctVelocity(const bool /*recompute_face_mass_flux*/,
     piso_iteration_counter++;
   }
 
-  _current_piso_iteration = 0;
-
   return residual;
-}
-
-void
-PIMPLESolve::postPressureCorrectorSolve(const bool /*final_nonorthogonal_corrector*/)
-{
-  // solvePressureCorrector has already installed the solution and cached the pressure-equation
-  // flux. What the next non-orthogonal pass additionally needs is the cell gradients of the
-  // pressure it just produced, since those carry the explicit correction.
-  _pressure_system.computeGradients();
 }
 
 void

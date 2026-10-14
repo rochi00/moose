@@ -130,8 +130,7 @@ public:
   void beginFVSplitMomentumPredictorOperatorAssembly(const unsigned int system_i);
   /// Finalize the split predictor assembled from the momentum operator.
   void completeFVSplitMomentumPredictorOperatorAssembly(const unsigned int system_i,
-                                                        const Real relaxation_parameter,
-                                                        const bool enforce_diagonal_dominance);
+                                                        const Real relaxation_parameter);
   /// Populate cached split-predictor internals from the assembled momentum operator.
   void cacheFVSplitMomentumPredictorOperatorAssembly(const unsigned int system_i,
                                                      libMesh::SparseMatrix<Number> & matrix,
@@ -334,10 +333,6 @@ protected:
   /// Access the cached momentum-predictor operator for a component.
   const MomentumPredictorOperator *
   cachedMomentumPredictorOperator(const unsigned int system_i) const;
-
-  /// Access the cached fvMatrix::D() diagonal used by pressure projection for a component.
-  const NumericVector<Number> *
-  cachedMomentumPredictorDiagonalRaw(const unsigned int system_i) const;
 
   /**
    * Check the block consistency between the passed in \p var and us

@@ -17,7 +17,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <iostream>
 #include <limits>
 #include <memory>
 using namespace libMesh;
@@ -222,7 +221,7 @@ ReducedPressurePIMPLESolve::validParams()
       "startup_pressure_initialization is not 'none'.");
   params.addParamNamesToGroup(
       "volume_fraction_subcycles volume_fraction_max_courant startup_pressure_initialization "
-      "startup_flux_corrections num_pressure_nonorthogonal_correctors",
+      "startup_flux_corrections",
       "Volume Fraction Equations");
   return params;
 }
@@ -285,13 +284,6 @@ ReducedPressurePIMPLESolve::diffuseInterfaceVOFCorrector(const SolverSystemName 
     }
 
   return corrector_match;
-}
-
-void
-ReducedPressurePIMPLESolve::preSolveSetup(const SolverParams & /* solver_params */)
-{
-  if (auto * diffuse_rc = diffuseInterfaceRC())
-    diffuse_rc->setSuppressExplicitHydrostaticPressureFlux(false);
 }
 
 void
@@ -405,13 +397,6 @@ ReducedPressurePIMPLESolve::shouldSolveActiveScalarsAfterFlowLoop() const
 }
 
 void
-ReducedPressurePIMPLESolve::finalizeSolve(const bool /* converged */)
-{
-  if (auto * diffuse_rc = diffuseInterfaceRC())
-    diffuse_rc->setSuppressExplicitHydrostaticPressureFlux(false);
-}
-
-void
 ReducedPressurePIMPLESolve::addMomentumPredictorExplicitForcing(const unsigned int system_i,
                                                                 NumericVector<Number> & rhs)
 {
@@ -518,8 +503,7 @@ ReducedPressurePIMPLESolve::initializeStartupPressureField(const SolverParams & 
 }
 
 void
-ReducedPressurePIMPLESolve::postPreparePressureCorrectorState(
-    const bool /*subtract_updated_pressure*/)
+ReducedPressurePIMPLESolve::postPreparePressureCorrectorState()
 {
   if (auto * diffuse_rc = diffuseInterfaceRC())
     diffuse_rc->updateAdditionalPressureFluxFunctors(_print_fields);
@@ -686,7 +670,7 @@ ReducedPressurePIMPLESolve::correctStartupContinuityOnce(const SolverParams & so
   // above restores the physical p_rgh field immediately afterwards. So it runs the first stages of
   // the corrector rather than the whole pipeline.
   _rc_uo->computeHbyA(_print_fields);
-  postPreparePressureCorrectorState(true);
+  postPreparePressureCorrectorState();
 
   Moose::PetscSupport::petscSetOptions(_pressure_petsc_options, solver_params);
 

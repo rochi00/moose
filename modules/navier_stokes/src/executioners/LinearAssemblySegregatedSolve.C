@@ -13,7 +13,6 @@
 #include "LinearSystem.h"
 #include "Executioner.h"
 
-#include <iostream>
 #include <limits>
 
 using namespace libMesh;
@@ -500,8 +499,8 @@ LinearAssemblySegregatedSolve::assembleMomentumPredictorOperator(const unsigned 
     _rc_uo->cacheFVSplitMomentumPredictorOperatorAssembly(system_i, mmat, rhs);
 
   if (_rc_uo && _rc_uo->splitMomentumPredictorOperator())
-    _rc_uo->completeFVSplitMomentumPredictorOperatorAssembly(
-        system_i, _momentum_equation_relaxation, _force_momentum_diagonal_dominance);
+    _rc_uo->completeFVSplitMomentumPredictorOperatorAssembly(system_i,
+                                                             _momentum_equation_relaxation);
 
   applyMomentumEquationRelaxation(mmat, rhs, solution, *diff_diagonal);
 
@@ -697,24 +696,14 @@ LinearAssemblySegregatedSolve::correctVelocity(const bool recompute_face_mass_fl
 
   // 2. Whatever pressure-equation sources a derived solve owns, refreshed against the H/A just
   // computed. Without this the pressure corrector is assembled without them.
-  postPreparePressureCorrectorState(true);
+  postPreparePressureCorrectorState();
 
   // We set the preconditioner/controllable parameters for the pressure equations through
   // petsc options. Linear tolerances will be overridden within the solver.
   Moose::PetscSupport::petscSetOptions(_pressure_petsc_options, solver_params);
 
-  // 3. Solve the pressure equation, repeating it where the mesh needs explicit non-orthogonal
-  // correction: each pass re-solves against the gradients the previous pass installed.
-  std::pair<unsigned int, Real> residuals{0, std::numeric_limits<Real>::quiet_NaN()};
-  unsigned int total_linear_iterations = 0;
-  const auto nonorthogonal_correctors = numPressureNonorthogonalCorrectors();
-  for (const auto corrector : make_range(nonorthogonal_correctors + 1))
-  {
-    residuals = solvePressureCorrector();
-    total_linear_iterations += residuals.first;
-    postPressureCorrectorSolve(corrector == nonorthogonal_correctors);
-  }
-  residuals.first = total_linear_iterations;
+  // 3. Solve the pressure equation.
+  const auto residuals = solvePressureCorrector();
 
   // 4. The corrected face mass flux, which the advection terms consume. Some algorithms (PISO)
   // only need it on the last corrector.
@@ -835,17 +824,6 @@ LinearAssemblySegregatedSolve::solveAdvectedSystem(const unsigned int system_num
 }
 
 void
-LinearAssemblySegregatedSolve::preSolveSetup(const SolverParams & /* solver_params */)
-{
-}
-
-void
-LinearAssemblySegregatedSolve::addIterationResiduals(ResidualStorage & residual_storage)
-{
-  residual_storage.converged = residual_storage.ns_residuals.empty();
-}
-
-void
 LinearAssemblySegregatedSolve::initializeSolveLoop(const SolverParams & /* solver_params */)
 {
 }
@@ -854,12 +832,6 @@ void
 LinearAssemblySegregatedSolve::preMomentumPressureIteration(
     ResidualStorage & /* residual_storage */, const SolverParams & /* solver_params */)
 {
-}
-
-bool
-LinearAssemblySegregatedSolve::shouldCopyMomentumNonlinearSolutionHistory() const
-{
-  return true;
 }
 
 bool
@@ -897,11 +869,6 @@ LinearAssemblySegregatedSolve::shouldSolveActiveScalarsAfterFlowLoop() const
   return true;
 }
 
-void
-LinearAssemblySegregatedSolve::finalizeSolve(const bool /* converged */)
-{
-}
-
 bool
 LinearAssemblySegregatedSolve::solve()
 {
@@ -915,8 +882,6 @@ LinearAssemblySegregatedSolve::solve()
   SolverParams solver_params;
   solver_params._type = Moose::SolveType::ST_LINEAR;
   solver_params._line_search = Moose::LineSearchType::LS_NONE;
-
-  preSolveSetup(solver_params);
 
   // Initialize the SIMPLE iteration counter
   unsigned int simple_iteration_counter = 0;
@@ -932,7 +897,7 @@ LinearAssemblySegregatedSolve::solve()
 
   // We set up the residual storage and the corresponding tolerances.
   ResidualStorage residual_storage = setupResidualStorage();
-  addIterationResiduals(residual_storage);
+  residual_storage.converged = residual_storage.ns_residuals.empty();
   auto & ns_residuals = residual_storage.ns_residuals;
   auto & ns_abs_tols = residual_storage.ns_abs_tols;
   const auto & momentum_indices = residual_storage.momentum_indices;
@@ -1155,8 +1120,6 @@ LinearAssemblySegregatedSolve::solve()
   }
 
   converged = _continue_on_max_its ? true : converged;
-
-  finalizeSolve(converged);
 
   return converged;
 }

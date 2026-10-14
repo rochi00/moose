@@ -34,17 +34,14 @@ public:
   void commitAcceptedTimestepTransportHistory() const;
 
 protected:
-  void preSolveSetup(const SolverParams & solver_params) override;
   void initializeSolveLoop(const SolverParams & solver_params) override;
   void preMomentumPressureIteration(ResidualStorage & residual_storage,
                                     const SolverParams & solver_params) override;
   bool shouldAssembleMomentumPredictorWithoutSolve() const override;
   bool shouldSolveActiveScalarsAfterFlowLoop() const override;
-  void finalizeSolve(const bool converged) override;
   void addMomentumPredictorExplicitForcing(const unsigned int system_i,
                                            NumericVector<Number> & rhs) override;
-  bool shouldCopyMomentumNonlinearSolutionHistory() const override { return false; }
-  void postPreparePressureCorrectorState(const bool subtract_updated_pressure) override;
+  void postPreparePressureCorrectorState() override;
   void postPublishPressureCorrectedState() override;
 
 private:

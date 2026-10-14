@@ -41,19 +41,9 @@ protected:
   virtual std::pair<unsigned int, Real>
   correctVelocity(const bool recompute_face_mass_flux, const SolverParams & solver_params) override;
 
-  /// PIMPLE carries the explicit non-orthogonal correction with extra pressure solves.
-  unsigned int numPressureNonorthogonalCorrectors() const override
-  {
-    return _num_pressure_nonorthogonal_correctors;
-  }
-
-  void postPressureCorrectorSolve(const bool final_nonorthogonal_corrector) override;
-
   void advanceSystemOuterIterationHistory(const std::vector<LinearSystem *> & systems) const;
   void advancePressureOuterIterationHistory() const;
 
   /// Number of H(u) and u iterations with fixed face flux.
   const unsigned int _num_piso_iterations;
-  const unsigned int _num_pressure_nonorthogonal_correctors;
-  unsigned int _current_piso_iteration = 0;
 };

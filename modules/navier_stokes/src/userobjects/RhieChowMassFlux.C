@@ -52,7 +52,6 @@ struct RhieChowMassFlux::MomentumPredictorOperator : public LinearFVAssemblyCons
   bool assembly_closed = false;
   bool finalized = false;
   Real relaxation_parameter = 1.0;
-  bool enforce_diagonal_dominance = false;
   std::unique_ptr<NumericVector<Number>> rhs_raw;
   std::unique_ptr<NumericVector<Number>> pressure_coupling_diagonal_raw;
   std::unique_ptr<NumericVector<Number>> h_diagonal_correction_raw;
@@ -1101,12 +1100,6 @@ RhieChowMassFlux::cachedMomentumPredictorOperator(const unsigned int system_i) c
   return _momentum_predictor_operators[system_i].get();
 }
 
-const NumericVector<Number> *
-RhieChowMassFlux::cachedMomentumPredictorDiagonalRaw(const unsigned int system_i) const
-{
-  const auto * const predictor = cachedMomentumPredictorOperator(system_i);
-  return predictor ? predictor->pressure_coupling_diagonal_raw.get() : nullptr;
-}
 
 void
 RhieChowMassFlux::clearMomentumPredictorOperatorCache()
@@ -1332,10 +1325,8 @@ RhieChowMassFlux::finalizeCachedMomentumPredictorOperators()
         const Real diagonal_for_dominance =
             interior_diagonal + boundary_dominance_diagonal_reader(dof);
 
-        Real predictor_diagonal = diagonal_for_dominance;
-        if (predictor.enforce_diagonal_dominance)
-          predictor_diagonal =
-              std::max(std::abs(diagonal_for_dominance), offdiag_abs_sum_reader(dof));
+        Real predictor_diagonal =
+            std::max(std::abs(diagonal_for_dominance), offdiag_abs_sum_reader(dof));
 
         predictor_diagonal /= predictor.relaxation_parameter;
         predictor_diagonal -= boundary_relax_diagonal_reader(dof);
@@ -1459,9 +1450,7 @@ RhieChowMassFlux::beginFVSplitMomentumPredictorOperatorAssembly(const unsigned i
 
 void
 RhieChowMassFlux::completeFVSplitMomentumPredictorOperatorAssembly(
-    const unsigned int system_i,
-    const Real relaxation_parameter,
-    const bool enforce_diagonal_dominance)
+    const unsigned int system_i, const Real relaxation_parameter)
 {
   LinearFVKernel::setAssemblyConsumer(nullptr);
 
@@ -1487,7 +1476,6 @@ RhieChowMassFlux::completeFVSplitMomentumPredictorOperatorAssembly(
                         predictor.offdiag_abs_sum_raw.get()})
     vector->close();
   predictor.relaxation_parameter = relaxation_parameter;
-  predictor.enforce_diagonal_dominance = enforce_diagonal_dominance;
   predictor.assembly_closed = true;
   predictor.finalized = false;
   _cached_predictor_operator_finalized = false;

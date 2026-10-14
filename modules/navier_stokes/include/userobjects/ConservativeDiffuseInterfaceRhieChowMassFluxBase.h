@@ -37,17 +37,6 @@ public:
     RealVectorValue face_raw_ainv;
   };
 
-  struct PressureVelocityFaceState
-  {
-    bool predictor_valid = false;
-    Real predictor_transport_phi = 0.0;
-    Real pressure_equation_phi = 0.0;
-    Real pressure_writeback_phi = 0.0;
-    Real corrected_transport_phi = 0.0;
-    Real normal_pressure_ainv = 0.0;
-    Real writeback_reconstruction_scalar = 0.0;
-  };
-
   static InputParameters validParams();
 
   ConservativeDiffuseInterfaceRhieChowMassFluxBase(const InputParameters & params);
@@ -60,7 +49,6 @@ public:
   void computeCellVelocity() override;
   Real getMassFlux(const FaceInfo & fi) const override;
   Real getVolumetricFaceFlux(const FaceInfo & fi) const override;
-  using RhieChowMassFlux::getVolumetricFaceFlux;
   void commitAcceptedTimestepTransportHistory();
   void freezeLaggedCorrectedFaceFlux(const bool use_previous_timestep_flux = false);
 
@@ -104,14 +92,15 @@ protected:
   void postUpdateVelocityBoundaryState() override;
   Real pressureFaceNormalAinv(const FaceInfo * fi, const Moose::StateArg & time_arg) const;
 
-  void initializeAdditionalPressureFluxStorage(const bool preserve_corrected_face_phi = false);
+  void initializeAdditionalPressureFluxStorage();
   void writePressureCorrectedVelocityToMomentumSolution(const Moose::StateArg & time_arg);
   Real correctedTransportPhi(const FaceInfo & fi) const;
   void cacheCurrentCorrectedVolumetricFlux(const Real degenerate_normal_pressure_ainv_tol = 0.0);
-  PressureVelocityFaceState
-  pressureVelocityFaceState(const FaceInfo * fi,
-                            const Moose::StateArg & time_arg,
-                            const Real degenerate_normal_pressure_ainv_tol = 0.0) const;
+  /// The face-normal velocity correction the pressure equation produced, divided by the face
+  /// coefficient it was produced through, for the cell-centered velocity writeback.
+  Real writebackReconstructionScalar(const FaceInfo * fi,
+                                     const Moose::StateArg & time_arg,
+                                     const Real degenerate_normal_pressure_ainv_tol = 0.0) const;
   Real maxPressureFaceNormalAinv(const Moose::StateArg & time_arg) const;
   Real transportMassFluxDensityFromVolumetricPhi(const FaceInfo * fi,
                                                  const Real volumetric_phi,
@@ -124,9 +113,6 @@ protected:
                                      const Moose::StateArg & time_arg) const;
   Real interpolatedPhysicalFaceFlux(const FaceInfo * fi, const Moose::StateArg & time_arg) const;
 
-  void buildDiffuseFaceRawAinvReaders(
-      std::vector<std::unique_ptr<NumericVector<Number>>> & owned_raw_ainv,
-      std::vector<PetscVectorReader> & raw_ainv_readers) const;
   DiffuseFaceOperatorState
   buildDiffuseFaceOperatorState(const FaceInfo * fi,
                                 const Moose::StateArg & time_arg,
@@ -134,8 +120,7 @@ protected:
 
   Real evaluateFaceScalarFunctor(const Moose::Functor<Real> * functor,
                                  const FaceInfo * fi,
-                                 const Moose::StateArg & time_arg,
-                                 const Moose::StateArg * limiter_state) const;
+                                 const Moose::StateArg & time_arg) const;
 
   Real computeDefaultTransientProjectionVolumetricFlux(const FaceInfo * fi,
                                                        const Moose::StateArg & time_arg,

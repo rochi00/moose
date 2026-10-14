@@ -45,5 +45,4 @@ protected:
   const Moose::Functor<Real> & _face_flux;
   const RealVectorValue _gravity;
   const Point _reference_pressure_point;
-  const bool _use_normal_velocity_only;
 };

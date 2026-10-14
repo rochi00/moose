@@ -94,10 +94,6 @@ protected:
   /// The user-defined relaxation parameter for the momentum equation
   const Real _momentum_equation_relaxation;
 
-  /// Whether to enforce extra diagonal dominance / RHS compensation on the momentum predictor
-  /// matrix prior to solve.
-  const bool _force_momentum_diagonal_dominance;
-
   // ************************ Pressure Eq Variables ************************ //
 
   /// The name of the pressure system

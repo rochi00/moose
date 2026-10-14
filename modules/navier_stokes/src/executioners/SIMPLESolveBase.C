@@ -47,12 +47,6 @@ SIMPLESolveBase::validParams()
       "The relaxation which should be used for the momentum equation. (=1 for no relaxation, "
       "diagonal dominance will still be enforced)");
 
-  params.addParam<bool>(
-      "force_momentum_diagonal_dominance",
-      true,
-      "Whether to apply the segregated-solver diagonal-dominance enforcement on top of the "
-      "configured momentum equation under-relaxation before the linear solve.");
-
   params.addParam<MultiMooseEnum>("momentum_petsc_options",
                                   Moose::PetscSupport::getCommonPetscFlags(),
                                   "Singleton PETSc options for the momentum equation");
@@ -87,8 +81,7 @@ SIMPLESolveBase::validParams()
       "The maximum allowed iterations in the linear solver of the momentum equation.");
 
   params.addParamNamesToGroup(
-      "momentum_equation_relaxation force_momentum_diagonal_dominance "
-      "momentum_petsc_options momentum_petsc_options_iname "
+      "momentum_equation_relaxation momentum_petsc_options momentum_petsc_options_iname "
       "momentum_petsc_options_value momentum_absolute_tolerance "
       "momentum_l_tol momentum_l_abs_tol momentum_l_max_its momentum_systems",
       "Momentum Equation");
@@ -438,7 +431,6 @@ SIMPLESolveBase::SIMPLESolveBase(Executioner & ex)
     _momentum_system_names(getParam<std::vector<SolverSystemName>>("momentum_systems")),
     _momentum_l_abs_tol(getParam<Real>("momentum_l_abs_tol")),
     _momentum_equation_relaxation(getParam<Real>("momentum_equation_relaxation")),
-    _force_momentum_diagonal_dominance(getParam<bool>("force_momentum_diagonal_dominance")),
     _pressure_system_name(getParam<SolverSystemName>("pressure_system")),
     _pressure_l_abs_tol(getParam<Real>("pressure_l_abs_tol")),
     _pressure_variable_relaxation(getParam<Real>("pressure_variable_relaxation")),
@@ -720,8 +712,7 @@ SIMPLESolveBase::applyMomentumEquationRelaxation(SparseMatrix<Number> & matrix,
                                                  const NumericVector<Number> & solution,
                                                  NumericVector<Number> & diff_diagonal) const
 {
-  NS::FV::relaxMatrix(
-      matrix, _momentum_equation_relaxation, diff_diagonal, _force_momentum_diagonal_dominance);
+  NS::FV::relaxMatrix(matrix, _momentum_equation_relaxation, diff_diagonal);
   NS::FV::relaxRightHandSide(rhs, solution, diff_diagonal);
 }
 
