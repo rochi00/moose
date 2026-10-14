@@ -81,6 +81,44 @@ because the hex 2.1M 8-thread runs were noisy (spread up to 52%).
    about 40% of the mini-app's best assembly (V2, 7.45 ms) and about 2% of MOOSE's current Kokkos
    assembly (134 ms). The gradient pass is not a bottleneck on the CPU.
 
+## Second sweep: GPU-oriented layouts (`gradient_20261014-104545.csv`)
+
+New variants:
+
+| ID | Change from the base variant |
+|---|---|
+| G0C | G0 with the padded side arrays stored cell-fastest |
+| G1C | G1 with `elem_faces` stored cell-fastest |
+| G1CS | G1C with face normals and centroids as separate x, y, z arrays (SoA) |
+
+Morton numbering with owner-sorted faces was added to the orderings. Same protocol as above: 3
+processes, 20 passes each.
+
+| Mesh | Threads | Order | G0 | G0C | G1 | G1C | G1CS | G2 | G3 |
+|---|---|---|---|---|---|---|---|---|---|
+| hex 2.1M | 1 | native | **14.4** | 31.6 | 19.9 | 22.4 | 27.0 | 34.7 | 37.7 |
+| hex 2.1M | 1 | morton/owner | **14.2** | 30.2 | 20.5 | 23.7 | 28.6 | 36.4 | 39.3 |
+| hex 2.1M | 4 | rcm/owner | **4.76** | 7.93 | 5.42 | 6.04 | 7.30 | 9.53 | 10.1 |
+| skewed hex 2.1M | 8 | rcm/owner | 3.14 | 4.56 | **3.06** | 3.25 | 3.95 | 5.81 | 6.00 |
+| tet 1.5M | 1 | native | **7.67** | 10.2 | 10.7 | 11.2 | 13.8 | 18.6 | 19.7 |
+| tet 1.5M | 4 | rcm/owner | **2.60** | 3.14 | 2.79 | 3.02 | 3.63 | 4.71 | 4.94 |
+| hex 2.1M | 1 | scrambled | **33.1** | 43.9 | 234 | 239 | 270 | 129 | 143 |
+
+- **Every variant matches the reference** to at most 8e-14 relative.
+- **The CPU prefers the layouts a GPU should dislike.**
+  - Storing the padded side arrays cell-fastest (G0C) makes the gather about 2x slower on one
+    thread: a CPU thread then reads each side's data from a different cache line.
+  - `elem_faces` cell-fastest (G1C) costs about 10%.
+  - SoA geometry (G1CS) costs another 15-20%: six streams instead of two, all read through an
+    index.
+
+  On a GPU, consecutive threads handle consecutive cells, so the cell-fastest and SoA layouts are
+  the ones that coalesce. The CPU ranking says nothing about the GPU here.
+- **Morton and RCM numbering with owner-sorted faces** perform the same as the native numbering of
+  generated meshes, within 5%.
+- **8 threads are noisy.** Some 8-thread configurations varied by up to 56% across processes, so
+  1- and 4-thread results are the reliable CPU comparison.
+
 ## What the GPU must decide
 
 - **Coalescing.** On a GPU, consecutive threads (cells) read the padded side arrays with a stride
@@ -92,7 +130,5 @@ because the hex 2.1M 8-thread runs were noisy (spread up to 52%).
 - **Memory.** G0's extra 150 B/cell matters more on a GPU, where memory limits the cells per
   device.
 
-**Suggested GPU additions:**
-- a G0 variant with cell-fastest padded arrays;
-- a G1 variant with the face arrays of each cell copied into a per-cell (CSR-ordered) structure,
-  which trades G0's memory for G1's single storage.
+The cell-fastest (G0C, G1C) and SoA (G1CS) variants are now in the mini-app, and the GPU
+campaign runs them (`run_gpu_campaign.sh miniapp`).
