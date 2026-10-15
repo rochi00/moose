@@ -188,3 +188,22 @@
     and Van Leer).
   - Test: `kokkos/linearfvkernels/advection-interpolation`, one skewed-mesh advection-dominated
     problem per method (Van Leer and MUSCL with non-default parameters), against host golds.
+- **Step 8 done; phase 1 complete.** `KokkosLinearFVFunctorRobinBC`, `KokkosLinearFVOutflowBC`
+  (derived from `KokkosLinearFVExtrapolatedBC`), `KokkosLinearFVScalarSymmetryBC` and
+  `KokkosLinearFVExtrapolatedBC` mirror their host counterparts expression for expression, mapped to
+  the Kokkos value and normal-gradient relations (the normal-gradient coefficient is the negated
+  host gradient matrix contribution).
+  - The extrapolated BC's normal gradient carries the boundary value computed with the current cell
+    value on the right-hand side, as the host; it reads the cell values through a
+    `LinearFVCellValues` handle.
+  - Robin and symmetry project on the FaceInfo normal, as the host, through a new
+    `FaceDatum::faceInfoNormal()`; for a variable on the neighbor side of a block interface this
+    makes the Robin projection negative, as on the host (not covered by a test yet).
+  - Robin coefficients are properties (numbers, functions, variables, functor materials), evaluated
+    from the variable's side. A numeric `alpha` of 0 is rejected as on the host.
+  - `providesCompleteBoundaryFlux()` is not mirrored yet: only the anisotropic diffusion kernel and
+    the navier_stokes momentum flux read it, so it comes with phase 2.
+  - Test: `kokkos/linearfvbcs/framework-bcs`, advection-diffusion on a skewed mesh with Robin (with
+    a function `alpha`), outflow, symmetry and a Dirichlet or extrapolated bottom, with one-term and
+    two-term expansions, three fixed-point steps, against host golds; the assembled systems of the
+    second step match the host exactly (matrix) and to 2e-16 (right-hand side).
