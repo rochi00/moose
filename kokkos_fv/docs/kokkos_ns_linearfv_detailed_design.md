@@ -1,18 +1,20 @@
 # Kokkos Navier-Stokes Linear FV: Detailed Design
 
 **Status:** proposal, partly implemented. On the branch `rc/kokkos_moose_navier_stokes`, the
-existing Kokkos linear FV objects (which still use the per-side layout, not the face SoA of
-section 3) have:
+existing Kokkos linear FV objects have:
 
+- one thread per face over an `FVMesh` face array built from `FaceInfo` (section 3, without the
+  face ranges), with the per-face hooks of section 5 and atomic or gather assembly (4.4);
 - precomputed matrix slots;
 - the empty host loop skipped, and an error on systems that mix Kokkos and host linear FV objects
   (section 10);
 - one fence per assembly, with no device allocations per dispatch;
-- a per-side coefficient cache;
 - device PETSc types by default on GPU builds;
-- `--kokkos-threads`.
+- `--kokkos-threads`;
+- only the assembled system synchronized per assembly.
 
-See `findings_2026-10-12.md` and `findings_2026-10-14.md`. Nothing else here is implemented.
+See `findings_2026-10-12.md`, `findings_2026-10-14.md` and `phase0_implementation_plan.md`.
+Nothing else here is implemented.
 
 **Baseline:** MOOSE `next` at `410cc90c7e`. Paths are relative to the `moose/` repository root.
 
@@ -181,8 +183,11 @@ Both indices are computed from stored data; no extra array is needed.
 
 ### 3.5 Face set construction
 
-The faces are built on the host, once per mesh change, in `Mesh::update()` behind
-`setNeedsFaceData()`. This flag replaces `setNeedsElementSideGeometry()` for FV.
+The faces are built on the host, once per mesh change, by a `Moose::Kokkos::FVMesh` that the
+linear FV layer owns (decided 2026-10-14). The shared Kokkos `Mesh` and the FE objects that read it
+are unchanged. `FEProblemBase` builds the `FVMesh` in `initKokkos()` when Kokkos linear FV objects
+exist, after `setupFiniteVolumeMeshData()`, and rebuilds it after a mesh change once the `FaceInfo`
+objects are rebuilt.
 
 1. **Collect.** For each `FaceInfo` in `MooseMesh::faceInfo()`, keep the face if its elem or its
    neighbor is owned. This is the same set as the CPU `_face_info`.
@@ -215,6 +220,15 @@ The faces are built on the host, once per mesh change, in `Mesh::update()` behin
 ID of interior `FaceID`s. BC objects on internal sidesets loop over this list rather than over a
 range. Faces where the variable lives on only one side are handled through variable block
 restriction (3.6), not through this list.
+
+**As implemented (2026-10-15).** `FVMesh::update()` sorts by `(elem block, kind, neighbor block,
+elem owned, neighbor owned, elem-side boundary IDs, neighbor-side boundary IDs)`, then by owned
+cell. Splitting processor faces by which cell is owned, and interface faces by orientation, makes
+the rows a kernel writes and the side a variable lives on uniform within a range. Boundary IDs are
+kept per side, not as `FaceInfo::boundaryIDs()`: a sideset holds element sides, and the two sides
+of an interface can carry different sidesets. A face with several boundary IDs on the side where a
+variable lives is an error only for that variable, as on the CPU. Internal sidesets on faces with
+the variable on both sides are ignored, also as on the CPU, so no separate list is built.
 
 ### 3.6 Variable views over the ranges
 
@@ -251,6 +265,7 @@ The table below is for a hexahedral mesh: about 3 faces per cell, 6 sides, 7 non
 | Face SoA, required fields | about 3 x 70 = 210 | elem, neighbor, sides, area, normal, gc, dcn, inv_dn |
 | Face SoA, optional fields | up to 3 x 72 = 216 | noc, centroid, skew |
 | Cell SoA | about 6 x 4 + 6 x 8 + 8 + 8 + 24 = 112 | faces, slot, diag_slot, volume, centroid |
+| Gradient side table (6.2) | about 6 x 72 = 432 | neighbor, boundary ID, area, gc, normal, centroid per (side, cell); geometry only, shared by all variables |
 | Half-face scratch per assembled system | 6 x 3 x 8 = 144 | diag, off, rhs per half-face |
 | Cell scratch per assembled system | 16 | elemental diag and rhs |
 | COO values per system (our array) | 7 x 8 = 56 | removed if we write into PETSc's array (13.2) |
@@ -263,9 +278,9 @@ can be **one shared buffer** sized for the largest system (14.1). Matrices and v
 system.
 
 **Example.** About 9 systems (u, v, w, p, T, k, eps, plus scalars) at about 280 B per cell each in
-matrices and vectors, plus about 550 B per cell of mesh and scratch, gives about 3 KB per cell
-before AMG. A 40 GB GPU therefore holds roughly 10M cells after the pressure AMG hierarchy (2-4x
-the pressure matrix). This is consistent with the commercial codes' 8-30M cells per GPU on 40-80
+matrices and vectors, plus about 1 KB per cell of mesh, gradient side table and scratch, gives
+about 3.5 KB per cell before AMG. A 40 GB GPU therefore holds roughly 9M cells after the pressure
+AMG hierarchy (2-4x the pressure matrix). This is consistent with the commercial codes' 8-30M cells per GPU on 40-80
 GB devices.
 
 ---
@@ -317,9 +332,20 @@ class FVSystemAssembly              // one per Kokkos FV linear system; host obj
   Array<Real>       cell_diag, cell_rhs;       // [n_owned]
 
   // assembly mode
-  enum class Mode { Gather, Atomic } mode;     // R3; Gather is the default
+  enum class Mode { Atomic, Gather } mode;     // R3; Atomic is the default (4.4)
 };
 ```
+
+**As implemented (2026-10-15).** `Moose::Kokkos::FVSystemAssembly`, owned by `LinearSystem`:
+- The value array of each matrix tag is laid out as the owned rows of the Kokkos system's sparsity
+  pattern, which lists owned rows first, so the slots from `System::getMatrixSlot()` apply
+  unchanged. `MatSetPreallocationCOO` gets the owned rows only.
+- Right-hand sides are added straight into the local array of each tagged PETSc vector, which
+  `LinearSystem` zeroes before assembly; host vectors on a GPU are staged on device.
+- Before each dispatch an object gets the device arrays of its tags (up to four of each). The
+  Kokkos system no longer activates residual or matrix tags for linear FV, and only provides the
+  solution vectors.
+- The scratch is per flux kernel (4.4 gather mode), not shared per problem.
 
 ### 4.3 Assembly sequence for one linear system
 
@@ -387,10 +413,22 @@ KOKKOS_FUNCTION void FluxKernel::operator()(FacePass, ThreadID t, const Derived 
 - **PROCESSOR ranges** check `elemOwned()` and `neighborOwned()` on each thread. In the other
   range kinds these are compile-time or range-uniform, so the branches do not diverge.
 
-**Atomic mode (R3).** The same hook is called. The thread then `atomic_add`s directly into
-`values[diag_slot]`, `values[slot]` and `rhs`, skipping the scratch and the gather. This mode
-exists only for benchmarking. It is selected per system with
-`kokkos_fv_assembly_mode = gather|atomic`.
+**Atomic mode (R3), the default.** The same hook is called. The thread then `atomic_add`s
+directly into `values[diag_slot]`, `values[slot]` and `rhs`, skipping the scratch and the gather.
+The GPU campaign made this the default (2026-10-14): on an A100 the atomic face pass with fused
+terms (V2F) was 2.1x faster than today's scheme, while the gathers were slower than it (V3
+0.8-1.0x, V4 0.45-0.73x). Atomic results are not bitwise reproducible.
+
+**Gather mode, opt-in.** For bitwise-reproducible assembly. Phase 0 implements the V3 form, which
+was faster than V4 on the GPU: the face pass of each flux kernel writes per-face scratch (the four
+entries of the 2x2 face block and the two RHS values), and a cell pass over `elem_faces` sums each
+row in local side order and adds it to the tagged matrix and vector. Each entry then receives
+exactly one addition per launch, so the existing tag handling is kept. The mode is selected per
+problem with `kokkos_linear_fv_assembly = atomic|gather`.
+
+**Fusion.** The navier_stokes kernels already combine their terms in one object (for example
+`LinearWCNSFVMomentumFlux` does advection and diffusion), so one face hook per object gives the
+benefit of V2F without a composite dispatcher.
 
 ### 4.5 Elemental pass
 
@@ -504,7 +542,10 @@ public:
 - **Change:** relation arrays are indexed by the BC's face ranges. The index is
   `prefix[r] + (f - range.begin)`, a contiguous segment per range. This replaces the
   `_kokkos_element_side_ids` `std::set` lookup and also fixes the suspected one-side-per-element
-  limitation of `sideWithBoundaryID`.
+  limitation of `sideWithBoundaryID`. Implemented 2026-10-15: a BC covers the ranges where its
+  variable lives on one side, the cell there is owned, and that side carries exactly one boundary
+  ID, one of the BC's. A flux kernel stores, per boundary range, the BC index, the offset of the
+  range in the BC's arrays and the side.
 - **New flags:**
   - `static constexpr bool includes_material_multiplier`, `provides_complete_flux` and
     `needs_boundary_noc`, mirroring the CPU `LinearFVAdvectionDiffusionBC` flags.
@@ -600,17 +641,46 @@ block size `dim`: component `d` of cell `c` is entry `dim * dof(c) + d`.
 - Double buffering as on the CPU: compute every requested gradient into the "next" vectors, then
   swap pointers.
 
-**Green-Gauss** is a cell gather with no atomics. One thread per owned cell:
+**Green-Gauss** is a cell gather with no atomics. One thread per owned cell reads a padded
+per-(side, cell) side table stored **cell-fastest** (variant G0C of the mini-app):
 
 ```
 g = 0
-for s in sides(c):
-    f = faces(s, c); sign = (elem[f] == c) ? +1 : -1
-    if internal for var:  phi_f = gc*phi_E + (1-gc)*phi_N        (E,N per face orientation)
+for s in sides(c):                                    // side table entry (s, c) at s * n_cells + c
+    n = neighbor(s, c)
+    if internal for var:  phi_f = gc(s, c)*phi_c + (1 - gc(s, c))*phi_n
     else:                 phi_f = rel.coefficient * phi_c + rel.source   (value relation)
-    g += sign * phi_f * normal[f] * area[f]
+    g += phi_f * area(s, c) * normal(s, c)             // outward normal of c: no sign flip
 g /= volume[c];  if RZ: g_r -= phi_c / r_c
 ```
+
+**Layout decision: G0C (2026-10-14).** The side table holds, per (side, cell), the neighbor, the
+boundary ID, the area, the interpolation weight seen from `c`, the outward normal and the face
+centroid, with normals and centroids as `Real3`. Each internal face is stored twice, once per
+cell.
+
+| Variant (hex 2.1M, A100, ms per gradient) | native | Morton/owner | RCM/owner | scrambled |
+|---|---|---|---|---|
+| G0: side table, side-fastest (today's Kokkos mesh order) | 1.27 | 1.47 | 1.15 | 2.25 |
+| **G0C: side table, cell-fastest** | **0.56** | **0.55** | **0.56** | **0.76** |
+| G1C: face arrays through cell-fastest `elem_faces` | 0.48 | 0.51 | 0.55 | 6.02 |
+| G1CS: G1C with separate x, y, z arrays | 0.49 | 0.51 | 0.56 | 7.85 |
+
+- **Why G0C over G1C.** G1C is 10-15% faster on well-numbered meshes but 8x slower on the
+  scrambled one, because it reads the face data through an index. G0C stays coalesced whatever
+  the numbering, so gradients need no renumbering pass and no check of the mesh ordering.
+- **Cost.** About 15% more time than G1C on good numberings, and about 432 against 280 B/cell
+  (hex) of input data. The side table is in addition to the face arrays of the assembly (3.4), so
+  it counts against cells per GPU (P12).
+- **Cell-fastest is required.** With the side-fastest order of today's Kokkos mesh, consecutive
+  threads read with a stride of the side count: G0 is 2.3x slower than G0C. The CPU prefers
+  the opposite order (G0 about 2x faster than G0C on one thread), so the layout is chosen for the
+  GPU.
+- **Where the table lives.** The per-side arrays of the Kokkos mesh (`_elem_neighbor`,
+  `_side_area`, `_side_normal`, ...) are side-fastest and are reached through `KokkosDatum`,
+  which FE objects share. Transposing them changes shared code. The linear FV layer therefore
+  builds its own cell-fastest side table at mesh setup, and rebuilds it when the mesh changes.
+- Gradients are deterministic: each cell sums its sides in a fixed order.
 
 - The Venkatakrishnan limiter is a second cell pass over the same face list.
 - Ghost gradients come from the block-vector ghost update. **They are never computed locally on
@@ -1067,15 +1137,15 @@ the last column. CPU results to date are in `findings_2026-10-14.md` and
 | Q4 | Are ghost updates of libMesh's ghosted vectors with Kokkos vector types done on the device? Decides between PETSc vectors and the custom exchange (6.2). | Open | `q4` (`-log_view` copy counts on 2-4 ranks) |
 | Q7 | Size of Kokkos linear FV functors, and the CUDA launch path (5.7) | **Answered.** Dispatched objects are 4.8-7.5 KB (advection 4824 B, BCs 5408 B, diffusion 6440 B, source 7536 B). Kokkos CUDA passes functors under 512 B as kernel arguments and stages 512 B-32 KB through constant memory, so every linear FV launch takes the constant-memory path. Its cost is Q14. | (Q14) |
 | Q8 | Does PETSc's Kokkos backend run on Kokkos's default execution space instance? If so, ordering does not need the fence before `MatSetValuesCOO`. | Open on GPUs. Trivially yes on OpenMP. | `q8` (`tools/petsc_kokkos_probe.cpp`) |
-| Q9 | Is `MatSetValuesCOO` on AIJKOKKOS cheap for owned-row, sorted, duplicate-free COO lists? | Open | `overhead` (`kokkos_mat_set_values` section), `q4` (`MatSetValuesCOO` row) |
-| Q11 | Gradient layout: padded per-(side, cell) side data (G0, G0C) or the face array through `elem_faces` (G1, G1C, G1CS); gather or atomics (G2, G3) | CPU: gathers beat atomics by 1.5-1.8x and are deterministic; G0 beats G1 by 1.0-1.4x at 432 against 280 B/cell; G1 needs good numbering | `miniapp` (gradient sweep) |
-| Q12 | Face normals and centroids as `R3` (AoS) or separate x, y, z arrays (SoA); per-cell tables side- or cell-fastest | CPU prefers side-fastest and AoS: G0C about 2x slower than G0 on 1 thread, G1C about 10% slower than G1, G1CS a further 15-20% slower. Coalescing on a GPU favors the opposite, so this stays open. | `miniapp` (G1 vs G1C vs G1CS, G0 vs G0C) |
+| Q9 | Is `MatSetValuesCOO` on AIJKOKKOS cheap for owned-row, sorted, duplicate-free COO lists? | Open | `overhead` (`kokkos_upload` section), `q4` (`MatSetValuesCOO` row) |
+| Q11 | Gradient layout: padded per-(side, cell) side data (G0, G0C) or the face array through `elem_faces` (G1, G1C, G1CS); gather or atomics (G2, G3) | **Decided: G0C, a gather** (6.2). A100, hex 2.1M: G0C 0.55-0.56 ms on good numberings and 0.76 ms scrambled; G1C 0.48-0.55 ms but 6.02 ms scrambled; G0 1.15-2.25 ms. The atomic variants G2 and G3 are slower and not reproducible. CPU: gathers beat atomics by 1.5-1.8x. | `miniapp` (gradient sweep) |
+| Q12 | Face normals and centroids as `R3` (AoS) or separate x, y, z arrays (SoA); per-cell tables side- or cell-fastest | **Answered: `Real3`, cell-fastest.** On the A100, cell-fastest makes the side table 2.3x faster (G0C against G0); separate x, y, z arrays give nothing on good numberings and are slower scrambled (G1CS 7.85 against G1C 6.02 ms). The CPU prefers side-fastest. | `miniapp` (G1 vs G1C vs G1CS, G0 vs G0C) |
 | Q13 | Fusing the face passes of all flux kernels of a variable (13.4) | CPU: the fused pass (V2F) is 1.5-1.65x faster than V2 at 1.5-2.1M cells (1 and 8 threads, native and RCM ordering), with identical results to 7e-16 | `miniapp` (layout sweep) |
 | Q14 | Launch cost, and the cost of the constant-memory launch path for 6 KB functors | CPU (OpenMP): about 9 us per launch; the 6 KB functor adds about 1 us | `miniapp` (`--launch-bench`) |
 | Q15 | Cost of the parsed-function interpreter on device (divergence, registers) | CPU: replacing the parsed diffusion coefficient with a constant cuts assembly by about 30% at 4k cells | `coefficients` |
 | Q16 | Linear solvers on device: CG with Jacobi, BoomerAMG or GAMG with reuse for Poisson; GMRES, BiCGStab or pipelined BiCGStab for advection-diffusion (8.4) | Earlier GPU run: BiCGStab with Jacobi 1.7x faster than GMRES(30) | `solvers` |
 | Q17 | Ranks per GPU and multi-GPU scaling, including halo cost (section 9) | Open | `ranks` |
-| Q18 | Cell numbering and face order on the GPU (native, RCM or Morton with owner-sorted faces, scrambled) | CPU: RCM with owner sorting needed for imported meshes; scrambled numbering costs G1 7-12x | `miniapp` (both sweeps) |
+| Q18 | Cell numbering and face order on the GPU (native, RCM or Morton with owner-sorted faces, scrambled) | A100: RCM and Morton beat native by at most 3% in assembly; scrambled numbering costs assembly up to 3.6x, G1C 12x and G0C 1.4x. Keep native numbering; with G0C, gradients do not need renumbering. CPU: scrambled numbering costs G1 7-12x. | `miniapp` (both sweeps) |
 | Q19 | Per-assembly host overhead after the fence and allocation changes, and the default device types | CPU: allocations per assembly 26 to 3, fences about 220 to 54. Earlier GPU run: about 2 ms per assembly before. | `overhead`, `types` |
 
 **Design decisions** (not measurements):

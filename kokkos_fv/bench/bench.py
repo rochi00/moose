@@ -64,14 +64,11 @@ SECTIONS = {
     "kokkos_total": "LinearSystem::computeKokkosLinearSystem",
     "kokkos_sync_to_device": "LinearSystem::KokkosFVSyncToDevice",
     "kokkos_bc_data": "LinearSystem::KokkosFVBoundaryData",
-    "kokkos_face_coefficients": "LinearSystem::KokkosFVFaceCoefficients",
-    "kokkos_elem_matrix": "LinearSystem::KokkosFVElementalMatrix",
-    "kokkos_flux_matrix": "LinearSystem::KokkosFVFluxMatrix",
-    "kokkos_elem_rhs": "LinearSystem::KokkosFVElementalRHS",
-    "kokkos_flux_rhs": "LinearSystem::KokkosFVFluxRHS",
+    "kokkos_elemental": "LinearSystem::KokkosFVElemental",
+    "kokkos_flux": "LinearSystem::KokkosFVFlux",
     "kokkos_wait": "LinearSystem::KokkosFVWait",
     "kokkos_sync_to_host": "LinearSystem::KokkosFVSyncToHost",
-    "kokkos_mat_set_values": "KokkosSystem::MatSetValues",
+    "kokkos_upload": "LinearSystem::KokkosFVUpload",
     "linear_solve": "LinearSystem::LinearSystem::solve",
 }
 
