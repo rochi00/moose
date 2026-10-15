@@ -1,0 +1,40 @@
+[Tests]
+  design = 'sharp_interface_dam_break_algorithm.md'
+  [static_droplet_laplace_pressure_diffuse]
+    type = CSVDiff
+    input = 'static_droplet_laplace_pressure_diffuse_interface.i'
+    csvdiff = 'static_droplet_laplace_pressure_diffuse_interface_csv.csv'
+    requirement = 'The system shall reproduce the Young-Laplace pressure jump across a static '
+                  'diffuse interface, hold the volume fraction within its physical bounds, and '
+                  'keep the parasitic velocity small, using the conservative diffuse-interface '
+                  'volume-of-fluid formulation.'
+    max_threads = 1 # see libmesh issue #3808
+  []
+  [static_droplet_laplace_pressure_sharp]
+    type = CSVDiff
+    input = 'static_droplet_laplace_pressure.i'
+    csvdiff = 'static_droplet_laplace_pressure_csv.csv'
+    requirement = 'The system shall generate a capillary pressure jump across a static interface '
+                  'initialized without a diffuse profile and without interface compression.'
+    max_threads = 1 # see libmesh issue #3808
+  []
+  [vof_advection]
+    type = CSVDiff
+    input = 'vof_advection.i'
+    csvdiff = 'vof_advection_csv.csv'
+    requirement = 'The system shall translate a volume fraction slab at the prescribed uniform '
+                  'velocity of a single-density flow, conserving its integral and advancing its '
+                  'first moment at the analytic rate.'
+    max_threads = 1 # see libmesh issue #3808
+  []
+  [hydrostatic_interface]
+    type = CSVDiff
+    input = 'hydrostatic_interface.i'
+    csvdiff = 'hydrostatic_interface_csv.csv'
+    requirement = 'The system shall hold a flat horizontal interface between two fluids at rest '
+                  'under gravity, so that the reduced-pressure coupling cancels the buoyancy '
+                  'source and the spurious velocity decays by two orders of magnitude to a small '
+                  'residual floor.'
+    max_threads = 1 # see libmesh issue #3808
+  []
+[]
