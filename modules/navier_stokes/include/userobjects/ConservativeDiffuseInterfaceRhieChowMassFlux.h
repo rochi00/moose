@@ -120,9 +120,10 @@ protected:
   Real computeFaceNormalAinv(const RealVectorValue & face_ainv,
                              const RealVectorValue & face_normal) const;
   /// Interpolate per-component momentum-system cell readers to a face vector.
-  RealVectorValue
-  interpolateMomentumVectorReadersToFace(const FaceInfo * fi,
-                                         const std::vector<PetscVectorReader> & readers) const;
+  RealVectorValue interpolateMomentumVectorReadersToFace(
+      const FaceInfo * fi,
+      const std::vector<PetscVectorReader> & readers,
+      const Moose::FV::InterpMethod interp_method = Moose::FV::InterpMethod::Average) const;
   Real pressureFaceNormalAinv(const FaceInfo * fi, const Moose::StateArg & time_arg) const;
 
   void initializeAdditionalPressureFluxStorage();

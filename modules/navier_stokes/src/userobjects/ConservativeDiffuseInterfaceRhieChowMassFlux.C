@@ -659,7 +659,9 @@ ConservativeDiffuseInterfaceRhieChowMassFlux::boundaryVolumetricFluxTarget(
 
 RealVectorValue
 ConservativeDiffuseInterfaceRhieChowMassFlux::interpolateMomentumVectorReadersToFace(
-    const FaceInfo * fi, const std::vector<PetscVectorReader> & readers) const
+    const FaceInfo * fi,
+    const std::vector<PetscVectorReader> & readers,
+    const Moose::FV::InterpMethod interp_method) const
 {
   using namespace Moose::FV;
 
@@ -678,8 +680,12 @@ ConservativeDiffuseInterfaceRhieChowMassFlux::interpolateMomentumVectorReadersTo
       const auto elem_dof = elem_info.dofIndices()[_global_momentum_system_numbers[dim_i]][0];
       const auto neighbor_dof =
           neighbor_info.dofIndices()[_global_momentum_system_numbers[dim_i]][0];
-      face_value(dim_i) =
-          linearInterpolation(readers[dim_i](elem_dof), readers[dim_i](neighbor_dof), *fi, true);
+      interpolate(interp_method,
+                  face_value(dim_i),
+                  readers[dim_i](elem_dof),
+                  readers[dim_i](neighbor_dof),
+                  *fi,
+                  true);
     }
 
     return face_value;
@@ -1241,7 +1247,15 @@ ConservativeDiffuseInterfaceRhieChowMassFlux::buildDiffuseFaceOperatorState(
   DiffuseFaceOperatorState state;
   state.face_normal = fi->normal();
   state.face_rho = interpolateFaceDensity(fi, time_arg);
-  state.face_raw_ainv = interpolateMomentumVectorReadersToFace(fi, raw_ainv_readers);
+  // The pressure equation's diffusion coefficient and the explicit face forces scaled by it must
+  // use the same face value, or their equilibrium cancellation breaks, so one interpolation method
+  // serves both. 1/A scales as dt/rho, so it jumps with the density across the interface.
+  // Averaging is the default even though harmonic weighting is the usual choice for a diffusion
+  // coefficient: this face value also multiplies the explicit face forces and divides the velocity
+  // writeback, and the gas-side bias of a harmonic mean unbalances those three uses against each
+  // other. A harmonic hydrostatic interface diverges on the first step.
+  state.face_raw_ainv = interpolateMomentumVectorReadersToFace(
+      fi, raw_ainv_readers, _pressure_diffusion_interp_method);
   state.normal_raw_ainv = computeFaceNormalAinv(state.face_raw_ainv, state.face_normal);
   return state;
 }
