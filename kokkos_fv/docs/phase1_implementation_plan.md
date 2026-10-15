@@ -112,6 +112,74 @@
   - Tests: `kokkos/fvgradientmethods/venkatakrishnan` (limited gradients against a host gold; they
     differ from the unlimited ones); the MUSCL case of `advection-interpolation` now limits on the
     device and fails if the limiter is dropped.
+- **Step 7 done.**
+  - Survey (2026-10-15): Kokkos MOOSE has no reusable per-cell property storage for FV. Kokkos FE
+    materials store values per quadrature point (or per element/subdomain with `constant_on`),
+    owned elements only, computed inside the FE assembly loop; Kokkos functions are usable on GPU
+    only through their concrete type. So linear FV gets its own property arrays.
+  - `Moose::Kokkos::LinearFVPropertyInterface` (base of the Kokkos linear FV kernels and BCs):
+    `requestLinearFVProperty(param, handle, use)` takes a `MooseFunctorName` that is a number, a
+    `KokkosConstantFunction` or a `KokkosParsedFunction`. Constants live in the handle; functions
+    fill device arrays over all owned and ghost cells and over the object's own faces, only when
+    the time changes, before the object's dispatches. The device handle `LinearFVProperty` reads
+    `cell(elem)` and `face(face)`.
+  - Host evaluation points mirrored: cells at `ElemInfo::centroid()` (the vertex average, which is
+    also `ElemArg::getPoint()`); faces at the face centroid, moved 1e-8 along the normal into the
+    variable's cell on block-interface faces when the host uses `singleSidedFaceArg()` (diffusion
+    coefficient, Neumann flux), not when it uses `functorFaceArg()` of a function (Dirichlet value).
+    `coeff_interp_method` (`FVGeometricAverage`, `FVHarmonicAverage`) interpolates the cell values
+    to the internal faces with the host formulas.
+  - Converted: `KokkosLinearFVDiffusion` (`diffusion_coeff`, new `coeff_interp_method`),
+    `KokkosLinearFVSource` (`source_density`, `scaling_factor`, default 1 as on the host),
+    `KokkosLinearFVFunctorDirichletBC` (`functor`), `KokkosLinearFVFunctorNeumannBC` (`functor`,
+    `diffusion_coeff` now default 1). The BC values are thus computed once per time, a first part
+    of the static BC memoization. `KokkosLinearFVTimeDerivative` keeps a constant `factor`: a
+    functor factor needs old states of the property (phase 3, with the density).
+  - Found and fixed on the way: the boundary condition of a variable at a block interface is now
+    selected from the boundary IDs of the variable's side, or else of the other side
+    (`FVMesh::getFaceRangeVariableBoundaryIDs()`). The host takes the union of both sides and
+    requires at most one ID, so a single interface sideset applies to the variables on both sides;
+    Kokkos previously ignored it on the side without the sideset.
+  - Test: `kokkos/linearfvkernels/properties`: numbers, a constant and parsed functions, harmonic
+    and average interpolation, two block-restricted variables with a shared interface sideset and
+    discontinuous interface functions that distinguish the sided and unsided evaluation, on a
+    skewed mesh, against a host gold.
+  - **Variable-based properties (decided 2026-10-15: additive parser change, exact host semantics,
+    syntax mirroring `ParsedFunctorMaterial`).**
+    - Shared Kokkos parser (`KokkosFunctionParser.h`, also used by Kokkos FE): a new `ARGUMENT`
+      variable kind (`RPNBuilder::associateArgument()`) whose values the caller passes to
+      `RPNEvaluator::eval()` through a new trailing `arguments` pointer, null by default. Existing
+      call sites and results are unchanged (Kokkos FE function, material and parsed tests pass).
+    - `KokkosParsedFunctorMaterial` (`[FunctorMaterials]`): the parameters of
+      `ParsedFunctorMaterial` (`expression`, `functor_names`, `functor_symbols`, `property_name`),
+      functors that are linear FV variables (solver or auxiliary) or numbers, `x y z t`, and `pi`,
+      `e` with the six decimals the host passes. It defines no host functor.
+    - Property parameters also accept a linear FV variable or a `KokkosParsedFunctorMaterial`
+      `property_name`, resolved in `initialSetup()` (functor materials may be added after the
+      kernels). Such properties are refilled before every assembly.
+    - Host semantics mirrored (found by bisecting host/Kokkos differences): a functor material is
+      evaluated on cells with the variables' cell values; on unsided internal and block-interface
+      faces the host (`PiecewiseByBlockLambdaFunctor`) interpolates its cell values; on sided faces
+      it evaluates the expression with the variables' face values, which are their linear
+      interpolation, their boundary condition's boundary value, or their cell value
+      (`MooseLinearVariableFV::evaluate()`). The boundary values come from the variable's Kokkos
+      boundary conditions, recomputed before the fill with nested gradient acquisition
+      (`acquireGradients()` now nests), followed by one fence. A property that needs itself through
+      a boundary condition is an error. Variables with host boundary conditions are rejected.
+    - The Green-Gauss computation now synchronizes the systems its boundary conditions read.
+    - Ghosting: auxiliary linear FV variables had no ghost entries (empty send list), so their
+      values on the ghost cells next to processor boundaries were unavailable to Kokkos. The Kokkos
+      linear FV objects now declare a one-layer algebraic `ElementSideNeighborLayers` relationship
+      manager, which MOOSE applies to every system. Note: the host reads such ghost values through
+      a ghosted-vector lookup that is only checked in debug builds; its parallel results matched
+      the serial ones here, but this deserves a look in a debug build.
+    - Tests: `kokkos/linearfvkernels/properties/variables` (a functor material of a variable of
+      another system with Dirichlet and Neumann BCs, an auxiliary variable, a number, `x` and `t`;
+      and a variable directly) and `.../functor_material` (a functor material evaluated without a
+      side on a block interface), against host golds, serial, `-p 3` and distributed mesh.
+    - Not supported yet: Kokkos functions among `functor_names` (use `x y z t` in the expression),
+      functor materials of functor materials, several functor materials defining one property on
+      different blocks, old states of properties (needed by a functor time derivative factor).
   - "Per-face flux": `LinearFVAdvection` has a constant velocity only, so per-face flux storage
     comes with the Rhie-Chow mass flux in phase 2.
   - `bench.py parity --interp upwind average minmod vanleer muscl`: 240/240 match, matrices

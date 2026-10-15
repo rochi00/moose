@@ -738,6 +738,16 @@ and smooth properties. For *functor materials whose face evaluation is not an in
 as the mixture material, which evaluates its component properties at the face, results can differ
 from the CPU at round-off to truncation level. Note this when doing parity testing.
 
+**As implemented (phase 1 step 7, 2026-10-15).** Properties match the CPU exactly rather than to
+truncation level, because the CPU semantics turned out to be specific: a functor material is
+interpolated from its cell values only on faces evaluated without a side (internal faces through
+`makeCDFace()`), and evaluated with the face values of its inputs on faces evaluated from one side
+(boundary faces through `singleSidedFaceArg()`); functions are evaluated at face centroids, with a
+1e-8 offset on one-sided block-interface faces. `Moose::Kokkos::LinearFVPropertyInterface` mirrors
+these rules; expressions of variables use `KokkosParsedFunctorMaterial`. Constant properties are
+scalars, function properties are refilled when the time changes, variable-based ones before every
+assembly. See `phase1_implementation_plan.md`, step 7.
+
 ---
 
 ## 7. Navier-Stokes objects

@@ -119,9 +119,9 @@ These were found by `parity`.
 - **Gradient method.** The default Green-Gauss method computes the gradients of variables whose
   linear FV objects are all Kokkos objects with Kokkos, as only that sees the Kokkos boundary
   conditions, which the Neumann tangential term depends on.
-- **`KokkosLinearFVSource` default.** `scaling_factor` defaults to `1`, which builds a
-  `KokkosConstantFunction`. The kernel rejects it because it requires a `KokkosParsedFunction`, so
-  the input sets `scaling_factor` explicitly.
+- **Properties.** Since phase 1 step 7 the Kokkos objects accept numbers and
+  `KokkosConstantFunction` objects for their properties, so `scaling_factor` no longer has to be
+  set explicitly; the inputs still set it, as the CPU inputs do.
 
 ## Layout mini-app
 
