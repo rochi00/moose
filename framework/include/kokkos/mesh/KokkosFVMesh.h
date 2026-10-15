@@ -107,6 +107,13 @@ public:
   unsigned int getMaxSidesPerElem() const { return _max_sides; }
 
   /**
+   * Build the per-side data of the owned cells (getSideNeighbor() and the following), if not built
+   * yet. It is kept up to date by update() once built. Built on request, as only cell gradient
+   * computations need it.
+   */
+  void requestSideData() const;
+
+  /**
    * Get the contiguous ID of a face
    * @param fi The face, which must have an owned cell on at least one side
    * @returns The contiguous face ID
@@ -232,6 +239,34 @@ public:
   {
     return _elem_faces(elem, side);
   }
+
+  /**
+   * Per-side data of the owned cells, stored cell-fastest so that consecutive threads of a cell loop
+   * read consecutive entries (requestSideData() must have been called)
+   * @param elem The contiguous ID of an owned cell
+   * @param side The side index
+   */
+  ///@{
+  /// The cell across the side, or libMesh::DofObject::invalid_id on a mesh boundary or past the
+  /// cell's sides
+  KOKKOS_FUNCTION ContiguousElementID getSideNeighbor(const ContiguousElementID elem,
+                                                      const unsigned int side) const
+  {
+    return _side_neighbor(elem, side);
+  }
+  /// The weight of the cell's own value in the linear interpolation to the face (FaceInfo::gC()
+  /// seen from the cell); 1 on a mesh boundary
+  KOKKOS_FUNCTION Real getSideWeight(const ContiguousElementID elem, const unsigned int side) const
+  {
+    return _side_weight(elem, side);
+  }
+  /// The face normal pointing out of the cell, times the coordinate-weighted face area
+  KOKKOS_FUNCTION Real3 getSideAreaNormal(const ContiguousElementID elem,
+                                          const unsigned int side) const
+  {
+    return _side_area_normal(elem, side);
+  }
+  ///@}
 #endif
 
 private:
@@ -285,6 +320,18 @@ private:
 
   /// Faces around each owned cell, indexed by (cell, side) with the cell index fastest
   Array2D<ContiguousFaceID> _elem_faces;
+
+  /// Build the per-side data
+  void buildSideData() const;
+
+  /// Whether the per-side data was requested
+  mutable bool _needs_side_data = false;
+  /// Per-side data of the owned cells, indexed by (cell, side) with the cell index fastest
+  ///@{
+  mutable Array2D<ContiguousElementID> _side_neighbor;
+  mutable Array2D<Real> _side_weight;
+  mutable Array2D<Real3> _side_area_normal;
+  ///@}
 };
 
 /**

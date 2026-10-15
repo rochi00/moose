@@ -1,0 +1,35 @@
+[Tests]
+  design = 'KokkosFVGreenGaussGradient.md KokkosLinearFVDiffusion.md'
+  issues = '#30655'
+  [green_gauss]
+    type = Exodiff
+    input = green-gauss.i
+    exodiff = green-gauss_out.e
+    requirement = 'The system shall compute the Green-Gauss cell gradients of linear finite volume variables with Kokkos, identical to the host gradient method, using the Kokkos boundary conditions for the boundary face values, and apply the nonorthogonal correction of the Kokkos diffusion kernel on skewed meshes as the host kernel.'
+    capabilities = 'kokkos'
+    compute_devices = 'cpu cuda xpu'
+    max_threads = 1 # linear FV doesn't support threading
+  []
+  [host_method_name]
+    type = Exodiff
+    input = green-gauss.i
+    exodiff = green-gauss_out.e
+    cli_args = 'FVGradientMethods/gg/type=FVGreenGaussGradient'
+    prereq = green_gauss
+    requirement = 'The system shall compute the Green-Gauss cell gradients of linear finite volume variables whose kernels and boundary conditions are all Kokkos objects with Kokkos, also when the host Green-Gauss gradient method is selected.'
+    capabilities = 'kokkos'
+    compute_devices = 'cpu cuda xpu'
+    max_threads = 1 # linear FV doesn't support threading
+  []
+  [venkatakrishnan]
+    type = Exodiff
+    input = green-gauss.i
+    exodiff = green-gauss_venkatakrishnan.e
+    cli_args = 'FVGradientMethods/gg/limiter=venkatakrishnan '
+               'Outputs/file_base=green-gauss_venkatakrishnan'
+    requirement = 'The system shall apply the Venkatakrishnan limiter to Green-Gauss cell gradients computed with Kokkos on the device, identical to the host limiter.'
+    capabilities = 'kokkos'
+    compute_devices = 'cpu cuda xpu'
+    max_threads = 1 # linear FV doesn't support threading
+  []
+[]

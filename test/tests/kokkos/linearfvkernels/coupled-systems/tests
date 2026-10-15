@@ -1,0 +1,13 @@
+[Tests]
+  issues = '#30655'
+  design = 'LinearFVKernels/index.md'
+  [coupled_systems]
+    type = Exodiff
+    input = coupled-systems.i
+    exodiff = coupled-systems_out.e
+    requirement = 'The system shall let Kokkos linear finite volume kernels read the cell values of a variable of another linear system, and reproduce the host linear finite volume solution.'
+    capabilities = 'kokkos'
+    compute_devices = 'cpu cuda xpu'
+    max_threads = 1 # linear FV doesn't support threading
+  []
+[]

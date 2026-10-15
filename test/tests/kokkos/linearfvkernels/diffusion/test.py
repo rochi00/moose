@@ -132,7 +132,10 @@ class TestKokkosLinearFVDiffusion1DRSpherical(unittest.TestCase):
         df1 = run_spatial(
             "kokkos_diffusion-1d-radial.i",
             6,
-            "Mesh/coord_type=RSPHERICAL Functions/source_func_kokkos/expression=6",
+            # Green-Gauss gradients do not support spherical coordinates, and the non-orthogonal
+            # correction that needs them vanishes on this one-dimensional mesh
+            "Mesh/coord_type=RSPHERICAL Functions/source_func_kokkos/expression=6 "
+            "LinearFVKernels/diffusion/use_nonorthogonal_correction=false",
             file_base="kokkos_diffusion-1d-rspherical_csv",
         )
 

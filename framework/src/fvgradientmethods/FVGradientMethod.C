@@ -65,6 +65,17 @@ FVGradientMethod::computeGradient(SystemBase & system,
   if (_limiter_type == Moose::FV::GradientLimiterType::None)
     return;
 
+  applyLimiter(system, gradient, variable_numbers);
+
+  for (auto & vec : gradient)
+    vec->close();
+}
+
+void
+FVGradientMethod::applyLimiter(SystemBase & system,
+                               GradientContainer & gradient,
+                               const std::unordered_set<unsigned int> & variable_numbers) const
+{
   auto & fe_problem = system.feProblem();
   using ElemInfoRange = ComputeLinearFVLimitedGradientThread::ElemInfoRange;
   ElemInfoRange elem_info_range(fe_problem.mesh().ownedElemInfoBegin(),
@@ -77,9 +88,6 @@ FVGradientMethod::computeGradient(SystemBase & system,
     Threads::parallel_reduce(elem_info_range, limited_gradient_thread, system.numThreads());
   }
   fe_problem.checkExceptionAndStopSolve();
-
-  for (auto & vec : gradient)
-    vec->close();
 }
 
 void

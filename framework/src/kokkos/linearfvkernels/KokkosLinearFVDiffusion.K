@@ -16,12 +16,19 @@ KokkosLinearFVDiffusion::validParams()
 {
   InputParameters params = Moose::Kokkos::LinearFVFluxKernel::validParams();
   params.addRequiredParam<FunctionName>("diffusion_coeff", "The diffusion coefficient.");
+  params.addParam<bool>(
+      "use_nonorthogonal_correction",
+      true,
+      "If the nonorthogonal correction should be used when computing the normal gradient.");
   params.addClassDescription("Kokkos LinearFV diffusion kernel.");
   return params;
 }
 
 KokkosLinearFVDiffusion::KokkosLinearFVDiffusion(const InputParameters & parameters)
   : Moose::Kokkos::LinearFVFluxKernel(parameters),
-    _diffusion_coeff(getKokkosFunction<KokkosParsedFunction>("diffusion_coeff"))
+    _diffusion_coeff(getKokkosFunction<KokkosParsedFunction>("diffusion_coeff")),
+    _use_nonorthogonal_correction(getParam<bool>("use_nonorthogonal_correction"))
 {
+  if (_use_nonorthogonal_correction)
+    requestLinearFVCellGradient(getParam<LinearVariableName>("variable"), _gradient);
 }

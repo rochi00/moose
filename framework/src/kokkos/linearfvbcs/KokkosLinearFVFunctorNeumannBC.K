@@ -15,14 +15,18 @@ InputParameters
 KokkosLinearFVFunctorNeumannBC::validParams()
 {
   InputParameters params = Moose::Kokkos::LinearFVBoundaryCondition::validParams();
-  params.addRequiredParam<FunctionName>(
-      "functor", "The prescribed outward normal gradient functor on the boundary.");
-  params.addClassDescription("Kokkos LinearFV Neumann boundary condition.");
+  params.addRequiredParam<FunctionName>("functor",
+                                        "The outward diffusive flux functor on the boundary.");
+  params.addRequiredParam<FunctionName>("diffusion_coeff", "The diffusion coefficient.");
+  params.addClassDescription("Kokkos LinearFV Neumann boundary condition with a prescribed "
+                             "diffusive flux.");
   return params;
 }
 
 KokkosLinearFVFunctorNeumannBC::KokkosLinearFVFunctorNeumannBC(const InputParameters & parameters)
   : Moose::Kokkos::LinearFVBoundaryCondition(parameters),
-    _normal_gradient_functor(getKokkosFunction<KokkosParsedFunction>("functor"))
+    _flux_functor(getKokkosFunction<KokkosParsedFunction>("functor")),
+    _diffusion_coeff(getKokkosFunction<KokkosParsedFunction>("diffusion_coeff"))
 {
+  requestLinearFVCellGradient(getParam<LinearVariableName>("variable"), _gradient);
 }

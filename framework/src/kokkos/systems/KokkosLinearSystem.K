@@ -192,6 +192,25 @@ LinearSystem::initialSetupKokkosLinearFV()
   }
 
   _all_linear_fv_objects_kokkos = has_kokkos_objects && host_objects.empty();
+
+  // The variables with Kokkos linear FV objects only
+  auto variable_numbers = [this](const std::vector<MooseObject *> & objects)
+  {
+    std::set<unsigned int> numbers;
+    for (const auto * const object : objects)
+      numbers.insert(
+          getVariable(0, object->getParam<LinearVariableName>("variable")).number());
+    return numbers;
+  };
+  const auto kokkos_variables = variable_numbers(linearFVObjects(_fe_problem, number(), true));
+  const auto host_variables = variable_numbers(host_objects);
+  _kokkos_only_linear_fv_variables.clear();
+  std::set_difference(kokkos_variables.begin(),
+                      kokkos_variables.end(),
+                      host_variables.begin(),
+                      host_variables.end(),
+                      std::inserter(_kokkos_only_linear_fv_variables,
+                                    _kokkos_only_linear_fv_variables.begin()));
 }
 
 void
@@ -265,16 +284,29 @@ LinearSystem::computeKokkosLinearSystem(const std::set<TagID> & vector_tags,
   for (const auto & tag : _fe_problem.getVectorTags(Moose::VECTOR_TAG_SOLUTION))
     needed_solution_vector_tags.insert(tag._id);
 
-  // Kokkos linear FV kernels and boundary conditions read only their own variable, which belongs to
-  // this system, so the other Kokkos systems are not synchronized. The Kokkos system provides the
-  // solution vectors; the tagged matrices and vectors being assembled bypass it.
+  // Only the systems whose variables the objects read are synchronized. The Kokkos systems provide
+  // the solution vectors; the tagged matrices and vectors being assembled bypass them.
+  std::set<unsigned int> read_systems;
+  auto add_read_systems = [&read_systems](const auto & objects)
+  {
+    for (const auto * const object : objects)
+      read_systems.insert(object->readSystems().begin(), object->readSystems().end());
+  };
+  add_read_systems(elemental_kernels);
+  add_read_systems(flux_kernels);
+  add_read_systems(bcs);
+
   auto & kokkos_systems = _fe_problem.getKokkosSystems();
   if (!_kokkos_fv_assembly)
     _kokkos_fv_assembly = std::make_unique<Moose::Kokkos::FVSystemAssembly>(*this, our_kokkos_system);
   {
     TIME_SECTION("KokkosFVSyncToDevice", 2);
-    our_kokkos_system.setActiveSolutionTags(needed_solution_vector_tags);
-    our_kokkos_system.sync(Moose::Kokkos::MemcpyType::HOST_TO_DEVICE);
+    for (const auto sys : read_systems)
+    {
+      auto & system = _fe_problem.getKokkosSystem(sys);
+      system.setActiveSolutionTags(needed_solution_vector_tags);
+      system.sync(Moose::Kokkos::MemcpyType::HOST_TO_DEVICE);
+    }
 
     kokkos_systems.copyToDevice();
 
@@ -296,6 +328,18 @@ LinearSystem::computeKokkosLinearSystem(const std::set<TagID> & vector_tags,
   // default execution space instance, so each loop sees the results of the loops before it. On a
   // host backend the dispatches are synchronous and the sections below measure execution; on a
   // device they measure launch, and KokkosFVWait the remaining execution.
+  // Point the objects reading cell gradients at the current ones until the work has finished
+  auto for_each_object = [&](const auto & action)
+  {
+    for (auto * const bc : bcs)
+      action(*bc);
+    for (auto * const kernel : elemental_kernels)
+      action(*kernel);
+    for (auto * const kernel : flux_kernels)
+      action(*kernel);
+  };
+  for_each_object([](auto & object) { object.acquireGradients(); });
+
   {
     TIME_SECTION("KokkosFVBoundaryData", 2);
     for (auto bc : bcs)
@@ -333,16 +377,22 @@ LinearSystem::computeKokkosLinearSystem(const std::set<TagID> & vector_tags,
     // The only synchronization of the assembly: the results are read below
     ::Kokkos::fence();
   }
+  for_each_object([](auto & object) { object.releaseGradients(); });
 
   {
     TIME_SECTION("KokkosFVSyncToHost", 2);
-    our_kokkos_system.sync(Moose::Kokkos::MemcpyType::DEVICE_TO_HOST);
+    for (const auto sys : read_systems)
+      _fe_problem.getKokkosSystem(sys).sync(Moose::Kokkos::MemcpyType::DEVICE_TO_HOST);
   }
   {
     TIME_SECTION("KokkosFVUpload", 2);
     _kokkos_fv_assembly->end();
   }
 
-  our_kokkos_system.clearActiveVariables();
-  our_kokkos_system.clearActiveSolutionTags();
+  for (const auto sys : read_systems)
+  {
+    auto & system = _fe_problem.getKokkosSystem(sys);
+    system.clearActiveVariables();
+    system.clearActiveSolutionTags();
+  }
 }

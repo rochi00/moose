@@ -23,6 +23,8 @@ public:
 
   KokkosLinearFVFunctorDirichletBC(const InputParameters & parameters);
 
+  virtual bool needsBoundaryNonorthogonalCorrection() const override { return true; }
+
   template <typename Derived>
   KOKKOS_FUNCTION BoundaryRelation computeBoundaryValue(const FaceDatum & datum) const;
   template <typename Derived>
@@ -44,6 +46,6 @@ template <typename Derived>
 KOKKOS_FUNCTION KokkosLinearFVFunctorDirichletBC::BoundaryRelation
 KokkosLinearFVFunctorDirichletBC::computeBoundaryNormalGradient(const FaceDatum & datum) const
 {
-  const auto distance = datum.faceDCFMag();
+  const auto distance = datum.cellToFaceDistance();
   return {-1 / distance, _functor->value(_t, datum.faceCentroid()) / distance};
 }

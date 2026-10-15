@@ -50,13 +50,15 @@
     type = KokkosLinearFVFunctorNeumannBC
     variable = u
     boundary = 'bottom'
-    functor = neumann_bottom_gradient
+    functor = neumann_bottom_flux
+    diffusion_coeff = coeff_func_kokkos
   []
   [neumann_top]
     type = KokkosLinearFVFunctorNeumannBC
     variable = u
     boundary = 'top'
-    functor = neumann_top_gradient
+    functor = neumann_top_flux
+    diffusion_coeff = coeff_func_kokkos
   []
 []
 
@@ -81,16 +83,16 @@
     type = ParsedFunction
     expression = '(1.5-x*x)*(1.5-y*y)'
   []
-  # Outward normal gradient on bottom (n = -y): -du/dy|_{y=0} = 0
-  [neumann_bottom_gradient]
+  # Outward diffusive flux on bottom (n = -y): -D du/dy|_{y=0} = 0
+  [neumann_bottom_flux]
     type = KokkosParsedFunction
     expression = 0.0
   []
-  # Outward normal gradient on top (n = +y): du/dy|_{y=ymax}
+  # Outward diffusive flux on top (n = +y): D du/dy|_{y=ymax}
   # du/dy = (1.5-x^2)*(-2*ymax)
-  [neumann_top_gradient]
+  [neumann_top_flux]
     type = KokkosParsedFunction
-    expression = '(1.5-x*x)*(-2.0*0.5)'
+    expression = '(1.0 + 0.5*x*y)*(1.5-x*x)*(-2.0*0.5)'
   []
 []
 

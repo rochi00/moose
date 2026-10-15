@@ -74,16 +74,37 @@ public:
    */
   KOKKOS_FUNCTION Real faceDCNMag() const { return _mesh.getDCNMag(_face); }
   /**
-   * Get the distance between the centroid of elem() and the face centroid
+   * Get the linear interpolation weight of the value of elem() on an internal face, as
+   * FaceInfo::gC() seen from elem()
    */
-  KOKKOS_FUNCTION Real faceDCFMag() const
+  KOKKOS_FUNCTION Real faceGC() const
   {
-    return (_mesh.getCentroid(_face) - _mesh.getElemCentroid(elem())).norm();
+    return _flip ? 1 - _mesh.getGC(_face) : _mesh.getGC(_face);
+  }
+  /**
+   * Get the vector from the centroid of elem() to the face centroid
+   */
+  KOKKOS_FUNCTION Real3 cellToFaceVector() const
+  {
+    return _mesh.getCentroid(_face) - _mesh.getElemCentroid(elem());
+  }
+  /**
+   * Get the distance from the centroid of elem() to the face along the face normal, as
+   * LinearFVBoundaryCondition::computeCellToFaceDistance()
+   */
+  KOKKOS_FUNCTION Real cellToFaceDistance() const
+  {
+    const auto distance = cellToFaceVector() * faceNormal();
+    return distance < 0 ? -distance : distance;
   }
   /**
    * Get the centroid of elem()
    */
   KOKKOS_FUNCTION Real3 elemCentroid() const { return _mesh.getElemCentroid(elem()); }
+  /**
+   * Get the centroid of neighbor(), which must be a cell
+   */
+  KOKKOS_FUNCTION Real3 neighborCentroid() const { return _mesh.getElemCentroid(neighbor()); }
   /**
    * Get the coordinate-weighted volume of elem()
    */

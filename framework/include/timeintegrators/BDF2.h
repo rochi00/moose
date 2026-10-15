@@ -35,6 +35,9 @@ public:
   virtual Real timeDerivativeMatrixContribution(const Real factor) const override;
   virtual unsigned int numStatesRequired() const override { return 2; }
 
+  /// The weights of the current, old and older solutions after the first time step
+  const std::vector<Real> & weights() const { return _weight; }
+
 protected:
   /**
    * Helper function that actually does the math for computing the time derivative

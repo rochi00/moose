@@ -2,26 +2,24 @@
 
 !if! function=hasCapability('kokkos')
 
-This object provides prescribed outward normal gradient data for Kokkos linear finite volume
-kernels. The outward normal gradient is supplied through a [KokkosParsedFunction.md] via the
-[!param](/LinearFVBCs/KokkosLinearFVFunctorNeumannBC/functor) parameter.
+This is the Kokkos version of [LinearFVAdvectionDiffusionFunctorNeumannBC.md]. It prescribes the
+outward diffusive flux $q$, supplied through a [KokkosParsedFunction.md] via the
+[!param](/LinearFVBCs/KokkosLinearFVFunctorNeumannBC/functor) parameter. Diffusion kernels add
+$q$ times the face area to the right-hand side, without their own diffusion coefficient.
 
-The primitive relation supplied by this BC is
-
-!equation
-\nabla_n u = g
-
-where $g$ is the prescribed outward normal gradient. Kernels apply their own physics coefficients
-when consuming this relation; for example, a diffusion kernel multiplies by its diffusion
-coefficient and face area. This BC therefore prescribes a normal gradient, not a total diffusive
-flux.
-
-For kernels that need a boundary value, this object also supplies the orthogonal extrapolation
+For kernels that need a boundary value, such as advection, and for the Green-Gauss gradient, it
+extrapolates the cell value $u_C$:
 
 !equation
-u_b = u_C + g d_{Cf}
+u_b = u_C + \frac{q}{k} \left|\mathbf{d}_{Cf} \cdot \mathbf{n}\right| + \nabla u_C \cdot
+\left(\mathbf{d}_{Cf} - (\mathbf{d}_{Cf} \cdot \mathbf{n}) \mathbf{n}\right)
 
-where $u_C$ is the cell value and $d_{Cf}$ is the cell-center-to-face-center distance.
+where $k$ is the diffusion coefficient given by
+[!param](/LinearFVBCs/KokkosLinearFVFunctorNeumannBC/diffusion_coeff), $\mathbf{d}_{Cf}$ the
+vector from the cell centroid to the face centroid, and $\mathbf{n}$ the outward unit normal. The
+last term corrects for non-orthogonal meshes using the cell gradient of the variable, so the
+variable's [!param](/Variables/MooseLinearVariableFVReal/gradient_method) should be a Kokkos
+method such as [KokkosFVGreenGaussGradient.md], which uses the Kokkos boundary conditions.
 
 ## Example Syntax
 

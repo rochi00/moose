@@ -10,8 +10,9 @@ For kernels that need boundary normal gradient data, this object supplies the af
 !equation
 \nabla_n u = -\frac{1}{d_{Cf}} u_C + \frac{g}{d_{Cf}}
 
-where $u_C$ is the cell value, $g$ is the prescribed boundary value, and $d_{Cf}$ is the
-cell-center-to-face-center distance. Kernels apply their own physics coefficients when consuming
+where $u_C$ is the cell value, $g$ is the prescribed boundary value, and $d_{Cf}$ is the distance
+from the cell center to the face along the face normal, $|\mathbf{d}_{Cf} \cdot \mathbf{n}|$, as in
+[LinearFVAdvectionDiffusionFunctorDirichletBC.md]. Kernels apply their own physics coefficients when consuming
 this relation.
 
 Currently, the only accepted functor type is [KokkosParsedFunction.md], as we are waiting on

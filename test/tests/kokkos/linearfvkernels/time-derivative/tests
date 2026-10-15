@@ -1,0 +1,27 @@
+[Tests]
+  design = 'KokkosLinearFVTimeDerivative.md'
+  issues = '#30655'
+  [time_derivative]
+    requirement = 'The system shall reproduce the host linear finite volume time derivative with a constant multiplier using Kokkos'
+    [implicit_euler]
+      type = Exodiff
+      input = time-derivative.i
+      cli_args = 'Executioner/scheme=implicit-euler Outputs/file_base=time-derivative_implicit-euler'
+      exodiff = time-derivative_implicit-euler.e
+      detail = 'with the implicit Euler time integrator,'
+      capabilities = 'kokkos'
+      compute_devices = 'cpu cuda xpu'
+      max_threads = 1 # linear FV doesn't support threading
+    []
+    [bdf2]
+      type = Exodiff
+      input = time-derivative.i
+      cli_args = 'Executioner/scheme=bdf2 Outputs/file_base=time-derivative_bdf2'
+      exodiff = time-derivative_bdf2.e
+      detail = 'and with the BDF2 time integrator.'
+      capabilities = 'kokkos'
+      compute_devices = 'cpu cuda xpu'
+      max_threads = 1 # linear FV doesn't support threading
+    []
+  []
+[]

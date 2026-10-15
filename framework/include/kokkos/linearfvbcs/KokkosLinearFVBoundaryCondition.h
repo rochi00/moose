@@ -11,6 +11,7 @@
 
 #include "KokkosDispatcher.h"
 #include "KokkosFVDatum.h"
+#include "KokkosLinearFVVariableInterface.h"
 #include "KokkosMesh.h"
 #include "KokkosSystem.h"
 #include "KokkosVariable.h"
@@ -52,7 +53,8 @@ class LinearFVBoundaryCondition : public MooseObject,
                                   public BoundaryRestrictableRequired,
                                   public MeshHolder,
                                   public FVMeshHolder,
-                                  public SystemHolder
+                                  public SystemHolder,
+                                  public LinearFVVariableInterface
 {
 public:
   static InputParameters validParams();
@@ -125,6 +127,21 @@ public:
    * @returns The index, or nothing if the range is not one of this boundary condition's
    */
   std::optional<MOOSE_KOKKOS_INDEX_TYPE> faceRangeOffset(const unsigned int range) const;
+
+  /**
+   * Whether the normal gradient relation of this boundary condition is a diffusive flux, which
+   * already includes the diffusion coefficient, rather than a normal gradient, as
+   * LinearFVAdvectionDiffusionBC::includesMaterialPropertyMultiplier()
+   */
+  virtual bool includesMaterialPropertyMultiplier() const { return false; }
+
+  /**
+   * Whether a diffusion kernel with the non-orthogonal correction adds the correction on the
+   * boundary faces of this boundary condition, as
+   * LinearFVAdvectionDiffusionBC::needsBoundaryNonorthogonalCorrection(). Boundary conditions
+   * whose boundary value is computed rather than prescribed through the normal gradient need it.
+   */
+  virtual bool needsBoundaryNonorthogonalCorrection() const { return false; }
 
   /// Whether this boundary condition overrides the boundary value relation hook
   bool hasBoundaryValue() const;

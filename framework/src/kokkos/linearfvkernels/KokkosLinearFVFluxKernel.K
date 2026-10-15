@@ -37,6 +37,8 @@ LinearFVFluxKernel::LinearFVFluxKernel(const InputParameters & parameters)
 LinearFVFluxKernel::LinearFVFluxKernel(const LinearFVFluxKernel & object)
   : LinearFVKernel(object),
     _bc_data(object._bc_data),
+    _bc_includes_material_property_multiplier(object._bc_includes_material_property_multiplier),
+    _bc_needs_nonorthogonal_correction(object._bc_needs_nonorthogonal_correction),
     _internal_ranges(object._internal_ranges),
     _internal_faces(object._internal_faces),
     _boundary_ranges(object._boundary_ranges),
@@ -196,9 +198,18 @@ LinearFVFluxKernel::initialSetup()
   _boundary_diag_slots = boundary_diag_slots;
 
   _bc_data.create(libMesh::cast_int<MOOSE_KOKKOS_INDEX_TYPE>(bcs.size()));
+  _bc_includes_material_property_multiplier.create(
+      libMesh::cast_int<MOOSE_KOKKOS_INDEX_TYPE>(bcs.size()));
+  _bc_needs_nonorthogonal_correction.create(libMesh::cast_int<MOOSE_KOKKOS_INDEX_TYPE>(bcs.size()));
   for (const auto i : index_range(bcs))
+  {
     _bc_data[i] = bcs[i]->boundaryData();
+    _bc_includes_material_property_multiplier[i] = bcs[i]->includesMaterialPropertyMultiplier();
+    _bc_needs_nonorthogonal_correction[i] = bcs[i]->needsBoundaryNonorthogonalCorrection();
+  }
   _bc_data.copyToDevice();
+  _bc_includes_material_property_multiplier.copyToDevice();
+  _bc_needs_nonorthogonal_correction.copyToDevice();
 
   _gather = _fe_problem.getParam<MooseEnum>("kokkos_linear_fv_assembly") == "gather";
   if (_gather)

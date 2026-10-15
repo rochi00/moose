@@ -17,11 +17,18 @@
   []
 []
 
+[FVInterpolationMethods]
+  [upwind]
+    type = FVAdvectedUpwind
+  []
+[]
+
 [LinearFVKernels]
   [advection]
     type = KokkosLinearFVAdvection
     variable = u
     velocity = '0.5 0 0'
+    advected_interp_method_name = upwind
   []
   [diffusion]
     type = KokkosLinearFVDiffusion
@@ -48,6 +55,7 @@
     variable = u
     boundary = right
     functor = zero_fn
+    diffusion_coeff = unit_fn
   []
 []
 

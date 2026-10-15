@@ -1,0 +1,57 @@
+[Tests]
+  design = 'KokkosLinearFVAdvection.md'
+  issues = '#30655'
+  [interpolation]
+    requirement = 'The system shall compute the advected face values of the Kokkos linear finite volume advection kernel on skewed meshes with the same interpolation methods as the host kernel, using'
+    [upwind]
+      type = Exodiff
+      input = advection-interpolation.i
+      cli_args = 'interp=upwind'
+      exodiff = advection-interpolation_upwind.e
+      detail = 'upwind interpolation,'
+      capabilities = 'kokkos'
+      compute_devices = 'cpu cuda xpu'
+      max_threads = 1 # linear FV doesn't support threading
+    []
+    [average]
+      type = Exodiff
+      input = advection-interpolation.i
+      cli_args = 'interp=average'
+      exodiff = advection-interpolation_average.e
+      detail = 'linear interpolation with geometric weights,'
+      capabilities = 'kokkos'
+      compute_devices = 'cpu cuda xpu'
+      max_threads = 1 # linear FV doesn't support threading
+    []
+    [minmod]
+      type = Exodiff
+      input = advection-interpolation.i
+      cli_args = 'interp=minmod'
+      exodiff = advection-interpolation_minmod.e
+      detail = 'Minmod limited weights,'
+      capabilities = 'kokkos'
+      compute_devices = 'cpu cuda xpu'
+      max_threads = 1 # linear FV doesn't support threading
+    []
+    [vanleer]
+      type = Exodiff
+      input = advection-interpolation.i
+      cli_args = 'interp=vanleer'
+      exodiff = advection-interpolation_vanleer.e
+      detail = 'Van Leer limited weights without the limit to linear interpolation and with a blending factor, and'
+      capabilities = 'kokkos'
+      compute_devices = 'cpu cuda xpu'
+      max_threads = 1 # linear FV doesn't support threading
+    []
+    [muscl]
+      type = Exodiff
+      input = advection-interpolation.i
+      cli_args = 'interp=muscl'
+      exodiff = advection-interpolation_muscl.e
+      detail = 'MUSCL reconstruction with limited gradients as a deferred correction.'
+      capabilities = 'kokkos'
+      compute_devices = 'cpu cuda xpu'
+      max_threads = 1 # linear FV doesn't support threading
+    []
+  []
+[]

@@ -85,7 +85,8 @@
     type = KokkosLinearFVFunctorNeumannBC
     variable = u
     boundary = left_internal
-    functor = left_internal_gradient
+    functor = left_internal_flux
+    diffusion_coeff = coeff_func_kokkos
   []
   [dirichlet_right]
     type = KokkosLinearFVFunctorDirichletBC
@@ -97,7 +98,8 @@
     type = KokkosLinearFVFunctorNeumannBC
     variable = v
     boundary = right_internal
-    functor = right_internal_gradient
+    functor = right_internal_flux
+    diffusion_coeff = coeff_func_kokkos
   []
 []
 
@@ -122,13 +124,14 @@
     type = ParsedFunction
     expression = '1.5 - x*x'
   []
-  [left_internal_gradient]
+  # Outward diffusive fluxes D du/dn at x = 0.5, with du/dx = -2x = -1
+  [left_internal_flux]
     type = KokkosParsedFunction
-    expression = '-1.0'
+    expression = '-(1.0 + 0.5*x*y)'
   []
-  [right_internal_gradient]
+  [right_internal_flux]
     type = KokkosParsedFunction
-    expression = '1.0'
+    expression = '1.0 + 0.5*x*y'
   []
 []
 

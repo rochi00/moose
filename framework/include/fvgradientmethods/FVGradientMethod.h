@@ -70,6 +70,19 @@ public:
    */
   virtual void resolveGradientMethodDependencies(FEProblemBase & fe_problem);
 
+protected:
+  /**
+   * Apply the selected limiter to the pre-limiter gradients of the owned cells. Called by
+   * computeGradient() when a limiter is selected; the ghost entries are updated afterwards.
+   *
+   * @param system System that owns the variables and gradient storage.
+   * @param gradient Component vectors holding the pre-limiter gradients, limited in place.
+   * @param variable_numbers Variable numbers whose gradients should be limited.
+   */
+  virtual void applyLimiter(SystemBase & system,
+                            GradientContainer & gradient,
+                            const std::unordered_set<unsigned int> & variable_numbers) const;
+
 private:
   /**
    * Compute the method-specific gradient before this base class applies any limiter.

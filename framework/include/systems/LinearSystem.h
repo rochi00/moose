@@ -93,6 +93,17 @@ public:
    * Must be called before the PETSc options are inserted for the first solve.
    */
   void selectKokkosPetscTypes();
+
+  /**
+   * Whether the linear finite volume kernels and boundary conditions of a variable are all Kokkos
+   * objects (and there is at least one), known after the initial setup. Such a variable's boundary
+   * conditions are visible to Kokkos computations only, for example its Green-Gauss gradient.
+   * @param variable_number The variable number in this system
+   */
+  bool hasOnlyKokkosLinearFVObjects(const unsigned int variable_number) const
+  {
+    return _kokkos_only_linear_fv_variables.count(variable_number);
+  }
 #endif
 
   // Overriding these to make sure the linear systems don't do anything during
@@ -212,6 +223,9 @@ protected:
   /// The tagged matrices and vectors the Kokkos linear FV objects assemble into, created at the
   /// first Kokkos assembly
   std::unique_ptr<Moose::Kokkos::FVSystemAssembly> _kokkos_fv_assembly;
+
+  /// Variables whose linear FV kernels and boundary conditions are all Kokkos objects
+  std::set<unsigned int> _kokkos_only_linear_fv_variables;
 #endif
 
   /// Whether every linear FV kernel and boundary condition of this system is a Kokkos object, in

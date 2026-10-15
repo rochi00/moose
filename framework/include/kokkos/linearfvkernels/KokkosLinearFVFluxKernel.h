@@ -145,9 +145,27 @@ protected:
   /// Boundary normal gradient source for this boundary face
   KOKKOS_FUNCTION Real boundaryNormalGradientSource(
       const int bc_index, const MOOSE_KOKKOS_INDEX_TYPE bc_face_index) const;
+  /// Whether the normal gradient relation of a boundary condition is a diffusive flux, see
+  /// LinearFVBoundaryCondition::includesMaterialPropertyMultiplier()
+  KOKKOS_FUNCTION bool boundaryIncludesMaterialPropertyMultiplier(const int bc_index) const
+  {
+    return _bc_includes_material_property_multiplier[bc_index];
+  }
+  /// Whether a boundary condition needs the non-orthogonal correction of a diffusion kernel, see
+  /// LinearFVBoundaryCondition::needsBoundaryNonorthogonalCorrection()
+  KOKKOS_FUNCTION bool boundaryNeedsNonorthogonalCorrection(const int bc_index) const
+  {
+    return _bc_needs_nonorthogonal_correction[bc_index];
+  }
 
   /// Boundary condition data handles indexed by compact boundary condition index
   Array<LinearFVBoundaryCondition::BoundaryData> _bc_data;
+  /// LinearFVBoundaryCondition::includesMaterialPropertyMultiplier() by compact boundary condition
+  /// index
+  Array<bool> _bc_includes_material_property_multiplier;
+  /// LinearFVBoundaryCondition::needsBoundaryNonorthogonalCorrection() by compact boundary
+  /// condition index
+  Array<bool> _bc_needs_nonorthogonal_correction;
   /// Face ranges with the variable on both sides and at least one row this kernel assembles
   FaceRangeList _internal_ranges;
   /// Matrix positions of the contributions of each internal face, indexed by thread

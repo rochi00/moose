@@ -231,6 +231,57 @@ FVMesh::update()
   _elem_faces.copyToDevice();
 
   _initialized = true;
+
+  if (_needs_side_data)
+    buildSideData();
+}
+
+void
+FVMesh::requestSideData() const
+{
+  mooseAssert(_initialized, "The finite volume mesh data must be built first");
+
+  if (_needs_side_data)
+    return;
+  _needs_side_data = true;
+  buildSideData();
+}
+
+void
+FVMesh::buildSideData() const
+{
+  _side_neighbor.create(_num_local_elems, _max_sides);
+  _side_weight.create(_num_local_elems, _max_sides);
+  _side_area_normal.create(_num_local_elems, _max_sides);
+  _side_neighbor = libMesh::DofObject::invalid_id;
+  _side_weight = 0;
+  _side_area_normal = Real3();
+
+  for (const auto face : make_range(_num_faces))
+  {
+    const auto elem = _face_elem[face];
+    const auto neighbor = _face_neighbor[face];
+    const auto area_normal = _face_area[face] * _face_normal[face];
+
+    if (elem < _num_local_elems)
+    {
+      const auto side = _face_elem_side[face];
+      _side_neighbor(elem, side) = neighbor;
+      _side_weight(elem, side) = _face_gc[face];
+      _side_area_normal(elem, side) = area_normal;
+    }
+    if (neighbor != libMesh::DofObject::invalid_id && neighbor < _num_local_elems)
+    {
+      const auto side = _face_neighbor_side[face];
+      _side_neighbor(neighbor, side) = elem;
+      _side_weight(neighbor, side) = 1 - _face_gc[face];
+      _side_area_normal(neighbor, side) = -area_normal;
+    }
+  }
+
+  _side_neighbor.copyToDevice();
+  _side_weight.copyToDevice();
+  _side_area_normal.copyToDevice();
 }
 
 ContiguousFaceID
