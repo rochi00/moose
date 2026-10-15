@@ -398,6 +398,13 @@ FEProblemBase::validParams()
       "and boundary conditions. By default this is an error: the non-Kokkos objects force the "
       "host assembly loops to run alongside the Kokkos assembly at every linear system "
       "evaluation.");
+  params.addParam<MooseEnum>(
+      "kokkos_linear_fv_assembly",
+      MooseEnum("atomic gather", "atomic"),
+      "How Kokkos linear finite volume flux kernels add their face contributions to the linear "
+      "system. 'atomic' adds them with atomic operations, which is the fastest but sums each "
+      "matrix entry in a different order in every run. 'gather' stores them per face and sums each "
+      "row in a fixed order, which gives identical results in every run at a higher cost.");
 #endif
 
   params.addParamNamesToGroup(
@@ -9117,6 +9124,12 @@ FEProblemBase::meshChanged(const bool intermediate_change,
   // quantities
   if (haveFV() && _mesh.isFiniteVolumeInfoDirty())
     _mesh.setupFiniteVolumeMeshData();
+
+#ifdef MOOSE_KOKKOS_ENABLED
+  // The Kokkos finite volume mesh data is built from the face and element info rebuilt above
+  if (_kokkos_fv_mesh && _kokkos_fv_mesh->initialized())
+    _kokkos_fv_mesh->update();
+#endif
 
   // Let the meshChangedInterface notify the mesh changed event before we update the active
   // semilocal nodes, because the set of ghosted elements may potentially be updated during a mesh

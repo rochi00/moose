@@ -36,6 +36,16 @@ FEProblemBase::getKokkosSystem(const unsigned int sys_num) const
   return _kokkos_systems[sys_num];
 }
 
+const Moose::Kokkos::FVMesh &
+FEProblemBase::getKokkosFVMesh() const
+{
+  if (!_kokkos_fv_mesh)
+    mooseError("The Kokkos finite volume mesh data exists only when Kokkos linear finite volume "
+               "objects were added.");
+
+  return *_kokkos_fv_mesh;
+}
+
 Moose::Kokkos::FESystem &
 FEProblemBase::getKokkosFESystem(const unsigned int sys_num)
 {
@@ -124,6 +134,10 @@ FEProblemBase::addKokkosLinearFVKernel(const std::string & kernel_name,
   parameters.set<SubProblem *>("_subproblem") = this;
   parameters.set<SystemBase *>("_sys") = _linear_systems[sys_num - _num_nl_sys].get();
 
+  // The objects hold the finite volume mesh data, which is built later in initKokkos()
+  if (!_kokkos_fv_mesh)
+    _kokkos_fv_mesh = std::make_unique<Moose::Kokkos::FVMesh>(_mesh);
+
   logAdd("KokkosLinearFVKernel", name, kernel_name, parameters);
   _linear_systems[sys_num - _num_nl_sys]->addKokkosKernel(kernel_name, name, parameters);
 
@@ -147,6 +161,10 @@ FEProblemBase::addKokkosLinearFVBC(const std::string & bc_name,
 
   parameters.set<SubProblem *>("_subproblem") = this;
   parameters.set<SystemBase *>("_sys") = _linear_systems[sys_num - _num_nl_sys].get();
+
+  // The objects hold the finite volume mesh data, which is built later in initKokkos()
+  if (!_kokkos_fv_mesh)
+    _kokkos_fv_mesh = std::make_unique<Moose::Kokkos::FVMesh>(_mesh);
 
   logAdd("KokkosLinearFVBoundaryCondition", name, bc_name, parameters);
   _linear_systems[sys_num - _num_nl_sys]->addKokkosBoundaryCondition(bc_name, name, parameters);
@@ -340,6 +358,10 @@ FEProblemBase::initKokkos()
 
   // Initialize Kokkos mesh
   _mesh.getKokkosMesh()->update();
+
+  // The finite volume mesh data reads the contiguous IDs of the Kokkos mesh
+  if (_kokkos_fv_mesh)
+    _kokkos_fv_mesh->update();
 
   // Initialize Kokkos assembly
   _kokkos_assembly.init();

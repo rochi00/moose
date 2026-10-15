@@ -15,8 +15,7 @@
 #include "FEProblemBase.h"
 #include "MooseMesh.h"
 
-#include <algorithm>
-#include <map>
+#include <optional>
 
 namespace Moose::Kokkos
 {
@@ -38,154 +37,47 @@ LinearFVFluxKernel::LinearFVFluxKernel(const InputParameters & parameters)
 LinearFVFluxKernel::LinearFVFluxKernel(const LinearFVFluxKernel & object)
   : LinearFVKernel(object),
     _bc_data(object._bc_data),
-    _bc_index(object._bc_index),
-    _internal_face_ids(object._internal_face_ids),
-    _boundary_face_ids(object._boundary_face_ids),
-    _internal_matrix_slots(object._internal_matrix_slots),
-    _boundary_matrix_slots(object._boundary_matrix_slots),
-    _face_coefficients(object._face_coefficients)
+    _internal_ranges(object._internal_ranges),
+    _internal_faces(object._internal_faces),
+    _boundary_ranges(object._boundary_ranges),
+    _boundary_range_bcs(object._boundary_range_bcs),
+    _boundary_diag_slots(object._boundary_diag_slots),
+    _gather(object._gather),
+    _face_scratch(object._face_scratch),
+    _boundary_scratch_offset(object._boundary_scratch_offset),
+    _gather_cells(object._gather_cells),
+    _gather_diag_slots(object._gather_diag_slots),
+    _gather_sources(object._gather_sources),
+    _gather_off_slots(object._gather_off_slots),
+    _max_sides(object._max_sides)
 {
 }
 
 void
 LinearFVFluxKernel::initialSetup()
 {
-  const auto n_elems =
-      libMesh::cast_int<MOOSE_KOKKOS_INDEX_TYPE>(kokkosMesh().getNumLocalElements());
-  const auto max_sides =
-      libMesh::cast_int<MOOSE_KOKKOS_INDEX_TYPE>(_subproblem.mesh().getMaxSidesPerElem());
-  _bc_index.create(max_sides, n_elems);
-  _bc_index = -1;
-
-  // Build a compact list of Kokkos linear FV BC data and attach each BC worklist's packed index to
-  // the boundary faces where this kernel's variable is active.
   const auto sys_num = _var.sys();
   const auto var_num = _var.var();
   const auto var_name = _var.mooseVar()->name();
 
+  // The Kokkos linear FV BCs of this kernel's variable, by compact BC index
   std::vector<LinearFVBoundaryCondition *> bcs;
-  _fe_problem.theWarehouse()
-      .query()
-      .template condition<AttribSysNum>(sys_num)
-      .template condition<AttribSystem>("LinearFVBoundaryCondition")
-      .template condition<AttribKokkos>(true)
-      .template condition<AttribThread>(0)
-      .queryInto(bcs);
-
-  std::vector<LinearFVBoundaryCondition::BoundaryData> bc_data;
-#ifdef DEBUG
-  std::vector<LinearFVBoundaryCondition *> bc_objects;
-#endif
-  std::map<FaceID, BoundaryFaceID> bc_faces;
-  auto & mesh = _subproblem.mesh();
-  const auto * const kokkos_mesh = mesh.getKokkosMesh();
-
-  for (auto * bc : bcs)
   {
-    const auto & variable = bc->variable();
-
-    if (variable.var() == var_num)
-    {
-      const auto bc_index = libMesh::cast_int<int>(bc_data.size());
-      bc_data.push_back(bc->boundaryData());
-#ifdef DEBUG
-      bc_objects.push_back(bc);
-#endif
-
-      for (const auto bc_face_index : make_range(bc->numBoundaryFaces()))
+    std::vector<LinearFVBoundaryCondition *> all_bcs;
+    _fe_problem.theWarehouse()
+        .query()
+        .template condition<AttribSysNum>(sys_num)
+        .template condition<AttribSystem>("LinearFVBoundaryCondition")
+        .template condition<AttribKokkos>(true)
+        .template condition<AttribThread>(0)
+        .queryInto(all_bcs);
+    for (auto * bc : all_bcs)
+      if (bc->variable().var() == var_num)
       {
-        const auto [contiguous_elem, side] = bc->boundaryFaceID(bc_face_index);
-        const FaceID face{contiguous_elem, side};
-
-#ifdef DEBUG
-        if (bc_face_index)
-          mooseAssert(
-              bc->boundaryFaceID(bc_face_index - 1) < face,
-              "Kokkos linear FV boundary face worklists must be ordered by (element, side)");
-#endif
-
-        auto & existing_index = _bc_index(side, contiguous_elem);
-
-        // Ambiguous boundary data would make flux kernels non-deterministic.
-        if (existing_index != -1)
-          mooseError("Kokkos linear FV flux kernel '",
-                     name(),
-                     "' found multiple Kokkos boundary conditions for variable '",
-                     var_name,
-                     "' on contiguous element ",
-                     contiguous_elem,
-                     ", side ",
-                     side,
-                     ".");
-
-        existing_index = bc_index;
-        bc_faces.emplace(face, BoundaryFaceID{contiguous_elem, side, bc_index, bc_face_index});
+        bc->setupFaces();
+        bcs.push_back(bc);
       }
-    }
   }
-
-  std::vector<FaceID> internal_face_ids;
-  std::vector<BoundaryFaceID> boundary_face_ids;
-  // Contiguous neighbor of each internal face, taken from libMesh because the Kokkos mesh keeps
-  // its neighbor table on device only
-  std::map<FaceID, ContiguousElementID> face_neighbors;
-
-  const auto * const variable = _var.mooseFieldVar();
-  for (const auto block : blockIDs())
-    for (const auto elem : mesh.getMesh().active_local_subdomain_elements_ptr_range(block))
-    {
-      const auto contiguous_elem = kokkos_mesh->getContiguousElementID(elem);
-
-      for (const auto side : make_range(elem->n_sides()))
-      {
-        const auto * const neighbor = elem->neighbor_ptr(side);
-
-        mooseAssert(!neighbor || neighbor != libMesh::remote_elem,
-                    "We should have properly ghosted side neighbors for FV");
-        if (neighbor && variable->activeOnSubdomain(neighbor->subdomain_id()))
-        {
-          internal_face_ids.push_back({contiguous_elem, side});
-          face_neighbors.emplace(FaceID{contiguous_elem, side},
-                                 kokkos_mesh->getContiguousElementID(neighbor));
-        }
-        else
-        {
-          const auto bc_face = bc_faces.find({contiguous_elem, side});
-
-          if (bc_face != bc_faces.end())
-            boundary_face_ids.push_back(bc_face->second);
-        }
-      }
-    }
-
-  std::sort(internal_face_ids.begin(), internal_face_ids.end());
-  std::sort(boundary_face_ids.begin(), boundary_face_ids.end());
-
-#ifdef DEBUG
-  for (const auto i : index_range(boundary_face_ids))
-  {
-    const auto & face = boundary_face_ids[i];
-    mooseAssert(face.bc_index >= 0 &&
-                    libMesh::cast_int<std::size_t>(face.bc_index) < bc_objects.size(),
-                "Boundary face has an invalid compact boundary condition index");
-    mooseAssert(_bc_index(face.side, face.elem) == face.bc_index,
-                "Boundary face does not map to its expected compact boundary condition index");
-
-    const auto * const bc = bc_objects[face.bc_index];
-    mooseAssert(face.bc_face_index < bc->numBoundaryFaces(),
-                "Boundary face has an invalid BC-local packed index");
-    const auto expected_face = bc->boundaryFaceID(face.bc_face_index);
-    mooseAssert(expected_face.first == face.elem && expected_face.second == face.side,
-                "Boundary face does not map to its expected BC-local packed index");
-
-    if (i && boundary_face_ids[i - 1].bc_index == face.bc_index)
-      mooseAssert(boundary_face_ids[i - 1].bc_face_index < face.bc_face_index,
-                  "Boundary faces and their BC-local packed indices have inconsistent ordering");
-  }
-#endif
-
-  _internal_face_ids = internal_face_ids;
-  _boundary_face_ids = boundary_face_ids;
 
   // Precompute the matrix nonzero position of every contribution so the assembly loops do not
   // search the sparsity pattern for each entry
@@ -203,31 +95,187 @@ LinearFVFluxKernel::initialSetup()
     return slot;
   };
 
-  std::vector<PetscInt> internal_matrix_slots(2 * internal_face_ids.size());
-  for (const auto i : index_range(internal_face_ids))
+  const auto & fv_mesh = kokkosFVMesh();
+  const auto num_local_elems = fv_mesh.getNumLocalElements();
+  const auto * const variable = _var.mooseFieldVar();
+  const auto & mesh_ranges = fv_mesh.getFaceRanges();
+
+  // Whether the variable lives on a block
+  auto variable_on = [&](const SubdomainID subdomain)
+  { return subdomain != Moose::INVALID_BLOCK_ID && variable->activeOnSubdomain(subdomain); };
+
+  std::vector<FaceRange> internal_ranges, boundary_ranges;
+  std::vector<BoundaryRange> boundary_range_bcs;
+  // Rows assembled on the elem and neighbor side of each internal range
+  std::vector<std::pair<bool, bool>> internal_rows;
+
+  for (const auto r : index_range(mesh_ranges))
   {
-    const auto & face = internal_face_ids[i];
-    internal_matrix_slots[2 * i] = matrix_slot(face.first, face.first);
-    internal_matrix_slots[2 * i + 1] =
-        matrix_slot(face.first, libmesh_map_find(face_neighbors, face));
+    const auto & range = mesh_ranges[r];
+    const bool on_elem = variable_on(range.elem_subdomain);
+    const bool on_neighbor = variable_on(range.neighbor_subdomain);
+    // This kernel assembles the row of a cell that is owned and in the kernel's blocks
+    const bool elem_row = range.elem_owned && hasBlocks(range.elem_subdomain);
+    const bool neighbor_row = range.neighbor_owned && hasBlocks(range.neighbor_subdomain);
+
+    if (on_elem && on_neighbor)
+    {
+      if (elem_row || neighbor_row)
+      {
+        internal_ranges.push_back(range);
+        internal_rows.emplace_back(elem_row, neighbor_row);
+      }
+      continue;
+    }
+
+    // A boundary for the variable; it contributes through a boundary condition, if one applies
+    const bool flip = on_neighbor;
+    if (!(flip ? neighbor_row : elem_row))
+      continue;
+
+    const auto & range_boundaries = fv_mesh.getFaceRangeBoundaryIDs(r, flip);
+    if (range_boundaries.size() > 1)
+      mooseError("Kokkos linear FV flux kernel '",
+                 name(),
+                 "': boundary faces of variable '",
+                 var_name,
+                 "' carry several boundary IDs ",
+                 Moose::stringify(range_boundaries),
+                 ". Multiple boundary conditions on the same face are not supported.");
+
+    std::optional<BoundaryRange> range_bc;
+    for (const auto bc_index : index_range(bcs))
+      if (const auto offset = bcs[bc_index]->faceRangeOffset(r))
+      {
+        // Ambiguous boundary data would make flux kernels non-deterministic.
+        if (range_bc)
+          mooseError("Kokkos linear FV flux kernel '",
+                     name(),
+                     "' found multiple Kokkos boundary conditions for variable '",
+                     var_name,
+                     "' on boundary ",
+                     range_boundaries.front(),
+                     ".");
+        range_bc = BoundaryRange{flip, libMesh::cast_int<int>(bc_index), *offset};
+      }
+
+    if (range_bc)
+    {
+      boundary_ranges.push_back(range);
+      boundary_range_bcs.push_back(*range_bc);
+    }
   }
-  std::vector<PetscInt> boundary_matrix_slots(boundary_face_ids.size());
-  for (const auto i : index_range(boundary_face_ids))
-    boundary_matrix_slots[i] = matrix_slot(boundary_face_ids[i].elem, boundary_face_ids[i].elem);
 
-  _internal_matrix_slots = internal_matrix_slots;
-  _boundary_matrix_slots = boundary_matrix_slots;
+  // Matrix positions per face, in thread order
+  std::vector<InternalFace> internal_faces;
+  for (const auto i : index_range(internal_ranges))
+    for (const auto face : make_range(internal_ranges[i].begin, internal_ranges[i].end))
+    {
+      const auto elem = fv_mesh.getElem(face);
+      const auto neighbor = fv_mesh.getNeighbor(face);
+      const auto [elem_row, neighbor_row] = internal_rows[i];
+      internal_faces.push_back({elem_row ? matrix_slot(elem, elem) : -1,
+                                elem_row ? matrix_slot(elem, neighbor) : -1,
+                                neighbor_row ? matrix_slot(neighbor, neighbor) : -1,
+                                neighbor_row ? matrix_slot(neighbor, elem) : -1});
+    }
 
-  if (DispatcherRegistry::hasUserMethod<InternalFaceCoefficientLoop>(type()))
-    _face_coefficients.createDevice(max_sides, n_elems);
+  std::vector<PetscInt> boundary_diag_slots;
+  for (const auto i : index_range(boundary_ranges))
+    for (const auto face : make_range(boundary_ranges[i].begin, boundary_ranges[i].end))
+    {
+      const auto elem =
+          boundary_range_bcs[i].flip ? fv_mesh.getNeighbor(face) : fv_mesh.getElem(face);
+      boundary_diag_slots.push_back(matrix_slot(elem, elem));
+    }
 
-#ifndef NDEBUG
-  _bc_index.copyToDevice();
-#endif
-  _bc_data.create(libMesh::cast_int<MOOSE_KOKKOS_INDEX_TYPE>(bc_data.size()));
-  for (const auto i : index_range(bc_data))
-    _bc_data[i] = bc_data[i];
+  _internal_ranges.create(internal_ranges);
+  _internal_faces = internal_faces;
+  _boundary_ranges.create(boundary_ranges);
+  _boundary_range_bcs = boundary_range_bcs;
+  _boundary_diag_slots = boundary_diag_slots;
+
+  _bc_data.create(libMesh::cast_int<MOOSE_KOKKOS_INDEX_TYPE>(bcs.size()));
+  for (const auto i : index_range(bcs))
+    _bc_data[i] = bcs[i]->boundaryData();
   _bc_data.copyToDevice();
+
+  _gather = _fe_problem.getParam<MooseEnum>("kokkos_linear_fv_assembly") == "gather";
+  if (_gather)
+  {
+    _max_sides = fv_mesh.getMaxSidesPerElem();
+    _boundary_scratch_offset = 6 * internal_faces.size();
+    _face_scratch.createDevice(_boundary_scratch_offset + 2 * boundary_diag_slots.size());
+
+    // Scratch position and off-diagonal matrix position of every (owned cell, side) this kernel
+    // assembles
+    const auto num_entries = std::size_t(num_local_elems) * _max_sides;
+    std::vector<std::int64_t> sources(num_entries, -1);
+    std::vector<PetscInt> off_slots(num_entries, -1);
+    auto add_source = [&](const ContiguousElementID elem,
+                          const unsigned int side,
+                          const std::int64_t source,
+                          const PetscInt off_slot)
+    {
+      const auto entry = std::size_t(elem) * _max_sides + side;
+      mooseAssert(sources[entry] < 0, "A cell side must have one face");
+      sources[entry] = source;
+      off_slots[entry] = off_slot;
+    };
+
+    std::int64_t i = 0;
+    for (const auto & range : internal_ranges)
+      for (const auto face : make_range(range.begin, range.end))
+      {
+        const auto & slots = internal_faces[i];
+        if (slots.elem_diag_slot >= 0)
+          add_source(fv_mesh.getElem(face), fv_mesh.getElemSide(face), 6 * i, slots.elem_off_slot);
+        if (slots.neighbor_diag_slot >= 0)
+          add_source(fv_mesh.getNeighbor(face),
+                     fv_mesh.getNeighborSide(face),
+                     6 * i + 3,
+                     slots.neighbor_off_slot);
+        ++i;
+      }
+    std::int64_t j = 0;
+    for (const auto r : index_range(boundary_ranges))
+      for (const auto face : make_range(boundary_ranges[r].begin, boundary_ranges[r].end))
+      {
+        const bool flip = boundary_range_bcs[r].flip;
+        add_source(flip ? fv_mesh.getNeighbor(face) : fv_mesh.getElem(face),
+                   flip ? fv_mesh.getNeighborSide(face) : fv_mesh.getElemSide(face),
+                   _boundary_scratch_offset + 2 * j++,
+                   -1);
+      }
+
+    std::vector<ContiguousElementID> gather_cells;
+    for (const auto elem : make_range(num_local_elems))
+      for (const auto side : make_range(_max_sides))
+        if (sources[std::size_t(elem) * _max_sides + side] >= 0)
+        {
+          gather_cells.push_back(elem);
+          break;
+        }
+
+    const auto num_rows = libMesh::cast_int<MOOSE_KOKKOS_INDEX_TYPE>(gather_cells.size());
+    _gather_cells = gather_cells;
+    _gather_diag_slots.create(num_rows);
+    _gather_sources.create(num_rows, _max_sides);
+    _gather_off_slots.create(num_rows, _max_sides);
+    for (const auto row : make_range(num_rows))
+    {
+      const auto elem = gather_cells[row];
+      _gather_diag_slots[row] = matrix_slot(elem, elem);
+      for (const auto side : make_range(_max_sides))
+      {
+        _gather_sources(row, side) = sources[std::size_t(elem) * _max_sides + side];
+        _gather_off_slots(row, side) = off_slots[std::size_t(elem) * _max_sides + side];
+      }
+    }
+    _gather_diag_slots.copyToDevice();
+    _gather_sources.copyToDevice();
+    _gather_off_slots.copyToDevice();
+  }
 
   // Non-Kokkos BCs are never called by Kokkos flux kernels; they would be silently
   // ignored, producing wrong results. Reject them early for this variable.
@@ -260,67 +308,30 @@ LinearFVFluxKernel::initialSetup()
 }
 
 void
-LinearFVFluxKernel::computeFaceCoefficients()
+LinearFVFluxKernel::dispatchContributions()
 {
-  if (!DispatcherRegistry::hasUserMethod<InternalFaceCoefficientLoop>(type()))
-    return;
-
-  if (_internal_face_ids.size())
+  if (_internal_ranges.size())
   {
-    Policy policy(0, _internal_face_ids.size());
-    if (!_internal_face_coefficient_dispatcher)
-      _internal_face_coefficient_dispatcher =
-          DispatcherRegistry::build<InternalFaceCoefficientLoop>(this, type());
-    _internal_face_coefficient_dispatcher->parallelForAsync(policy);
+    Policy policy(0, _internal_ranges.size());
+    if (!_internal_face_dispatcher)
+      _internal_face_dispatcher = DispatcherRegistry::build<InternalFaceLoop>(this, type());
+    _internal_face_dispatcher->parallelForAsync(policy);
   }
 
-  if (_boundary_face_ids.size())
+  if (_boundary_ranges.size())
   {
-    Policy policy(0, _boundary_face_ids.size());
-    if (!_boundary_face_coefficient_dispatcher)
-      _boundary_face_coefficient_dispatcher =
-          DispatcherRegistry::build<BoundaryFaceCoefficientLoop>(this, type());
-    _boundary_face_coefficient_dispatcher->parallelForAsync(policy);
-  }
-}
-
-void
-LinearFVFluxKernel::computeRightHandSide()
-{
-  if (hasInternalRightHandSideContribution() && _internal_face_ids.size())
-  {
-    Policy policy(0, _internal_face_ids.size());
-    if (!_internal_rhs_dispatcher)
-      _internal_rhs_dispatcher = DispatcherRegistry::build<InternalRightHandSideLoop>(this, type());
-    _internal_rhs_dispatcher->parallelForAsync(policy);
+    Policy policy(0, _boundary_ranges.size());
+    if (!_boundary_face_dispatcher)
+      _boundary_face_dispatcher = DispatcherRegistry::build<BoundaryFaceLoop>(this, type());
+    _boundary_face_dispatcher->parallelForAsync(policy);
   }
 
-  if (_boundary_face_ids.size())
+  if (_gather && _gather_cells.size())
   {
-    Policy policy(0, _boundary_face_ids.size());
-    if (!_boundary_rhs_dispatcher)
-      _boundary_rhs_dispatcher = DispatcherRegistry::build<BoundaryRightHandSideLoop>(this, type());
-    _boundary_rhs_dispatcher->parallelForAsync(policy);
-  }
-}
-
-void
-LinearFVFluxKernel::computeMatrix()
-{
-  if (DispatcherRegistry::hasUserMethod<InternalMatrixLoop>(type()) && _internal_face_ids.size())
-  {
-    Policy policy(0, _internal_face_ids.size());
-    if (!_internal_matrix_dispatcher)
-      _internal_matrix_dispatcher = DispatcherRegistry::build<InternalMatrixLoop>(this, type());
-    _internal_matrix_dispatcher->parallelForAsync(policy);
-  }
-
-  if (DispatcherRegistry::hasUserMethod<BoundaryMatrixLoop>(type()) && _boundary_face_ids.size())
-  {
-    Policy policy(0, _boundary_face_ids.size());
-    if (!_boundary_matrix_dispatcher)
-      _boundary_matrix_dispatcher = DispatcherRegistry::build<BoundaryMatrixLoop>(this, type());
-    _boundary_matrix_dispatcher->parallelForAsync(policy);
+    Policy policy(0, _gather_cells.size());
+    if (!_gather_dispatcher)
+      _gather_dispatcher = DispatcherRegistry::build<GatherLoop>(this, type());
+    _gather_dispatcher->parallelForAsync(policy);
   }
 }
 

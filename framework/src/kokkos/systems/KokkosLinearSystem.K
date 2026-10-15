@@ -13,6 +13,7 @@
 #include "KokkosLinearFVElementalKernel.h"
 #include "KokkosLinearFVFluxKernel.h"
 #include "KokkosLinearFVBoundaryCondition.h"
+#include "KokkosFVSystemAssembly.h"
 #include "MooseUtils.h"
 #include "MaterialPropertyInterface.h"
 #include "MaterialBase.h"
@@ -258,8 +259,6 @@ LinearSystem::computeKokkosLinearSystem(const std::set<TagID> & vector_tags,
     return;
 
   auto & our_kokkos_system = _fe_problem.getKokkosSystem(number());
-  our_kokkos_system.setActiveResidualTags(vector_tags);
-  our_kokkos_system.setActiveMatrixTags(matrix_tags);
 
   std::set<TagID> needed_solution_vector_tags;
 
@@ -267,14 +266,19 @@ LinearSystem::computeKokkosLinearSystem(const std::set<TagID> & vector_tags,
     needed_solution_vector_tags.insert(tag._id);
 
   // Kokkos linear FV kernels and boundary conditions read only their own variable, which belongs to
-  // this system, so the other Kokkos systems are not synchronized
+  // this system, so the other Kokkos systems are not synchronized. The Kokkos system provides the
+  // solution vectors; the tagged matrices and vectors being assembled bypass it.
   auto & kokkos_systems = _fe_problem.getKokkosSystems();
+  if (!_kokkos_fv_assembly)
+    _kokkos_fv_assembly = std::make_unique<Moose::Kokkos::FVSystemAssembly>(*this, our_kokkos_system);
   {
     TIME_SECTION("KokkosFVSyncToDevice", 2);
     our_kokkos_system.setActiveSolutionTags(needed_solution_vector_tags);
     our_kokkos_system.sync(Moose::Kokkos::MemcpyType::HOST_TO_DEVICE);
 
     kokkos_systems.copyToDevice();
+
+    _kokkos_fv_assembly->begin(vector_tags, matrix_tags);
   }
 
   std::unordered_set<unsigned int> value_bc_vars;
@@ -304,31 +308,24 @@ LinearSystem::computeKokkosLinearSystem(const std::set<TagID> & vector_tags,
     }
   }
 
-  {
-    TIME_SECTION("KokkosFVFaceCoefficients", 2);
-    for (auto kernel : flux_kernels)
-      kernel->computeFaceCoefficients();
-  }
+  // Each kernel adds its matrix and right-hand side contributions in one pass: to the matrices if
+  // its matrix tags are requested, and to the vectors if its vector tags are
+  auto contains = [](const auto & kernels, const auto * const kernel)
+  { return std::find(kernels.begin(), kernels.end(), kernel) != kernels.end(); };
 
   {
-    TIME_SECTION("KokkosFVElementalMatrix", 2);
-    for (auto kernel : elemental_for_matrix_tags)
-      kernel->computeMatrix();
+    TIME_SECTION("KokkosFVElemental", 2);
+    for (auto kernel : elemental_kernels)
+      kernel->computeContributions(contains(elemental_for_matrix_tags, kernel),
+                                   contains(elemental_for_vector_tags, kernel),
+                                   *_kokkos_fv_assembly);
   }
   {
-    TIME_SECTION("KokkosFVFluxMatrix", 2);
-    for (auto kernel : flux_for_matrix_tags)
-      kernel->computeMatrix();
-  }
-  {
-    TIME_SECTION("KokkosFVElementalRHS", 2);
-    for (auto kernel : elemental_for_vector_tags)
-      kernel->computeRightHandSide();
-  }
-  {
-    TIME_SECTION("KokkosFVFluxRHS", 2);
-    for (auto kernel : flux_for_vector_tags)
-      kernel->computeRightHandSide();
+    TIME_SECTION("KokkosFVFlux", 2);
+    for (auto kernel : flux_kernels)
+      kernel->computeContributions(contains(flux_for_matrix_tags, kernel),
+                                   contains(flux_for_vector_tags, kernel),
+                                   *_kokkos_fv_assembly);
   }
 
   {
@@ -341,9 +338,11 @@ LinearSystem::computeKokkosLinearSystem(const std::set<TagID> & vector_tags,
     TIME_SECTION("KokkosFVSyncToHost", 2);
     our_kokkos_system.sync(Moose::Kokkos::MemcpyType::DEVICE_TO_HOST);
   }
+  {
+    TIME_SECTION("KokkosFVUpload", 2);
+    _kokkos_fv_assembly->end();
+  }
 
-  our_kokkos_system.clearActiveResidualTags();
-  our_kokkos_system.clearActiveMatrixTags();
   our_kokkos_system.clearActiveVariables();
   our_kokkos_system.clearActiveSolutionTags();
 }

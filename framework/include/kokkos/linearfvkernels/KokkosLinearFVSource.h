@@ -24,7 +24,7 @@ public:
   KokkosLinearFVSource(const InputParameters & parameters);
 
   template <typename Derived>
-  KOKKOS_FUNCTION Real computeRightHandSideContribution(const FVDatum & datum) const;
+  KOKKOS_FUNCTION CellContribution computeCellContribution(const CellDatum & datum) const;
 
 private:
   /// The source density
@@ -34,9 +34,9 @@ private:
 };
 
 template <typename Derived>
-KOKKOS_FUNCTION inline Real
-KokkosLinearFVSource::computeRightHandSideContribution(const FVDatum & datum) const
+KOKKOS_FUNCTION inline KokkosLinearFVSource::CellContribution
+KokkosLinearFVSource::computeCellContribution(const CellDatum & datum) const
 {
-  const auto centroid = datum.elementCentroid();
-  return _scale->value(_t, centroid) * _source_density->value(_t, centroid) * datum.elementVolume();
+  const auto centroid = datum.elemCentroid();
+  return {0, _scale->value(_t, centroid) * _source_density->value(_t, centroid) * datum.elemVolume()};
 }

@@ -12,6 +12,7 @@
 #ifdef MOOSE_KOKKOS_ENABLED
 #include "KokkosAssembly.h"
 #include "KokkosFESystem.h"
+#include "KokkosFVMesh.h"
 #endif
 
 // MOOSE includes
@@ -920,6 +921,13 @@ public:
   Moose::Kokkos::System & getKokkosSystem(const unsigned int sys_num);
   const Moose::Kokkos::System & getKokkosSystem(const unsigned int sys_num) const;
   ///@}
+
+  /**
+   * Get the face and cell data of the Kokkos linear finite volume objects, which exists once a
+   * Kokkos linear finite volume object was added
+   * @returns The Kokkos finite volume mesh data
+   */
+  const Moose::Kokkos::FVMesh & getKokkosFVMesh() const;
 
   /**
    * Get the Kokkos FESystem of a specified number
@@ -3258,6 +3266,9 @@ protected:
   Moose::Kokkos::Array<Moose::Kokkos::System> _kokkos_systems;
   /// FESystem array - sparsely populated (only slots for systems needing a Kokkos::FESystem)
   Moose::Kokkos::Array<Moose::Kokkos::FESystem> _kokkos_fe_systems;
+  /// Face and cell data of the Kokkos linear finite volume objects, created when the first one is
+  /// added
+  std::unique_ptr<Moose::Kokkos::FVMesh> _kokkos_fv_mesh;
 #endif
 
   /// Dimension of the subspace spanned by the vectors with a given prefix

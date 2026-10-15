@@ -12,6 +12,8 @@
 #include "FEProblemBase.h"
 #include "InputParameters.h"
 
+#include <algorithm>
+
 namespace Moose::Kokkos
 {
 
@@ -35,6 +37,7 @@ LinearSystemContributionObject::LinearSystemContributionObject(const InputParame
     MeshChangedInterface(parameters),
     TaggingInterface(this),
     MeshHolder(*getCheckedPointerParam<SubProblem *>("_subproblem")->mesh().getKokkosMesh()),
+    FVMeshHolder(getCheckedPointerParam<SystemBase *>("_sys")->feProblem().getKokkosFVMesh()),
     SystemHolder(getCheckedPointerParam<SystemBase *>("_sys")->feProblem().getKokkosSystems()),
     _fe_problem(*getParam<FEProblemBase *>("_fe_problem_base")),
     _t(TransientInterface::_t)
@@ -60,34 +63,63 @@ LinearSystemContributionObject::LinearSystemContributionObject(
     MeshChangedInterface(object, {}),
     TaggingInterface(object, {}),
     MeshHolder(object),
+    FVMeshHolder(object),
     SystemHolder(object),
     _fe_problem(object._fe_problem),
     _var(object._var),
+    _assemble_matrix(object._assemble_matrix),
+    _assemble_rhs(object._assemble_rhs),
+    _num_vector_targets(object._num_vector_targets),
+    _num_matrix_targets(object._num_matrix_targets),
     _t(object._t)
 {
-  // Tags may be added to the governing tag sets held by the TaggingInterface later than the time
-  // that the primary constructor is run. So it's more robust to build our tag set, immediately
-  // before being dispatched to device, from the governing TaggingInterface set instead of relying
-  // on the tag sets at construction
-  object.updateTagArrays();
-  _vector_tags = object._vector_tags;
-  _matrix_tags = object._matrix_tags;
+  std::copy_n(object._vector_targets, max_tagged_targets, _vector_targets);
+  std::copy_n(object._matrix_targets, max_tagged_targets, _matrix_targets);
 }
 
 void
-LinearSystemContributionObject::updateTagArrays() const
+LinearSystemContributionObject::computeContributions(const bool matrix,
+                                                     const bool rhs,
+                                                     const FVSystemAssembly & assembly)
 {
-  const auto & vector_tags = getVectorTags({});
-  const auto & matrix_tags = getMatrixTags({});
+  // The arrays of this object's tags that are being assembled. Tags can be added to the governing
+  // TaggingInterface sets after construction, so they are read at every assembly.
+  auto collect = [this](const std::set<TagID> & tags,
+                        const bool assemble,
+                        auto && values,
+                        Real ** targets,
+                        unsigned int & num_targets)
+  {
+    num_targets = 0;
+    if (!assemble)
+      return;
+    for (const auto tag : tags)
+      if (auto * const array = values(tag))
+      {
+        if (num_targets == max_tagged_targets)
+          mooseError("Kokkos linear FV object '",
+                     name(),
+                     "' adds to more than ",
+                     max_tagged_targets,
+                     " tagged matrices or vectors in one assembly, which is not supported.");
+        targets[num_targets++] = array;
+      }
+  };
+  collect(getMatrixTags({}),
+          matrix,
+          [&](const TagID tag) { return assembly.matrixValues(tag); },
+          _matrix_targets,
+          _num_matrix_targets);
+  collect(getVectorTags({}),
+          rhs,
+          [&](const TagID tag) { return assembly.vectorValues(tag); },
+          _vector_targets,
+          _num_vector_targets);
 
-  if (_tag_arrays_built && vector_tags == _vector_tag_set && matrix_tags == _matrix_tag_set)
-    return;
-
-  _vector_tags = vector_tags;
-  _matrix_tags = matrix_tags;
-  _vector_tag_set = vector_tags;
-  _matrix_tag_set = matrix_tags;
-  _tag_arrays_built = true;
+  _assemble_matrix = _num_matrix_targets;
+  _assemble_rhs = _num_vector_targets;
+  if (_assemble_matrix || _assemble_rhs)
+    dispatchContributions();
 }
 
 } // namespace Moose::Kokkos

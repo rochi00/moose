@@ -10,7 +10,7 @@
 #pragma once
 
 #include "KokkosDispatcher.h"
-#include "KokkosDatum.h"
+#include "KokkosFVDatum.h"
 #include "KokkosMesh.h"
 #include "KokkosSystem.h"
 #include "KokkosVariable.h"
@@ -25,6 +25,9 @@
 #include "TransientInterface.h"
 #include "UserObjectInterface.h"
 #include "VectorPostprocessorInterface.h"
+
+#include <map>
+#include <optional>
 
 class FEProblemBase;
 class InputParameters;
@@ -48,6 +51,7 @@ class LinearFVBoundaryCondition : public MooseObject,
                                   public MeshChangedInterface,
                                   public BoundaryRestrictableRequired,
                                   public MeshHolder,
+                                  public FVMeshHolder,
                                   public SystemHolder
 {
 public:
@@ -98,16 +102,29 @@ public:
   Variable variable() const { return _var; }
 
   /**
-   * Get the boundary data relation arrays owned by this boundary condition
+   * Build the faces of this boundary condition and its relation arrays, if not built yet. The
+   * faces are those of the face ranges of the Kokkos finite volume mesh where the variable lives on
+   * one side only, the cell on that side is owned, and the single boundary ID is one of this
+   * boundary condition's. Flux kernels call it, as their setup can run before this object's.
+   */
+  void setupFaces();
+
+  /**
+   * Get the boundary data relation arrays owned by this boundary condition, indexed by face of
+   * this boundary condition
    */
   const BoundaryData & boundaryData() const { return _boundary_data; }
 
-  /// Number of faces in this boundary condition's existing worklist
-  MOOSE_KOKKOS_INDEX_TYPE numBoundaryFaces() const;
+  /// Number of faces of this boundary condition
+  MOOSE_KOKKOS_INDEX_TYPE numBoundaryFaces() const { return _faces.size(); }
 
-  /// Face at a BC-local worklist index
-  Pair<ContiguousElementID, unsigned int>
-  boundaryFaceID(const MOOSE_KOKKOS_INDEX_TYPE bc_face_index) const;
+  /**
+   * Get the index in the relation arrays of the first face of a face range of the Kokkos finite
+   * volume mesh
+   * @param range The index of the range in FVMesh::getFaceRanges()
+   * @returns The index, or nothing if the range is not one of this boundary condition's
+   */
+  std::optional<MOOSE_KOKKOS_INDEX_TYPE> faceRangeOffset(const unsigned int range) const;
 
   /// Whether this boundary condition overrides the boundary value relation hook
   bool hasBoundaryValue() const;
@@ -124,7 +141,7 @@ public:
    * they can supply boundary values.
    */
   template <typename Derived>
-  KOKKOS_FUNCTION BoundaryRelation computeBoundaryValue(const FVDatum &) const
+  KOKKOS_FUNCTION BoundaryRelation computeBoundaryValue(const FaceDatum &) const
   {
     ::Kokkos::abort("Default computeBoundaryValue() should never be called. Make sure you "
                     "properly redefined this method in your class without typos.");
@@ -137,7 +154,7 @@ public:
    * this when they can supply boundary normal gradients.
    */
   template <typename Derived>
-  KOKKOS_FUNCTION BoundaryRelation computeBoundaryNormalGradient(const FVDatum &) const
+  KOKKOS_FUNCTION BoundaryRelation computeBoundaryNormalGradient(const FaceDatum &) const
   {
     ::Kokkos::abort("Default computeBoundaryNormalGradient() should never be called. Make sure "
                     "you properly redefined this method in your class without typos.");
@@ -181,6 +198,13 @@ public:
   operator()(BoundaryNormalGradientLoop, const ThreadID tid, const Derived & bc) const;
 
 protected:
+  /// The face of a thread, seen from the cell where the variable lives
+  KOKKOS_FUNCTION FaceDatum boundaryFaceDatum(const ThreadID tid) const
+  {
+    const auto range = _faces.range(tid);
+    return FaceDatum(_faces.face(tid, range), _face_range_flips[range], kokkosFVMesh());
+  }
+
   /// Reference to the finite element problem
   FEProblemBase & _fe_problem;
 
@@ -189,6 +213,16 @@ protected:
 
   /// Boundary relation arrays owned by this boundary condition
   BoundaryData _boundary_data;
+
+  /// Faces of this boundary condition
+  FaceRangeList _faces;
+  /// Whether the variable lives on the neighbor side of the faces of each range of _faces
+  Array<bool> _face_range_flips;
+  /// Index in _faces of each face range of the Kokkos finite volume mesh this boundary condition
+  /// covers (host only)
+  std::map<unsigned int, unsigned int> _mesh_range_to_range;
+  /// Whether setupFaces() ran
+  bool _faces_built = false;
 
   /// Dispatcher for boundary value computation
   std::unique_ptr<DispatcherBase> _boundary_value_dispatcher;
@@ -218,8 +252,7 @@ LinearFVBoundaryCondition::operator()(BoundaryValueLoop,
                                       const ThreadID tid,
                                       const Derived & bc) const
 {
-  const auto [elem, side] = kokkosBoundaryElementSideID(tid);
-  FVDatum datum(elem, side, kokkosMesh());
+  const auto datum = boundaryFaceDatum(tid);
   const auto relation = bc.template computeBoundaryValue<Derived>(datum);
   _boundary_data.value.coefficient[tid] = relation.coefficient;
   _boundary_data.value.source[tid] = relation.source;
@@ -231,8 +264,7 @@ LinearFVBoundaryCondition::operator()(BoundaryNormalGradientLoop,
                                       const ThreadID tid,
                                       const Derived & bc) const
 {
-  const auto [elem, side] = kokkosBoundaryElementSideID(tid);
-  FVDatum datum(elem, side, kokkosMesh());
+  const auto datum = boundaryFaceDatum(tid);
   const auto relation = bc.template computeBoundaryNormalGradient<Derived>(datum);
   _boundary_data.normal_gradient.coefficient[tid] = relation.coefficient;
   _boundary_data.normal_gradient.source[tid] = relation.source;

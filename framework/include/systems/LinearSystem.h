@@ -28,6 +28,7 @@ class LinearFVElementalKernel;
 class LinearFVFluxKernel;
 class LinearFVBoundaryCondition;
 class System;
+class FVSystemAssembly;
 }
 
 // libMesh forward declarations
@@ -207,6 +208,10 @@ protected:
    */
   void computeKokkosLinearSystem(const std::set<TagID> & vector_tags,
                                  const std::set<TagID> & matrix_tags);
+
+  /// The tagged matrices and vectors the Kokkos linear FV objects assemble into, created at the
+  /// first Kokkos assembly
+  std::unique_ptr<Moose::Kokkos::FVSystemAssembly> _kokkos_fv_assembly;
 #endif
 
   /// Whether every linear FV kernel and boundary condition of this system is a Kokkos object, in

@@ -10,13 +10,15 @@
 #pragma once
 
 #include "KokkosLinearFVKernel.h"
-#include "KokkosDatum.h"
+#include "KokkosFVDatum.h"
 
 namespace Moose::Kokkos
 {
 
 /**
- * Base class for Kokkos linear finite volume kernels that contribute on elements (volumetric terms)
+ * Base class for Kokkos linear finite volume kernels that contribute on cells (volumetric terms).
+ * Derived classes define computeCellContribution(), which returns the contributions of a cell to
+ * the diagonal and the right-hand side of its own row.
  */
 class LinearFVElementalKernel : public LinearFVKernel
 {
@@ -26,57 +28,67 @@ public:
   LinearFVElementalKernel(const InputParameters & parameters);
   LinearFVElementalKernel(const LinearFVElementalKernel & object);
 
-  virtual void computeRightHandSide() override;
-  virtual void computeMatrix() override;
   virtual void initialSetup() override;
 
-  /**
-   * Right-hand side dispatch loop body; accumulates the elemental RHS contribution
-   * @param tid The thread ID of the current element
-   * @param kernel The derived kernel object whose contribution methods are invoked
-   */
-  template <typename Derived>
-  KOKKOS_FUNCTION void
-  operator()(RightHandSideLoop, const ThreadID tid, const Derived & kernel) const;
+  /// Contributions of a cell to the diagonal and the right-hand side of its row
+  struct CellContribution
+  {
+    Real diag = 0;
+    Real rhs = 0;
+  };
+
+  /// Tag dispatch type for the loop over the cells
+  struct CellLoop
+  {
+  };
 
   /**
-   * Matrix dispatch loop body; accumulates the elemental matrix contribution
-   * @param tid The thread ID of the current element
-   * @param kernel The derived kernel object whose contribution methods are invoked
+   * Cell loop body; adds the contributions of one cell
+   * @param tid The thread ID of the current cell
+   * @param kernel The derived kernel object whose contribution method is invoked
    */
   template <typename Derived>
-  KOKKOS_FUNCTION void operator()(MatrixLoop, const ThreadID tid, const Derived & kernel) const;
+  KOKKOS_FUNCTION void operator()(CellLoop, const ThreadID tid, const Derived & kernel) const;
+
+  /**
+   * Default method to prevent compile errors when the contribution is not defined in the derived
+   * class
+   */
+  template <typename Derived>
+  KOKKOS_FUNCTION CellContribution computeCellContribution(const CellDatum &) const
+  {
+    ::Kokkos::abort("Default computeCellContribution() should never be called. Make sure you "
+                    "properly redefined this method in your class without typos.");
+
+    return {};
+  }
 
 protected:
+  virtual void dispatchContributions() override;
+
   /// Matrix nonzero position of the diagonal of each block element, indexed like the dispatch
-  /// thread, so the matrix loop does not search the sparsity pattern
+  /// thread, so the cell loop does not search the sparsity pattern
   Array<PetscInt> _diagonal_matrix_slots;
+
+  /// Dispatcher of the cell loop
+  std::unique_ptr<DispatcherBase> _cell_dispatcher;
 };
 
 template <typename Derived>
 KOKKOS_FUNCTION void
-LinearFVElementalKernel::operator()(RightHandSideLoop,
-                                    const ThreadID tid,
-                                    const Derived & kernel) const
+LinearFVElementalKernel::operator()(CellLoop, const ThreadID tid, const Derived & kernel) const
 {
   const auto elem = kokkosBlockElementID(tid);
-  FVDatum datum(elem, libMesh::invalid_uint, kokkosMesh());
-  KOKKOS_ASSERT(_var.components() == 1);
-  const auto & sys = kokkosSystem(_var.sys());
-  kernel.template accumulateTaggedVector<AccumulationMode::NonAtomic>(
-      kernel.template computeRightHandSideContribution<Derived>(datum),
-      sys.getElemLocalDofIndex(elem, 0, _var.var()));
-}
+  const CellDatum datum(elem, kokkosFVMesh());
+  const auto contribution = kernel.template computeCellContribution<Derived>(datum);
 
-template <typename Derived>
-KOKKOS_FUNCTION void
-LinearFVElementalKernel::operator()(MatrixLoop, const ThreadID tid, const Derived & kernel) const
-{
-  const auto elem = kokkosBlockElementID(tid);
-  FVDatum datum(elem, libMesh::invalid_uint, kokkosMesh());
   KOKKOS_ASSERT(_var.components() == 1);
-  kernel.template accumulateTaggedMatrixAtSlot<AccumulationMode::NonAtomic>(
-      kernel.template computeMatrixContribution<Derived>(datum), _diagonal_matrix_slots[tid]);
+  if (_assemble_matrix)
+    kernel.template accumulateTaggedMatrixAtSlot<AccumulationMode::NonAtomic>(
+        contribution.diag, _diagonal_matrix_slots[tid]);
+  if (_assemble_rhs)
+    kernel.template accumulateTaggedVector<AccumulationMode::NonAtomic>(
+        contribution.rhs, kokkosSystem(_var.sys()).getElemLocalDofIndex(elem, 0, _var.var()));
 }
 
 } // namespace Moose::Kokkos

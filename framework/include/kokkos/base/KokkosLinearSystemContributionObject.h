@@ -11,6 +11,8 @@
 
 #include "KokkosDispatcher.h"
 #include "KokkosMesh.h"
+#include "KokkosFVMesh.h"
+#include "KokkosFVSystemAssembly.h"
 #include "KokkosSystem.h"
 #include "KokkosVariable.h"
 
@@ -48,6 +50,7 @@ class LinearSystemContributionObject : public MooseObject,
                                        public MeshChangedInterface,
                                        public TaggingInterface,
                                        public MeshHolder,
+                                       public FVMeshHolder,
                                        public SystemHolder
 {
 public:
@@ -62,25 +65,15 @@ public:
    */
   Variable variable() const { return _var; }
 
-  /// Tag dispatch type for the right-hand side computation loop
-  struct RightHandSideLoop
-  {
-  };
-  /// Tag dispatch type for the matrix computation loop
-  struct MatrixLoop
-  {
-  };
-
   /**
-   * Compute the right-hand side contributions of this object. The work is dispatched without
-   * waiting for it to finish; the caller fences before reading the results.
+   * Compute the contributions of this object to the tagged matrices, the tagged vectors, or both,
+   * in one pass. The work is dispatched without waiting for it to finish; the caller fences before
+   * reading the results.
+   * @param matrix Whether to add the matrix contributions
+   * @param rhs Whether to add the right-hand side contributions
+   * @param assembly The arrays of the tagged matrices and vectors being assembled
    */
-  virtual void computeRightHandSide() = 0;
-  /**
-   * Compute the matrix contributions of this object. The work is dispatched without waiting for
-   * it to finish; the caller fences before reading the results.
-   */
-  virtual void computeMatrix() = 0;
+  void computeContributions(const bool matrix, const bool rhs, const FVSystemAssembly & assembly);
 
 protected:
   /// Whether tagged vector/matrix accumulation must use atomics
@@ -90,32 +83,39 @@ protected:
     NonAtomic
   };
 
+  /// Add a contribution to a row of every tagged vector this object assembles
   template <AccumulationMode mode = AccumulationMode::Atomic>
   KOKKOS_FUNCTION void accumulateTaggedVector(Real value, dof_id_type row) const;
-  template <AccumulationMode mode = AccumulationMode::Atomic>
-  KOKKOS_FUNCTION void accumulateTaggedMatrix(Real value, dof_id_type row, dof_id_type col) const;
-  /// Accumulate into all tagged matrices at a precomputed nonzero position (see
-  /// System::getMatrixSlot()), which avoids searching the row for the column
+  /// Add a contribution to every tagged matrix this object assembles, at a precomputed nonzero
+  /// position (see System::getMatrixSlot()), which avoids searching the row for the column
   template <AccumulationMode mode = AccumulationMode::Atomic>
   KOKKOS_FUNCTION void accumulateTaggedMatrixAtSlot(Real value, PetscInt slot) const;
 
   /// Reference to the finite element problem
   FEProblemBase & _fe_problem;
 
+  /// Dispatch the loops of this object for computeContributions()
+  virtual void dispatchContributions() = 0;
+
   /// Kokkos variable
   Variable _var;
 
-  /// Vector (residual) tags this object contributes to. The copies made for each dispatch share
-  /// the arrays of the object they are copied from, which rebuilds them only when its tag sets
-  /// change, so that dispatching does not allocate and copy device memory.
-  mutable Array<TagID> _vector_tags;
-  /// Matrix tags this object contributes to (shared with the dispatch copies, see _vector_tags)
-  mutable Array<TagID> _matrix_tags;
+  /// Whether the current computeContributions() adds the matrix contributions
+  bool _assemble_matrix = false;
+  /// Whether the current computeContributions() adds the right-hand side contributions
+  bool _assemble_rhs = false;
 
-  /// Dispatcher for the right-hand side computation loop
-  std::unique_ptr<DispatcherBase> _rhs_dispatcher;
-  /// Dispatcher for the matrix computation loop
-  std::unique_ptr<DispatcherBase> _matrix_dispatcher;
+  /// Most tagged matrices or vectors an object adds to in one assembly; a linear system normally
+  /// assembles one of each
+  static constexpr unsigned int max_tagged_targets = 4;
+  /// Device arrays of the tagged vectors this object adds to in the current assembly
+  Real * _vector_targets[max_tagged_targets] = {};
+  /// Number of entries of _vector_targets
+  unsigned int _num_vector_targets = 0;
+  /// Device value arrays of the tagged matrices this object adds to in the current assembly
+  Real * _matrix_targets[max_tagged_targets] = {};
+  /// Number of entries of _matrix_targets
+  unsigned int _num_matrix_targets = 0;
 
   /**
    * TODO: Move to TransientInterface
@@ -124,18 +124,6 @@ protected:
   /// Current time
   Scalar<Real> _t;
   ///@}
-
-private:
-  /// Rebuild _vector_tags and _matrix_tags if the governing TaggingInterface tag sets changed
-  void updateTagArrays() const;
-
-  /// Tag sets that _vector_tags and _matrix_tags were last built from
-  ///@{
-  mutable std::set<TagID> _vector_tag_set;
-  mutable std::set<TagID> _matrix_tag_set;
-  ///@}
-  /// Whether _vector_tags and _matrix_tags have been built
-  mutable bool _tag_arrays_built = false;
 };
 
 template <LinearSystemContributionObject::AccumulationMode mode>
@@ -146,44 +134,12 @@ LinearSystemContributionObject::accumulateTaggedVector(const Real value,
   if (!value)
     return;
 
-  KOKKOS_ASSERT(_var.components() == 1);
-  auto & sys = kokkosSystem(_var.sys());
-  const MOOSE_KOKKOS_INDEX_TYPE tags_size = _vector_tags.size();
-  for (MOOSE_KOKKOS_INDEX_TYPE index = 0; index < tags_size; ++index)
+  for (unsigned int i = 0; i < _num_vector_targets; ++i)
   {
-    const auto tag = _vector_tags[index];
-    if (sys.isResidualTagActive(tag))
-    {
-      if constexpr (mode == AccumulationMode::Atomic)
-        ::Kokkos::atomic_add(&sys.getVectorDofValue(row, tag), value);
-      else
-        sys.getVectorDofValue(row, tag) += value;
-    }
-  }
-}
-
-template <LinearSystemContributionObject::AccumulationMode mode>
-KOKKOS_FUNCTION inline void
-LinearSystemContributionObject::accumulateTaggedMatrix(const Real value,
-                                                       const dof_id_type row,
-                                                       const dof_id_type col) const
-{
-  if (!value)
-    return;
-
-  KOKKOS_ASSERT(_var.components() == 1);
-  auto & sys = kokkosSystem(_var.sys());
-  const MOOSE_KOKKOS_INDEX_TYPE tags_size = _matrix_tags.size();
-  for (MOOSE_KOKKOS_INDEX_TYPE index = 0; index < tags_size; ++index)
-  {
-    const auto tag = _matrix_tags[index];
-    if (sys.isMatrixTagActive(tag))
-    {
-      if constexpr (mode == AccumulationMode::Atomic)
-        ::Kokkos::atomic_add(&sys.getMatrixValue(row, col, tag), value);
-      else
-        sys.getMatrixValue(row, col, tag) += value;
-    }
+    if constexpr (mode == AccumulationMode::Atomic)
+      ::Kokkos::atomic_add(&_vector_targets[i][row], value);
+    else
+      _vector_targets[i][row] += value;
   }
 }
 
@@ -196,19 +152,12 @@ LinearSystemContributionObject::accumulateTaggedMatrixAtSlot(const Real value,
     return;
 
   KOKKOS_ASSERT(slot >= 0);
-  KOKKOS_ASSERT(_var.components() == 1);
-  auto & sys = kokkosSystem(_var.sys());
-  const MOOSE_KOKKOS_INDEX_TYPE tags_size = _matrix_tags.size();
-  for (MOOSE_KOKKOS_INDEX_TYPE index = 0; index < tags_size; ++index)
+  for (unsigned int i = 0; i < _num_matrix_targets; ++i)
   {
-    const auto tag = _matrix_tags[index];
-    if (sys.isMatrixTagActive(tag))
-    {
-      if constexpr (mode == AccumulationMode::Atomic)
-        ::Kokkos::atomic_add(&sys.getMatrixValueAtSlot(slot, tag), value);
-      else
-        sys.getMatrixValueAtSlot(slot, tag) += value;
-    }
+    if constexpr (mode == AccumulationMode::Atomic)
+      ::Kokkos::atomic_add(&_matrix_targets[i][slot], value);
+    else
+      _matrix_targets[i][slot] += value;
   }
 }
 

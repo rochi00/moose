@@ -41,6 +41,18 @@
     compute_devices = 'cpu cuda xpu'
     max_threads = 1
   []
+  [matches-host-linearfv-gather]
+    type = Exodiff
+    input = 'match-non-kokkos.i'
+    exodiff = 'diffusion-1d-aux_out.e'
+    gold_dir = '../../../variables/linearfv/gold'
+    cli_args = 'Problem/kokkos_linear_fv_assembly=gather'
+    prereq = 'matches-host-linearfv'
+    requirement = 'The system shall produce the same linear finite volume diffusion solution as the host implementation when the Kokkos face contributions are stored per face and summed per cell in a fixed order.'
+    capabilities = 'kokkos'
+    compute_devices = 'cpu cuda xpu'
+    max_threads = 1
+  []
   [rz]
     type = MMSTest
     input = 'test.py'

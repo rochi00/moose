@@ -23,9 +23,9 @@ public:
   KokkosLinearFVFunctorNeumannBC(const InputParameters & parameters);
 
   template <typename Derived>
-  KOKKOS_FUNCTION BoundaryRelation computeBoundaryValue(const FVDatum & datum) const;
+  KOKKOS_FUNCTION BoundaryRelation computeBoundaryValue(const FaceDatum & datum) const;
   template <typename Derived>
-  KOKKOS_FUNCTION BoundaryRelation computeBoundaryNormalGradient(const FVDatum & datum) const;
+  KOKKOS_FUNCTION BoundaryRelation computeBoundaryNormalGradient(const FaceDatum & datum) const;
 
 private:
   /// The functor providing the outward normal gradient on the boundary
@@ -34,14 +34,14 @@ private:
 
 template <typename Derived>
 KOKKOS_FUNCTION KokkosLinearFVFunctorNeumannBC::BoundaryRelation
-KokkosLinearFVFunctorNeumannBC::computeBoundaryValue(const FVDatum & datum) const
+KokkosLinearFVFunctorNeumannBC::computeBoundaryValue(const FaceDatum & datum) const
 {
   return {1, _normal_gradient_functor->value(_t, datum.faceCentroid()) * datum.faceDCFMag()};
 }
 
 template <typename Derived>
 KOKKOS_FUNCTION KokkosLinearFVFunctorNeumannBC::BoundaryRelation
-KokkosLinearFVFunctorNeumannBC::computeBoundaryNormalGradient(const FVDatum & datum) const
+KokkosLinearFVFunctorNeumannBC::computeBoundaryNormalGradient(const FaceDatum & datum) const
 {
   return {0, _normal_gradient_functor->value(_t, datum.faceCentroid())};
 }

@@ -26,10 +26,7 @@ public:
   KokkosLinearFVImplicitEulerTest(const KokkosLinearFVImplicitEulerTest & object);
 
   template <typename Derived>
-  KOKKOS_FUNCTION Real computeMatrixContribution(const Moose::Kokkos::FVDatum & datum) const;
-
-  template <typename Derived>
-  KOKKOS_FUNCTION Real computeRightHandSideContribution(const Moose::Kokkos::FVDatum & datum) const;
+  KOKKOS_FUNCTION CellContribution computeCellContribution(const Moose::Kokkos::CellDatum & datum) const;
 
 private:
   /// Constant multiplier on the time derivative
@@ -41,19 +38,12 @@ private:
 };
 
 template <typename Derived>
-KOKKOS_FUNCTION inline Real
-KokkosLinearFVImplicitEulerTest::computeMatrixContribution(
-    const Moose::Kokkos::FVDatum & datum) const
-{
-  return _factor * datum.elementVolume() / _dt;
-}
-
-template <typename Derived>
-KOKKOS_FUNCTION inline Real
-KokkosLinearFVImplicitEulerTest::computeRightHandSideContribution(
-    const Moose::Kokkos::FVDatum & datum) const
+KOKKOS_FUNCTION inline KokkosLinearFVImplicitEulerTest::CellContribution
+KokkosLinearFVImplicitEulerTest::computeCellContribution(
+    const Moose::Kokkos::CellDatum & datum) const
 {
   const auto & sys = kokkosSystem(_var.sys());
-  const auto dof = sys.getElemLocalDofIndex(datum.elemID(), 0, _var.var());
-  return _factor * datum.elementVolume() / _dt * sys.getVectorDofValue(dof, _old_tag);
+  const auto dof = sys.getElemLocalDofIndex(datum.elem(), 0, _var.var());
+  const auto coefficient = _factor * datum.elemVolume() / _dt;
+  return {coefficient, coefficient * sys.getVectorDofValue(dof, _old_tag)};
 }

@@ -377,88 +377,30 @@ private:
 };
 
 template <typename T, typename = void>
-struct has_split_linear_fv_flux_dispatchers : std::false_type
+struct is_linear_fv_flux_kernel : std::false_type
 {
 };
 
 template <typename T>
-struct has_split_linear_fv_flux_dispatchers<T,
-                                            std::void_t<typename T::InternalRightHandSideLoop,
-                                                        typename T::BoundaryRightHandSideLoop,
-                                                        typename T::InternalMatrixLoop,
-                                                        typename T::BoundaryMatrixLoop>>
+struct is_linear_fv_flux_kernel<
+    T,
+    std::void_t<typename T::InternalFaceLoop, typename T::BoundaryFaceLoop, typename T::GatherLoop>>
   : std::true_type
 {
 };
 
 template <typename Object>
-bool
-hasLinearFVMatrixContribution()
-{
-  return &Object::template computeMatrixContribution<Object> !=
-             Object::template defaultMatrixContribution<Object>() ||
-         &Object::template computeNeighborMatrixContribution<Object> !=
-             Object::template defaultNeighborMatrixContribution<Object>();
-}
-
-template <typename Object>
-bool
-hasInternalLinearFVFluxMatrixContribution()
-{
-  return &Object::template computeInternalMatrixContribution<Object> !=
-             Object::template defaultInternalMatrixContribution<Object>() ||
-         &Object::template computeInternalNeighborMatrixContribution<Object> !=
-             Object::template defaultInternalNeighborMatrixContribution<Object>();
-}
-
-template <typename Object>
-bool
-hasBoundaryLinearFVFluxMatrixContribution()
-{
-  return &Object::template computeBoundaryMatrixContribution<Object> !=
-         Object::template defaultBoundaryMatrixContribution<Object>();
-}
-
-template <typename Object>
-bool
-hasLinearFVFluxFaceCoefficient()
-{
-  return &Object::template computeFaceCoefficient<Object> !=
-         Object::template defaultFaceCoefficient<Object>();
-}
-
-template <typename Object>
 void
 registerLinearFVKernelDispatchers(const std::string & objectname)
 {
-  if constexpr (has_split_linear_fv_flux_dispatchers<Object>::value)
+  if constexpr (is_linear_fv_flux_kernel<Object>::value)
   {
-    DispatcherRegistry::addDispatcher<typename Object::InternalRightHandSideLoop, Object>(
-        objectname);
-    DispatcherRegistry::addDispatcher<typename Object::BoundaryRightHandSideLoop, Object>(
-        objectname);
-    DispatcherRegistry::addDispatcher<typename Object::InternalMatrixLoop, Object>(objectname);
-    DispatcherRegistry::addDispatcher<typename Object::BoundaryMatrixLoop, Object>(objectname);
-    DispatcherRegistry::addDispatcher<typename Object::InternalFaceCoefficientLoop, Object>(
-        objectname);
-    DispatcherRegistry::addDispatcher<typename Object::BoundaryFaceCoefficientLoop, Object>(
-        objectname);
-
-    DispatcherRegistry::hasUserMethod<typename Object::InternalMatrixLoop>(
-        objectname, hasInternalLinearFVFluxMatrixContribution<Object>());
-    DispatcherRegistry::hasUserMethod<typename Object::BoundaryMatrixLoop>(
-        objectname, hasBoundaryLinearFVFluxMatrixContribution<Object>());
-    DispatcherRegistry::hasUserMethod<typename Object::InternalFaceCoefficientLoop>(
-        objectname, hasLinearFVFluxFaceCoefficient<Object>());
+    DispatcherRegistry::addDispatcher<typename Object::InternalFaceLoop, Object>(objectname);
+    DispatcherRegistry::addDispatcher<typename Object::BoundaryFaceLoop, Object>(objectname);
+    DispatcherRegistry::addDispatcher<typename Object::GatherLoop, Object>(objectname);
   }
   else
-  {
-    DispatcherRegistry::addDispatcher<typename Object::RightHandSideLoop, Object>(objectname);
-    DispatcherRegistry::addDispatcher<typename Object::MatrixLoop, Object>(objectname);
-
-    DispatcherRegistry::hasUserMethod<typename Object::MatrixLoop>(
-        objectname, hasLinearFVMatrixContribution<Object>());
-  }
+    DispatcherRegistry::addDispatcher<typename Object::CellLoop, Object>(objectname);
 }
 
 } // namespace Moose::Kokkos

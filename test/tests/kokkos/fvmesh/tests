@@ -1,0 +1,13 @@
+[Tests]
+  issues = '#32492'
+  design = 'LinearFVKernels/index.md'
+  [fvmesh]
+    type = CSVDiff
+    input = fvmesh.i
+    csvdiff = fvmesh_out.csv
+    requirement = 'The system shall build the face and cell data of the Kokkos linear finite volume objects identical to the MOOSE face and element info, with faces that close the surface of every cell.'
+    capabilities = 'kokkos'
+    compute_devices = 'cpu cuda xpu'
+    max_threads = 1 # linear FV doesn't support threading
+  []
+[]

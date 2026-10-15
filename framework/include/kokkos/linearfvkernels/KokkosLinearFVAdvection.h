@@ -24,62 +24,43 @@ public:
   KokkosLinearFVAdvection(const InputParameters & parameters);
 
   virtual bool needsBoundaryValueData() const override { return true; }
-  virtual bool hasInternalRightHandSideContribution() const override { return false; }
 
   template <typename Derived>
-  KOKKOS_FUNCTION Real computeInternalMatrixContribution(const FVDatum & datum) const;
+  KOKKOS_FUNCTION InternalFaceContribution
+  computeInternalFaceContribution(const FaceDatum & datum) const;
   template <typename Derived>
-  KOKKOS_FUNCTION Real computeInternalNeighborMatrixContribution(const FVDatum & datum) const;
-  template <typename Derived>
-  KOKKOS_FUNCTION Real computeBoundaryMatrixContribution(
-      const FVDatum & datum, const int bc_index, const MOOSE_KOKKOS_INDEX_TYPE bc_face_index) const;
-  template <typename Derived>
-  KOKKOS_FUNCTION Real computeBoundaryRightHandSideContribution(
-      const FVDatum & datum, const int bc_index, const MOOSE_KOKKOS_INDEX_TYPE bc_face_index) const;
+  KOKKOS_FUNCTION BoundaryFaceContribution computeBoundaryFaceContribution(
+      const FaceDatum & datum, const int bc_index, const MOOSE_KOKKOS_INDEX_TYPE bc_face_index) const;
 
 private:
   /// Normal advective face flux
-  KOKKOS_FUNCTION Real normalFaceFlux(const FVDatum & datum) const;
+  KOKKOS_FUNCTION Real normalFaceFlux(const FaceDatum & datum) const;
 
   /// Constant advecting velocity vector
   const Moose::Kokkos::Real3 _velocity;
 };
 
 template <typename Derived>
-KOKKOS_FUNCTION Real
-KokkosLinearFVAdvection::computeInternalMatrixContribution(const FVDatum & datum) const
+KOKKOS_FUNCTION KokkosLinearFVAdvection::InternalFaceContribution
+KokkosLinearFVAdvection::computeInternalFaceContribution(const FaceDatum & datum) const
 {
-  const auto face_flux = normalFaceFlux(datum);
-  return face_flux > 0 ? face_flux * datum.faceArea() : 0;
+  const auto face_flux = normalFaceFlux(datum) * datum.faceArea();
+  // Upwind: the outflow of the elem cell depends on the elem value, the inflow on the neighbor's
+  return {face_flux > 0 ? face_flux : 0, face_flux < 0 ? face_flux : 0, 0, 0};
 }
 
 template <typename Derived>
-KOKKOS_FUNCTION Real
-KokkosLinearFVAdvection::computeInternalNeighborMatrixContribution(const FVDatum & datum) const
+KOKKOS_FUNCTION KokkosLinearFVAdvection::BoundaryFaceContribution
+KokkosLinearFVAdvection::computeBoundaryFaceContribution(
+    const FaceDatum & datum, const int bc_index, const MOOSE_KOKKOS_INDEX_TYPE bc_face_index) const
 {
-  const auto face_flux = normalFaceFlux(datum);
-  return face_flux < 0 ? face_flux * datum.faceArea() : 0;
-}
-
-template <typename Derived>
-KOKKOS_FUNCTION Real
-KokkosLinearFVAdvection::computeBoundaryMatrixContribution(
-    const FVDatum & datum, const int bc_index, const MOOSE_KOKKOS_INDEX_TYPE bc_face_index) const
-{
-  return normalFaceFlux(datum) * datum.faceArea() *
-         boundaryValueCoefficient(bc_index, bc_face_index);
-}
-
-template <typename Derived>
-KOKKOS_FUNCTION Real
-KokkosLinearFVAdvection::computeBoundaryRightHandSideContribution(
-    const FVDatum & datum, const int bc_index, const MOOSE_KOKKOS_INDEX_TYPE bc_face_index) const
-{
-  return -normalFaceFlux(datum) * datum.faceArea() * boundaryValueSource(bc_index, bc_face_index);
+  const auto face_flux = normalFaceFlux(datum) * datum.faceArea();
+  return {face_flux * boundaryValueCoefficient(bc_index, bc_face_index),
+          -face_flux * boundaryValueSource(bc_index, bc_face_index)};
 }
 
 KOKKOS_FUNCTION inline Real
-KokkosLinearFVAdvection::normalFaceFlux(const FVDatum & datum) const
+KokkosLinearFVAdvection::normalFaceFlux(const FaceDatum & datum) const
 {
   return _velocity * datum.faceNormal();
 }

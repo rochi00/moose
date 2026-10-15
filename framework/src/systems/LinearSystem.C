@@ -12,6 +12,9 @@
 #include "Problem.h"
 #include "FEProblem.h"
 #include "PetscSupport.h"
+#ifdef MOOSE_KOKKOS_ENABLED
+#include "KokkosFVSystemAssembly.h"
+#endif
 #include "Factory.h"
 #include "ParallelUniqueId.h"
 #include "ComputeLinearFVElementalThread.h"

@@ -24,9 +24,9 @@ public:
   KokkosLinearFVFunctorDirichletBC(const InputParameters & parameters);
 
   template <typename Derived>
-  KOKKOS_FUNCTION BoundaryRelation computeBoundaryValue(const FVDatum & datum) const;
+  KOKKOS_FUNCTION BoundaryRelation computeBoundaryValue(const FaceDatum & datum) const;
   template <typename Derived>
-  KOKKOS_FUNCTION BoundaryRelation computeBoundaryNormalGradient(const FVDatum & datum) const;
+  KOKKOS_FUNCTION BoundaryRelation computeBoundaryNormalGradient(const FaceDatum & datum) const;
 
 private:
   /// The functor providing the Dirichlet value on the boundary
@@ -35,14 +35,14 @@ private:
 
 template <typename Derived>
 KOKKOS_FUNCTION KokkosLinearFVFunctorDirichletBC::BoundaryRelation
-KokkosLinearFVFunctorDirichletBC::computeBoundaryValue(const FVDatum & datum) const
+KokkosLinearFVFunctorDirichletBC::computeBoundaryValue(const FaceDatum & datum) const
 {
   return {0, _functor->value(_t, datum.faceCentroid())};
 }
 
 template <typename Derived>
 KOKKOS_FUNCTION KokkosLinearFVFunctorDirichletBC::BoundaryRelation
-KokkosLinearFVFunctorDirichletBC::computeBoundaryNormalGradient(const FVDatum & datum) const
+KokkosLinearFVFunctorDirichletBC::computeBoundaryNormalGradient(const FaceDatum & datum) const
 {
   const auto distance = datum.faceDCFMag();
   return {-1 / distance, _functor->value(_t, datum.faceCentroid()) / distance};

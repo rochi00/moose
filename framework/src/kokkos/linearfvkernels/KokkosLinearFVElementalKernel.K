@@ -52,24 +52,12 @@ LinearFVElementalKernel::initialSetup()
 }
 
 void
-LinearFVElementalKernel::computeRightHandSide()
+LinearFVElementalKernel::dispatchContributions()
 {
   Policy policy(0, numKokkosBlockElements());
-  if (!_rhs_dispatcher)
-    _rhs_dispatcher = DispatcherRegistry::build<RightHandSideLoop>(this, type());
-  _rhs_dispatcher->parallelForAsync(policy);
-}
-
-void
-LinearFVElementalKernel::computeMatrix()
-{
-  if (DispatcherRegistry::hasUserMethod<MatrixLoop>(type()))
-  {
-    Policy policy(0, numKokkosBlockElements());
-    if (!_matrix_dispatcher)
-      _matrix_dispatcher = DispatcherRegistry::build<MatrixLoop>(this, type());
-    _matrix_dispatcher->parallelForAsync(policy);
-  }
+  if (!_cell_dispatcher)
+    _cell_dispatcher = DispatcherRegistry::build<CellLoop>(this, type());
+  _cell_dispatcher->parallelForAsync(policy);
 }
 
 } // namespace Moose::Kokkos

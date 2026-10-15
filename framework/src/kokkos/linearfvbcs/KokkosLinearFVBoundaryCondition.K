@@ -47,6 +47,7 @@ LinearFVBoundaryCondition::LinearFVBoundaryCondition(const InputParameters & par
     MeshChangedInterface(parameters),
     BoundaryRestrictableRequired(this, false),
     MeshHolder(*getCheckedPointerParam<SubProblem *>("_subproblem")->mesh().getKokkosMesh()),
+    FVMeshHolder(getCheckedPointerParam<SystemBase *>("_sys")->feProblem().getKokkosFVMesh()),
     SystemHolder(getCheckedPointerParam<SystemBase *>("_sys")->feProblem().getKokkosSystems()),
     _fe_problem(*getParam<FEProblemBase *>("_fe_problem_base")),
     _t(TransientInterface::_t),
@@ -75,10 +76,13 @@ LinearFVBoundaryCondition::LinearFVBoundaryCondition(const LinearFVBoundaryCondi
     MeshChangedInterface(object, {}),
     BoundaryRestrictableRequired(object, {}),
     MeshHolder(object),
+    FVMeshHolder(object),
     SystemHolder(object),
     _fe_problem(object._fe_problem),
     _var(object._var),
     _boundary_data(object._boundary_data),
+    _faces(object._faces),
+    _face_range_flips(object._face_range_flips),
     _t(object._t),
     _t_old(object._t_old),
     _t_step(object._t_step),
@@ -87,21 +91,51 @@ LinearFVBoundaryCondition::LinearFVBoundaryCondition(const LinearFVBoundaryCondi
 {
 }
 
-MOOSE_KOKKOS_INDEX_TYPE
-LinearFVBoundaryCondition::numBoundaryFaces() const
-{
-  return libMesh::cast_int<MOOSE_KOKKOS_INDEX_TYPE>(numKokkosBoundarySides());
-}
-
-Pair<ContiguousElementID, unsigned int>
-LinearFVBoundaryCondition::boundaryFaceID(const MOOSE_KOKKOS_INDEX_TYPE bc_face_index) const
-{
-  return kokkosBoundaryElementSideID(bc_face_index);
-}
-
 void
 LinearFVBoundaryCondition::initialSetup()
 {
+  setupFaces();
+}
+
+void
+LinearFVBoundaryCondition::setupFaces()
+{
+  if (_faces_built)
+    return;
+  _faces_built = true;
+
+  const auto & fv_mesh = kokkosFVMesh();
+  const auto * const variable = _var.mooseFieldVar();
+  const auto & bc_boundaries = boundaryIDs();
+
+  std::vector<FaceRange> ranges;
+  std::vector<bool> flips;
+  for (const auto r : index_range(fv_mesh.getFaceRanges()))
+  {
+    const auto & range = fv_mesh.getFaceRanges()[r];
+    const bool on_elem = variable->activeOnSubdomain(range.elem_subdomain);
+    const bool on_neighbor = range.neighbor_subdomain != Moose::INVALID_BLOCK_ID &&
+                             variable->activeOnSubdomain(range.neighbor_subdomain);
+    // A boundary for the variable, on the side of an owned cell
+    if (on_elem == on_neighbor || !(on_elem ? range.elem_owned : range.neighbor_owned))
+      continue;
+
+    // The boundary IDs of the side where the variable lives
+    const auto & range_boundaries = fv_mesh.getFaceRangeBoundaryIDs(r, on_neighbor);
+    if (range_boundaries.size() != 1 || !bc_boundaries.count(range_boundaries.front()))
+      continue;
+
+    _mesh_range_to_range[r] = ranges.size();
+    ranges.push_back(range);
+    flips.push_back(on_neighbor);
+  }
+
+  _faces.create(ranges);
+  _face_range_flips.create(flips.size());
+  for (const auto i : index_range(flips))
+    _face_range_flips[i] = flips[i];
+  _face_range_flips.copyToDevice();
+
   const auto n_boundary_faces = numBoundaryFaces();
 
   _boundary_data.value.coefficient.create(n_boundary_faces);
@@ -112,6 +146,17 @@ LinearFVBoundaryCondition::initialSetup()
   _boundary_data.value.source = 0;
   _boundary_data.normal_gradient.coefficient = 0;
   _boundary_data.normal_gradient.source = 0;
+}
+
+std::optional<MOOSE_KOKKOS_INDEX_TYPE>
+LinearFVBoundaryCondition::faceRangeOffset(const unsigned int range) const
+{
+  mooseAssert(_faces_built, "setupFaces() must be called first");
+
+  const auto it = _mesh_range_to_range.find(range);
+  if (it == _mesh_range_to_range.end())
+    return {};
+  return _faces.offset(it->second);
 }
 
 bool
@@ -137,7 +182,7 @@ LinearFVBoundaryCondition::computeBoundaryValueData()
                "') was asked to compute boundary values, but it does not override "
                "computeBoundaryValue().");
 
-  Policy policy(0, numKokkosBoundarySides());
+  Policy policy(0, numBoundaryFaces());
   if (!_boundary_value_dispatcher)
     _boundary_value_dispatcher = DispatcherRegistry::build<BoundaryValueLoop>(this, type());
   _boundary_value_dispatcher->parallelForAsync(policy);
@@ -154,7 +199,7 @@ LinearFVBoundaryCondition::computeBoundaryNormalGradientData()
                "') was asked to compute boundary normal gradients, but it does not override "
                "computeBoundaryNormalGradient().");
 
-  Policy policy(0, numKokkosBoundarySides());
+  Policy policy(0, numBoundaryFaces());
   if (!_boundary_normal_gradient_dispatcher)
     _boundary_normal_gradient_dispatcher =
         DispatcherRegistry::build<BoundaryNormalGradientLoop>(this, type());
