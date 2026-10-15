@@ -51,8 +51,10 @@ On a GPU node, configure with `--with-kokkos` against a CUDA/HIP-enabled PETSc i
 conda activate moose-next
 cd kokkos_fv/bench
 
-# CPU vs Kokkos matrix/RHS parity (hex/tet/prism, orthogonal and skewed, 1 and 3 ranks)
+# CPU vs Kokkos matrix/RHS parity (hex/tet/prism, orthogonal and skewed, nonorthogonal
+# correction off and on, 1 and 3 ranks); --interp selects advected interpolation methods
 python3 bench.py parity
+python3 bench.py parity --interp upwind average minmod vanleer muscl
 
 # Bitwise reproducibility of the Kokkos assembly over 10 fresh runs, 4 OpenMP threads
 python3 bench.py determinism --n 24 --threads 4 --runs 10
@@ -88,6 +90,14 @@ section common to both implementations is `LinearSystem::computeLinearSystemInte
 **Threads.** `--threads` sets `KOKKOS_NUM_THREADS` and `OMP_NUM_THREADS`. MOOSE always runs with
 `--n-threads=1`. The CPU path ignores Kokkos threads.
 
+**Parity system.** `parity` compares the first assembled system. The steady inputs start from a
+smooth non-uniform initial condition, so that the gradients, which the nonorthogonal correction and
+the limited interpolation methods read, are nonzero in every cell, while both codes assemble from
+the same solution. Comparing a later system would not work for the Minmod and Van Leer methods:
+their flux-limiter ratio `r_f` divides by the difference of the cell values across a face, which
+amplifies the round-off differences of the two earlier solves by orders of magnitude where that
+difference is small.
+
 **Parity tolerances.** Entrywise relative tolerance is `1e-12`. Absolute differences below
 `1e-14 x` the largest entry are ignored. Mismatches are classified into rows of cells with a
 boundary face and interior rows.
@@ -99,17 +109,16 @@ binary). Each run is a fresh process.
 
 These were found by `parity`.
 
-- **Interior faces match** to round-off on every mesh tested: hex, tet and prism, orthogonal and
-  skewed, serial and 3 ranks.
-- **Boundary rows match only on orthogonal hex meshes.** Two causes:
-  1. **Dirichlet distance.** The CPU `LinearFVAdvectionDiffusionFunctorDirichletBC` uses the
-     normal projection `|d_Cf . n|` (`LinearFVBoundaryCondition::computeCellToFaceDistance`).
-     `KokkosLinearFVFunctorDirichletBC` uses `|d_Cf|` (`datum.faceDCFMag()`).
-  2. **Neumann face value.** The CPU `LinearFVAdvectionDiffusionFunctorNeumannBC` adds a
-     tangential-gradient term `grad(phi_C) . (d_Cf - (d_Cf . n) n)` to the boundary value used
-     by advection. The Kokkos Neumann BC returns the cell value.
-- **Neumann meaning differs.** The Kokkos Neumann functor is a normal gradient; the CPU functor
-  is a diffusive flux divided by `k`. The inputs use zero flux so the two coincide.
+- **The CPU and Kokkos systems match** to round-off on every mesh tested: hex, tet and prism,
+  orthogonal and skewed, serial and 3 ranks (since phase 1 step 4, 2026-10-15), with and without
+  the nonorthogonal correction (since step 5), and with each advected interpolation method (since
+  step 6). Until then boundary
+  rows differed on non-orthogonal meshes: the Kokkos Dirichlet BC used `|d_Cf|` instead of the
+  normal projection `|d_Cf . n|`, and the Kokkos Neumann BC took a normal gradient and had no
+  tangential-gradient term.
+- **Gradient method.** The default Green-Gauss method computes the gradients of variables whose
+  linear FV objects are all Kokkos objects with Kokkos, as only that sees the Kokkos boundary
+  conditions, which the Neumann tangential term depends on.
 - **`KokkosLinearFVSource` default.** `scaling_factor` defaults to `1`, which builds a
   `KokkosConstantFunction`. The kernel rejects it because it requires a `KokkosParsedFunction`, so
   the input sets `scaling_factor` explicitly.

@@ -7,6 +7,8 @@ n = 16             # cells per direction
 elem_type = HEX8   # HEX8 | TET4 | PRISM6
 skew = 0.0         # amplitude of a smooth interior node perturbation (0 = orthogonal mesh)
 steps = 10         # number of assemblies/solves
+noc = false        # non-orthogonal correction in the diffusion kernel
+interp = upwind    # advected interpolation: upwind | average | minmod | vanleer | muscl
 
 [Mesh]
   [gmg]
@@ -35,7 +37,34 @@ steps = 10         # number of assemblies/solves
   [u]
     type = MooseLinearVariableFVReal
     solver_sys = 'u_sys'
-    initial_condition = 1.0
+  []
+[]
+
+# A smooth non-uniform initial condition, so that the first assembly, which bench.py parity
+# compares, has nonzero gradients in every cell
+[ICs]
+  [u_ic]
+    type = FunctionIC
+    variable = u
+    function = 'sin(2*x) + y*y + 0.5*z + x*y*z'
+  []
+[]
+
+[FVInterpolationMethods]
+  [upwind]
+    type = FVAdvectedUpwind
+  []
+  [average]
+    type = FVGeometricAverage
+  []
+  [minmod]
+    type = FVAdvectedMinmodWeightBased
+  []
+  [vanleer]
+    type = FVAdvectedVanLeerWeightBased
+  []
+  [muscl]
+    type = FVAdvectedMUSCLDeferredCorrection
   []
 []
 
@@ -44,11 +73,13 @@ steps = 10         # number of assemblies/solves
     type = KokkosLinearFVAdvection
     variable = u
     velocity = '1 0.5 0.25'
+    advected_interp_method_name = ${interp}
   []
   [diffusion]
     type = KokkosLinearFVDiffusion
     variable = u
     diffusion_coeff = k_fn
+    use_nonorthogonal_correction = ${noc}
   []
   [source]
     type = KokkosLinearFVSource
@@ -72,6 +103,7 @@ steps = 10         # number of assemblies/solves
     variable = u
     boundary = 'right top front'
     functor = zero_fn
+    diffusion_coeff = k_fn
   []
 []
 

@@ -6,6 +6,8 @@ elem_type = HEX8
 dt = 0.01
 skew = 0.0
 steps = 50
+noc = false        # non-orthogonal correction in the diffusion kernel
+interp = upwind    # advected interpolation: upwind | average | minmod | vanleer | muscl
 
 [Mesh]
   [gmg]
@@ -41,6 +43,18 @@ steps = 50
   [upwind]
     type = FVAdvectedUpwind
   []
+  [average]
+    type = FVGeometricAverage
+  []
+  [minmod]
+    type = FVAdvectedMinmodWeightBased
+  []
+  [vanleer]
+    type = FVAdvectedVanLeerWeightBased
+  []
+  [muscl]
+    type = FVAdvectedMUSCLDeferredCorrection
+  []
 []
 
 [LinearFVKernels]
@@ -52,13 +66,13 @@ steps = 50
     type = LinearFVAdvection
     variable = u
     velocity = '1 0.5 0.25'
-    advected_interp_method_name = upwind
+    advected_interp_method_name = ${interp}
   []
   [diffusion]
     type = LinearFVDiffusion
     variable = u
     diffusion_coeff = k_fn
-    use_nonorthogonal_correction = false
+    use_nonorthogonal_correction = ${noc}
   []
   [source]
     type = LinearFVSource

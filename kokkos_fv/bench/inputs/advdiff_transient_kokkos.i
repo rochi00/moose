@@ -1,8 +1,7 @@
 # Transient 3D advection-diffusion-source with implicit Euler, Kokkos objects.
 #   du/dt + div(v u) - div(k grad u) = s,  u(t=0) = 1
-# The time derivative is the test-only KokkosLinearFVImplicitEulerTest (no Kokkos linear FV time
-# derivative exists in the framework). For the "mixed" variant bench.py swaps it for the CPU
-# LinearFVTimeDerivative via LinearFVKernels/time/type=LinearFVTimeDerivative.
+# The time derivative is KokkosLinearFVTimeDerivative. For the "mixed" variant bench.py swaps it
+# for the CPU LinearFVTimeDerivative via LinearFVKernels/time/type=LinearFVTimeDerivative.
 # Each step is solved to l_tol with GMRES + Jacobi.
 
 n = 16             # cells per direction
@@ -10,6 +9,8 @@ elem_type = HEX8   # HEX8 | TET4 | PRISM6
 dt = 0.01
 skew = 0.0         # amplitude of a smooth interior node perturbation (0 = orthogonal mesh)
 steps = 50         # number of time steps
+noc = false        # non-orthogonal correction in the diffusion kernel
+interp = upwind    # advected interpolation: upwind | average | minmod | vanleer | muscl
 
 [Mesh]
   [gmg]
@@ -42,20 +43,40 @@ steps = 50         # number of time steps
   []
 []
 
+[FVInterpolationMethods]
+  [upwind]
+    type = FVAdvectedUpwind
+  []
+  [average]
+    type = FVGeometricAverage
+  []
+  [minmod]
+    type = FVAdvectedMinmodWeightBased
+  []
+  [vanleer]
+    type = FVAdvectedVanLeerWeightBased
+  []
+  [muscl]
+    type = FVAdvectedMUSCLDeferredCorrection
+  []
+[]
+
 [LinearFVKernels]
   [time]
-    type = KokkosLinearFVImplicitEulerTest
+    type = KokkosLinearFVTimeDerivative
     variable = u
   []
   [advection]
     type = KokkosLinearFVAdvection
     variable = u
     velocity = '1 0.5 0.25'
+    advected_interp_method_name = ${interp}
   []
   [diffusion]
     type = KokkosLinearFVDiffusion
     variable = u
     diffusion_coeff = k_fn
+    use_nonorthogonal_correction = ${noc}
   []
   [source]
     type = KokkosLinearFVSource
@@ -79,6 +100,7 @@ steps = 50         # number of time steps
     variable = u
     boundary = 'right top front'
     functor = zero_fn
+    diffusion_coeff = k_fn
   []
 []
 

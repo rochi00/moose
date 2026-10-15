@@ -20,6 +20,7 @@ import argparse
 import csv
 import datetime
 import hashlib
+import itertools
 import json
 import os
 import shutil
@@ -234,13 +235,14 @@ def cmd_parity(args):
     results = []
     for elem in args.elem:
         for skew in args.skew:
-            for n in args.n:
+            for n, noc, interp in itertools.product(args.n, args.noc, args.interp):
                 for np_ranks in args.np:
-                    case = f"{elem} n={n} skew={skew} np={np_ranks}"
+                    case = f"{elem} n={n} skew={skew} noc={noc} interp={interp} np={np_ranks}"
                     dirs = {}
                     for impl in ("cpu", "kokkos"):
                         d = tempfile.mkdtemp(prefix=f"parity_{impl}_", dir=args.workroot)
-                        ov = {"n": n, "elem_type": elem, "skew": skew, "steps": 1}
+                        ov = {"n": n, "elem_type": elem, "skew": skew, "noc": noc,
+                              "interp": interp, "steps": 1}
                         rc, out = run_moose(args, impl, ov, np_ranks, d, extra=dump_options(d))
                         check(rc, out, f"{impl} {case}")
                         if not os.path.exists(os.path.join(d, "A.bin")):
@@ -607,6 +609,10 @@ def main():
     pp.add_argument("--elem", nargs="+", default=["HEX8", "TET4", "PRISM6"])
     pp.add_argument("--skew", type=float, nargs="+", default=[0.0, 0.3])
     pp.add_argument("--np", type=int, nargs="+", default=[1, 3])
+    pp.add_argument("--noc", nargs="+", default=["false", "true"],
+                    help="non-orthogonal correction in the diffusion kernel")
+    pp.add_argument("--interp", nargs="+", default=["upwind"],
+                    help="advected interpolation methods: upwind average minmod vanleer muscl")
     pp.add_argument("--rtol", type=float, default=1e-12)
     pp.add_argument("--atol", type=float, default=1e-14, help="relative to the largest entry")
     pp.add_argument("--keep", action="store_true", help="keep the run directories")

@@ -9,6 +9,8 @@ n = 16
 elem_type = HEX8
 skew = 0.0
 steps = 10
+noc = false        # non-orthogonal correction in the diffusion kernel
+interp = upwind    # advected interpolation: upwind | average | minmod | vanleer | muscl
 
 [Mesh]
   [gmg]
@@ -36,13 +38,34 @@ steps = 10
   [u]
     type = MooseLinearVariableFVReal
     solver_sys = 'u_sys'
-    initial_condition = 1.0
+  []
+[]
+
+# A smooth non-uniform initial condition, so that the first assembly, which bench.py parity
+# compares, has nonzero gradients in every cell
+[ICs]
+  [u_ic]
+    type = FunctionIC
+    variable = u
+    function = 'sin(2*x) + y*y + 0.5*z + x*y*z'
   []
 []
 
 [FVInterpolationMethods]
   [upwind]
     type = FVAdvectedUpwind
+  []
+  [average]
+    type = FVGeometricAverage
+  []
+  [minmod]
+    type = FVAdvectedMinmodWeightBased
+  []
+  [vanleer]
+    type = FVAdvectedVanLeerWeightBased
+  []
+  [muscl]
+    type = FVAdvectedMUSCLDeferredCorrection
   []
 []
 
@@ -51,13 +74,13 @@ steps = 10
     type = LinearFVAdvection
     variable = u
     velocity = '1 0.5 0.25'
-    advected_interp_method_name = upwind
+    advected_interp_method_name = ${interp}
   []
   [diffusion]
     type = LinearFVDiffusion
     variable = u
     diffusion_coeff = k_fn
-    use_nonorthogonal_correction = false
+    use_nonorthogonal_correction = ${noc}
   []
   [source]
     type = LinearFVSource
