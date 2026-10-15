@@ -67,6 +67,19 @@ public:
   Real getMassFlux(const FaceInfo & fi) const override;
   Real getVolumetricFaceFlux(const FaceInfo & fi) const override;
   void commitAcceptedTimestepTransportHistory();
+  /**
+   * Whether this process holds the cell behind \p fi without owning it. The flux on such a face
+   * cannot be formed here: the face value a boundary condition needs there is defined through the
+   * very flux being formed, so recomputing it locally closes a cycle that the lagged flux exists
+   * to break. The owning process has already formed it over its own faces.
+   */
+  bool isHaloFace(const FaceInfo & fi) const;
+  /**
+   * Fill the faces this process holds but does not own with the values their owners computed.
+   * A no-op in serial, where there are no such faces.
+   */
+  void synchronizeHaloFaceFlux(
+      FaceCenteredMapFunctor<Real, std::unordered_map<dof_id_type, Real>> & field) const;
   void freezeLaggedCorrectedFaceFlux(const bool use_previous_timestep_flux = false);
 
   /// Update the additional pressure-equation source-flux functors before the pressure solve.

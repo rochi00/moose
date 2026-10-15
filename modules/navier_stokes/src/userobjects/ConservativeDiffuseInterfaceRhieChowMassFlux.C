@@ -879,15 +879,19 @@ ConservativeDiffuseInterfaceRhieChowMassFlux::getVolumetricFaceFlux(const FaceIn
 void
 ConservativeDiffuseInterfaceRhieChowMassFlux::initializeAdditionalPressureFluxStorage()
 {
-  for (const auto * fi : _fe_problem.mesh().faceInfo())
+  // Keyed over every face of the local mesh, not only the owned ones. These maps are published as
+  // functors, and a cell-gradient stencil that reaches a ghosted cell asks for a value on that
+  // cell's own boundary faces. Keeping the keys present makes the functors total; the owned faces
+  // are still the only ones computed here, and synchronizeHaloFaceFlux() brings the rest over.
+  for (const auto & fi : _fe_problem.mesh().allFaceInfo())
   {
-    _previous_timestep_corrected_face_phi[fi->id()] = 0.0;
-    _lagged_corrected_face_phi[fi->id()] = 0.0;
-    _pressure_coupled_cell_reconstruction_scalar[fi->id()] = 0.0;
-    _phig_flux[fi->id()] = 0.0;
-    _pressure_predictor_base_flux[fi->id()] = 0.0;
-    _pressure_Ainv[fi->id()] = RealVectorValue();
-    _pressure_boundary_normal_gradient[fi->id()] = 0.0;
+    _previous_timestep_corrected_face_phi[fi.id()] = 0.0;
+    _lagged_corrected_face_phi[fi.id()] = 0.0;
+    _pressure_coupled_cell_reconstruction_scalar[fi.id()] = 0.0;
+    _phig_flux[fi.id()] = 0.0;
+    _pressure_predictor_base_flux[fi.id()] = 0.0;
+    _pressure_Ainv[fi.id()] = RealVectorValue();
+    _pressure_boundary_normal_gradient[fi.id()] = 0.0;
   }
 
   for (auto & component_face_values : _boundary_velocity_face_values)
@@ -1081,6 +1085,51 @@ ConservativeDiffuseInterfaceRhieChowMassFlux::cacheCurrentCorrectedVolumetricFlu
         writebackReconstructionScalar(fi, time_arg, degenerate_normal_pressure_ainv_tol);
 }
 
+bool
+ConservativeDiffuseInterfaceRhieChowMassFlux::isHaloFace(const FaceInfo & fi) const
+{
+  if (!isFlowFace(fi))
+    return false;
+  if (fi.elem().processor_id() == processor_id())
+    return false;
+  return !(fi.neighborPtr() && fi.neighborPtr()->processor_id() == processor_id());
+}
+
+void
+ConservativeDiffuseInterfaceRhieChowMassFlux::synchronizeHaloFaceFlux(
+    FaceCenteredMapFunctor<Real, std::unordered_map<dof_id_type, Real>> & field) const
+{
+  if (n_processors() == 1)
+    return;
+
+  std::unordered_map<processor_id_type, std::vector<dof_id_type>> queries;
+  for (const auto & fi : _fe_problem.mesh().allFaceInfo())
+    if (isHaloFace(fi))
+      queries[fi.elem().processor_id()].push_back(fi.id());
+
+  auto gather = [&field](const processor_id_type,
+                         const std::vector<dof_id_type> & face_ids,
+                         std::vector<Real> & values)
+  {
+    for (const auto face_id : face_ids)
+    {
+      const auto it = field.find(face_id);
+      values.push_back(it == field.end() ? 0.0 : it->second);
+    }
+  };
+
+  auto act = [&field](const processor_id_type,
+                      const std::vector<dof_id_type> & face_ids,
+                      const std::vector<Real> & values)
+  {
+    for (const auto i : index_range(face_ids))
+      field[face_ids[i]] = values[i];
+  };
+
+  libMesh::Parallel::pull_parallel_vector_data<Real>(
+      _communicator, queries, gather, act, static_cast<const Real *>(nullptr));
+}
+
 void
 ConservativeDiffuseInterfaceRhieChowMassFlux::freezeLaggedCorrectedFaceFlux(
     const bool use_previous_timestep_flux)
@@ -1090,6 +1139,8 @@ ConservativeDiffuseInterfaceRhieChowMassFlux::freezeLaggedCorrectedFaceFlux(
         use_previous_timestep_flux
             ? libmesh_map_find(_previous_timestep_corrected_face_phi, fi->id())
             : _corrected_face_phi.evaluate(fi);
+
+  synchronizeHaloFaceFlux(_lagged_corrected_face_phi);
 }
 
 void

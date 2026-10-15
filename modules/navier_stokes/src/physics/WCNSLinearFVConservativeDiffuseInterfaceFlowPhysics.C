@@ -394,5 +394,10 @@ WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::addSurfaceTensionFunctorMat
 unsigned short
 WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::getNumberAlgebraicGhostingLayersNeeded() const
 {
-  return 2;
+  // The interface normal is a cell gradient of the volume fraction, so a face on a process
+  // boundary reaches one cell past the ghosted neighbour: two layers. The capillary force adds the
+  // curvature, which is the divergence of that normal, so it needs the normal one cell further out
+  // and the volume fraction one cell beyond that: three layers.
+  const bool surface_tension = !getParam<MooseFunctorName>("surface_tension_coefficient").empty();
+  return surface_tension ? 3 : 2;
 }

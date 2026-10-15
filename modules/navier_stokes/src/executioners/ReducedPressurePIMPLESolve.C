@@ -455,6 +455,14 @@ ReducedPressurePIMPLESolve::initializeStartupPressureField(const SolverParams & 
     mooseError("ReducedPressurePIMPLESolve startup projection requires momentum systems and a "
                "Rhie-Chow user object.");
 
+  // The startup assembly forms H/A, which reads the coupling pressure-gradient snapshot. The
+  // outer loop takes that snapshot at its first iteration, after this point, so take it here as
+  // well or the startup projection reads a snapshot that does not exist yet.
+  if (_should_solve_momentum && _should_solve_pressure)
+  {
+    _rc_uo->initPressureGradient();
+    _rc_uo->prepareMomentumPredictor();
+  }
   assembleMomentumPredictorWithoutSolve();
   _rc_uo->initFaceMassFlux();
 
