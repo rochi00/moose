@@ -165,8 +165,13 @@ public:
     const MaterialProperty<Real> * property = nullptr;
     // Pointer to a function
     const Function * function = nullptr;
+    // Index of an argument passed to RPNEvaluator::eval()
+    unsigned int argument = libMesh::invalid_uint;
     // Whether the variable was associated
-    bool associated() const { return scalar || field || property || function; }
+    bool associated() const
+    {
+      return scalar || field || property || function || argument != libMesh::invalid_uint;
+    }
   };
 
   /**
@@ -235,6 +240,13 @@ public:
    * @param function The pointer to the function
    */
   void associateFunction(const std::string & name, const Function * function);
+  /**
+   * Associate a variable with an argument of RPNEvaluator::eval(), for callers that supply the
+   * values themselves
+   * @param name The variable name
+   * @param index The index of the argument
+   */
+  void associateArgument(const std::string & name, const unsigned int index);
 
   /**
    * Get numbers used in the expression
@@ -364,12 +376,15 @@ public:
    * @param p The location in space (x,y,z)
    * @param qp The local quadrature point index
    * @param datum The Datum object of the current thread
+   * @param arguments The values of the variables associated with arguments, or nullptr if there
+   * are none
    * @returns The evaluated value
    */
   KOKKOS_FUNCTION Real eval(const Real t,
                             const Real3 p,
                             const unsigned int qp = 0,
-                            Datum * datum = nullptr) const;
+                            Datum * datum = nullptr,
+                            const Real * arguments = nullptr) const;
 
 private:
   /**
@@ -396,7 +411,8 @@ private:
     SCALAR,
     FIELD,
     MATERIAL,
-    FUNCTION
+    FUNCTION,
+    ARGUMENT
   };
 
   /**
@@ -488,7 +504,11 @@ private:
     break
 
 KOKKOS_FUNCTION inline Real
-RPNEvaluator::eval(const Real t, const Real3 p, const unsigned int qp, Datum * datum) const
+RPNEvaluator::eval(const Real t,
+                   const Real3 p,
+                   const unsigned int qp,
+                   Datum * datum,
+                   const Real * arguments) const
 {
   Real stack[_stack_size];
 
@@ -538,6 +558,11 @@ RPNEvaluator::eval(const Real t, const Real3 p, const unsigned int qp, Datum * d
             }
             case VariableType::FUNCTION:
               stack[head] = _functions[idx].value(t, p);
+              break;
+            case VariableType::ARGUMENT:
+              KOKKOS_ASSERT(arguments);
+
+              stack[head] = arguments[idx];
               break;
           }
         }

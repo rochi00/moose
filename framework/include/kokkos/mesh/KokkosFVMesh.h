@@ -102,6 +102,10 @@ public:
    */
   ContiguousElementID getNumLocalElements() const { return _num_local_elems; }
   /**
+   * Get the number of owned and one-layer ghost cells
+   */
+  ContiguousElementID getNumElements() const { return _num_elems; }
+  /**
    * Get the maximum number of sides of a cell, the second dimension of the cell-to-face table
    */
   unsigned int getMaxSidesPerElem() const { return _max_sides; }
@@ -146,6 +150,21 @@ public:
   {
     return neighbor_side ? _host_maps->face_range_neighbor_boundary_ids[range]
                          : _host_maps->face_range_elem_boundary_ids[range];
+  }
+  /**
+   * Get the boundary IDs that select the boundary condition of a variable living on one side of
+   * the faces of a range (host only): those of the variable's side, or else those of the other
+   * side. Where the host linear finite volume objects accept the mesh, which takes the union of
+   * both sides and requires at most one ID, this selects the same boundary; it also lets each side
+   * of a block interface carry its own sideset.
+   * @param range The index of the range in getFaceRanges()
+   * @param neighbor_side Whether the variable lives on the neighbor cell's side
+   */
+  const std::vector<BoundaryID> & getFaceRangeVariableBoundaryIDs(const unsigned int range,
+                                                                  const bool neighbor_side) const
+  {
+    const auto & own = getFaceRangeBoundaryIDs(range, neighbor_side);
+    return own.empty() ? getFaceRangeBoundaryIDs(range, !neighbor_side) : own;
   }
 
 #ifdef MOOSE_KOKKOS_SCOPE
@@ -279,6 +298,8 @@ private:
   ContiguousFaceID _num_faces = 0;
   /// Number of owned cells
   ContiguousElementID _num_local_elems = 0;
+  /// Number of owned and one-layer ghost cells
+  ContiguousElementID _num_elems = 0;
   /// Maximum number of sides of a cell
   unsigned int _max_sides = 0;
 
@@ -359,6 +380,10 @@ public:
    * Get the first thread of a range (host)
    */
   MOOSE_KOKKOS_INDEX_TYPE offset(const unsigned int range) const;
+  /**
+   * Get the first face of a range (host)
+   */
+  ContiguousFaceID begin(const unsigned int range) const;
 
 #ifdef MOOSE_KOKKOS_SCOPE
   /**

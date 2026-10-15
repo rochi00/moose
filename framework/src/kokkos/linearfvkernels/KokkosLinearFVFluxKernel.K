@@ -58,6 +58,8 @@ LinearFVFluxKernel::LinearFVFluxKernel(const LinearFVFluxKernel & object)
 void
 LinearFVFluxKernel::initialSetup()
 {
+  setupLinearFVProperties();
+
   const auto sys_num = _var.sys();
   const auto var_num = _var.var();
   const auto var_name = _var.mooseVar()->name();
@@ -135,7 +137,7 @@ LinearFVFluxKernel::initialSetup()
     if (!(flip ? neighbor_row : elem_row))
       continue;
 
-    const auto & range_boundaries = fv_mesh.getFaceRangeBoundaryIDs(r, flip);
+    const auto & range_boundaries = fv_mesh.getFaceRangeVariableBoundaryIDs(r, flip);
     if (range_boundaries.size() > 1)
       mooseError("Kokkos linear FV flux kernel '",
                  name(),
@@ -195,6 +197,9 @@ LinearFVFluxKernel::initialSetup()
   _internal_faces = internal_faces;
   _boundary_ranges.create(boundary_ranges);
   _boundary_range_bcs = boundary_range_bcs;
+  _host_boundary_range_flips.clear();
+  for (const auto & range_bc : boundary_range_bcs)
+    _host_boundary_range_flips.push_back(range_bc.flip);
   _boundary_diag_slots = boundary_diag_slots;
 
   _bc_data.create(libMesh::cast_int<MOOSE_KOKKOS_INDEX_TYPE>(bcs.size()));
@@ -321,6 +326,8 @@ LinearFVFluxKernel::initialSetup()
 void
 LinearFVFluxKernel::dispatchContributions()
 {
+  updateLinearFVProperties(_t, &_internal_ranges, &_boundary_ranges, _host_boundary_range_flips);
+
   if (_internal_ranges.size())
   {
     Policy policy(0, _internal_ranges.size());

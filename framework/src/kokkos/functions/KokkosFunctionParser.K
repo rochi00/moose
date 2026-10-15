@@ -295,6 +295,25 @@ RPNBuilder::associateFunction(const std::string & name, const Function * functio
 }
 
 void
+RPNBuilder::associateArgument(const std::string & name, const unsigned int index)
+{
+  checkFinalized();
+
+  auto it = _variables.find(name);
+  if (it == _variables.end())
+    mooseError("Kokkos parsed function error: variable '",
+               name,
+               "' was not added but attempted to associate an argument.");
+
+  if (it->second.associated())
+    mooseError("Kokkos parsed function error: variable '",
+               name,
+               "' is already associated and cannot associate an argument.");
+
+  it->second.argument = index;
+}
+
+void
 RPNBuilder::builderError(const peg::Ast & ast, const std::string & message) const
 {
   std::string arrow(ast.column, ' ');
@@ -421,6 +440,11 @@ RPNEvaluator::init(const RPNBuilder & builder)
       _variables[var.idx].first = VariableType::FUNCTION;
       _variables[var.idx].second = _num_functions++;
       _pointers[var.idx] = var.function;
+    }
+    else if (var.argument != libMesh::invalid_uint)
+    {
+      _variables[var.idx].first = VariableType::ARGUMENT;
+      _variables[var.idx].second = var.argument;
     }
     else if (var.idx >= 4)
       mooseError(

@@ -2,7 +2,13 @@
 
 !if! function=hasCapability('kokkos')
 
-This is the Kokkos version of [LinearFVDiffusion.md]. As there, the nonorthogonal correction
+This is the Kokkos version of [LinearFVDiffusion.md]. The diffusion coefficient is a number, a
+[KokkosConstantFunction.md], a [KokkosParsedFunction.md], a linear finite volume variable or the
+`property_name` of a [KokkosParsedFunctorMaterial.md]. It is evaluated on the faces as the host
+evaluates the functor, or interpolated to the faces from the cell values with the
+`coeff_interp_method` ([FVGeometricAverage.md] or [FVHarmonicAverage.md]); function values are
+computed when the time changes, values of variables before every assembly. As on the host, the
+nonorthogonal correction
 (`use_nonorthogonal_correction`, on by default) splits the normal gradient on a face into an
 implicit difference of the cell values along the cell-to-cell vector and an explicit correction
 from the face gradient, linearly interpolated from the cell gradients of the variable's gradient

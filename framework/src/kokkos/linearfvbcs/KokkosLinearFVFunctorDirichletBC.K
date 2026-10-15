@@ -15,14 +15,18 @@ InputParameters
 KokkosLinearFVFunctorDirichletBC::validParams()
 {
   InputParameters params = Moose::Kokkos::LinearFVBoundaryCondition::validParams();
-  params.addRequiredParam<FunctionName>("functor", "The boundary-value functor.");
+  params.addRequiredParam<MooseFunctorName>("functor", "The boundary-value functor.");
   params.addClassDescription("Kokkos LinearFV Dirichlet boundary condition.");
   return params;
 }
 
 KokkosLinearFVFunctorDirichletBC::KokkosLinearFVFunctorDirichletBC(
     const InputParameters & parameters)
-  : Moose::Kokkos::LinearFVBoundaryCondition(parameters),
-    _functor(getKokkosFunction<KokkosParsedFunction>("functor"))
+  : Moose::Kokkos::LinearFVBoundaryCondition(parameters)
 {
+  PropertyUse use;
+  use.boundary_faces = true;
+  // As functorFaceArg() for a function, which is defined on both sides of a face
+  use.unsided_boundary_faces = true;
+  requestLinearFVProperty("functor", _functor, use);
 }

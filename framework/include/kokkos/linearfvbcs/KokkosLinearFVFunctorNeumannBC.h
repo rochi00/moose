@@ -34,9 +34,9 @@ public:
 
 private:
   /// The functor providing the outward diffusive flux on the boundary
-  const Moose::Kokkos::ReferenceWrapper<const KokkosParsedFunction> _flux_functor;
+  Moose::Kokkos::LinearFVProperty _flux_functor;
   /// The diffusion coefficient
-  const Moose::Kokkos::ReferenceWrapper<const KokkosParsedFunction> _diffusion_coeff;
+  Moose::Kokkos::LinearFVProperty _diffusion_coeff;
   /// The cell gradients of the variable
   Moose::Kokkos::LinearFVCellGradient _gradient;
 };
@@ -45,14 +45,14 @@ template <typename Derived>
 KOKKOS_FUNCTION KokkosLinearFVFunctorNeumannBC::BoundaryRelation
 KokkosLinearFVFunctorNeumannBC::computeBoundaryValue(const FaceDatum & datum) const
 {
-  const auto face_centroid = datum.faceCentroid();
+  const auto face = datum.face();
   const auto normal = datum.faceNormal();
   const auto d_cf = datum.cellToFaceVector();
   // The part of the cell-to-face vector orthogonal to the normal, along which the cell gradient
   // extrapolates on non-orthogonal meshes
   const auto correction_vector = d_cf - (d_cf * normal) * normal;
   return {1,
-          _flux_functor->value(_t, face_centroid) / _diffusion_coeff->value(_t, face_centroid) *
+          _flux_functor.face(face) / _diffusion_coeff.face(face) *
                   datum.cellToFaceDistance() +
               _gradient(kokkosSystems(), datum.elem()) * correction_vector};
 }
@@ -62,5 +62,5 @@ KOKKOS_FUNCTION KokkosLinearFVFunctorNeumannBC::BoundaryRelation
 KokkosLinearFVFunctorNeumannBC::computeBoundaryNormalGradient(const FaceDatum & datum) const
 {
   // A diffusive flux, see includesMaterialPropertyMultiplier()
-  return {0, _flux_functor->value(_t, datum.faceCentroid())};
+  return {0, _flux_functor.face(datum.face())};
 }

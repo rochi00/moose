@@ -273,8 +273,18 @@ GreenGaussGradient::compute(SystemBase & system,
   auto & kokkos_system = problem.getKokkosSystem(system.number());
   const auto solution_tag = problem.getVectorTagID(Moose::SOLUTION_TAG);
 
-  kokkos_system.setActiveSolutionTags({solution_tag});
-  kokkos_system.sync(MemcpyType::HOST_TO_DEVICE);
+  // The systems the boundary conditions read, such as those of the variables of their properties,
+  // along with this one
+  std::set<unsigned int> read_systems{system.number()};
+  for (const auto variable_number : variable_numbers)
+    for (const auto * const bc : variableData(system, variable_number).bcs)
+      read_systems.insert(bc->readSystems().begin(), bc->readSystems().end());
+  for (const auto sys : read_systems)
+  {
+    auto & read_system = problem.getKokkosSystem(sys);
+    read_system.setActiveSolutionTags({solution_tag});
+    read_system.sync(MemcpyType::HOST_TO_DEVICE);
+  }
   kokkos_systems.copyToDevice();
 
   GradientComponents components(gradient, kokkos_system.getNumLocalDofs());
@@ -362,9 +372,13 @@ GreenGaussGradient::compute(SystemBase & system,
 
   components.restore();
 
-  kokkos_system.sync(MemcpyType::DEVICE_TO_HOST);
-  kokkos_system.clearActiveVariables();
-  kokkos_system.clearActiveSolutionTags();
+  for (const auto sys : read_systems)
+  {
+    auto & read_system = problem.getKokkosSystem(sys);
+    read_system.sync(MemcpyType::DEVICE_TO_HOST);
+    read_system.clearActiveVariables();
+    read_system.clearActiveSolutionTags();
+  }
 }
 
 void

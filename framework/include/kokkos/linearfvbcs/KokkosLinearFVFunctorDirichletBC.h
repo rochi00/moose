@@ -32,14 +32,14 @@ public:
 
 private:
   /// The functor providing the Dirichlet value on the boundary
-  const Moose::Kokkos::ReferenceWrapper<const KokkosParsedFunction> _functor;
+  Moose::Kokkos::LinearFVProperty _functor;
 };
 
 template <typename Derived>
 KOKKOS_FUNCTION KokkosLinearFVFunctorDirichletBC::BoundaryRelation
 KokkosLinearFVFunctorDirichletBC::computeBoundaryValue(const FaceDatum & datum) const
 {
-  return {0, _functor->value(_t, datum.faceCentroid())};
+  return {0, _functor.face(datum.face())};
 }
 
 template <typename Derived>
@@ -47,5 +47,5 @@ KOKKOS_FUNCTION KokkosLinearFVFunctorDirichletBC::BoundaryRelation
 KokkosLinearFVFunctorDirichletBC::computeBoundaryNormalGradient(const FaceDatum & datum) const
 {
   const auto distance = datum.cellToFaceDistance();
-  return {-1 / distance, _functor->value(_t, datum.faceCentroid()) / distance};
+  return {-1 / distance, _functor.face(datum.face()) / distance};
 }

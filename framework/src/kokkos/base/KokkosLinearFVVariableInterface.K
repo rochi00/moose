@@ -85,6 +85,9 @@ LinearFVVariableInterface::acquireGradients()
   constexpr bool device_addresses_host =
       ::Kokkos::SpaceAccessibility<ExecSpace, ::Kokkos::HostSpace>::accessible;
 
+  if (_gradient_acquisitions++)
+    return;
+
   for (auto & access : _gradients)
   {
     const auto & components = access.reader->components();
@@ -125,6 +128,10 @@ LinearFVVariableInterface::acquireGradients()
 void
 LinearFVVariableInterface::releaseGradients()
 {
+  mooseAssert(_gradient_acquisitions, "releaseGradients() without acquireGradients()");
+  if (--_gradient_acquisitions)
+    return;
+
   for (auto & access : _gradients)
     for (const auto d : index_range(access.arrays))
     {

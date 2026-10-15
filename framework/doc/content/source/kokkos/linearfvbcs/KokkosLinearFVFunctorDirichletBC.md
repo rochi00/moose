@@ -15,8 +15,11 @@ from the cell center to the face along the face normal, $|\mathbf{d}_{Cf} \cdot 
 [LinearFVAdvectionDiffusionFunctorDirichletBC.md]. Kernels apply their own physics coefficients when consuming
 this relation.
 
-Currently, the only accepted functor type is [KokkosParsedFunction.md], as we are waiting on
-[relocatable device code (RDC)](KokkosFunctions/index.md#kokkos_rdc) support.
+The `functor` is a number, a [KokkosConstantFunction.md], a [KokkosParsedFunction.md], a linear
+finite volume variable or a [KokkosParsedFunctorMaterial.md] property; other function types wait
+on [relocatable device code (RDC)](KokkosFunctions/index.md#kokkos_rdc) support. As the host
+object, it evaluates the functor without a side, so a function at the face centroid also on block
+interfaces, and a functor material there as the interpolation of its cell values.
 
 ## Example Syntax
 

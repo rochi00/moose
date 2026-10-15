@@ -174,6 +174,8 @@ protected:
   FaceRangeList _boundary_ranges;
   /// Boundary condition of each range of _boundary_ranges
   Array<BoundaryRange> _boundary_range_bcs;
+  /// Whether the variable lives on the neighbor side of each range of _boundary_ranges (host only)
+  std::vector<bool> _host_boundary_range_flips;
   /// Matrix nonzero position of the diagonal of the cell row of each boundary face, indexed by
   /// thread
   Array<PetscInt> _boundary_diag_slots;

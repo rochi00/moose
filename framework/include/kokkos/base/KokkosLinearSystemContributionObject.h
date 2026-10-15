@@ -13,6 +13,7 @@
 #include "KokkosMesh.h"
 #include "KokkosFVMesh.h"
 #include "KokkosFVSystemAssembly.h"
+#include "KokkosLinearFVPropertyInterface.h"
 #include "KokkosLinearFVVariableInterface.h"
 #include "KokkosSystem.h"
 #include "KokkosVariable.h"
@@ -53,7 +54,8 @@ class LinearSystemContributionObject : public MooseObject,
                                        public MeshHolder,
                                        public FVMeshHolder,
                                        public SystemHolder,
-                                       public LinearFVVariableInterface
+                                       public LinearFVVariableInterface,
+                                       public LinearFVPropertyInterface
 {
 public:
   static InputParameters validParams();

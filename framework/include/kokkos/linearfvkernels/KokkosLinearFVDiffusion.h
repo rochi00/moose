@@ -10,7 +10,6 @@
 #pragma once
 
 #include "KokkosLinearFVFluxKernel.h"
-#include "KokkosParsedFunction.h"
 
 /**
  * Kokkos linear finite volume flux kernel implementing the diffusion term. It is the Kokkos analog
@@ -44,7 +43,7 @@ private:
   KOKKOS_FUNCTION Real faceConductance(const FaceDatum & datum, const Real diffusivity) const;
 
   /// Diffusion coefficient
-  Moose::Kokkos::ReferenceWrapper<const KokkosParsedFunction> _diffusion_coeff;
+  Moose::Kokkos::LinearFVProperty _diffusion_coeff;
   /// Whether the normal gradient on a face is corrected for the non-orthogonality of the mesh
   const bool _use_nonorthogonal_correction;
   /// The cell gradients of the variable, for the non-orthogonal correction
@@ -55,7 +54,7 @@ template <typename Derived>
 KOKKOS_FUNCTION KokkosLinearFVDiffusion::InternalFaceContribution
 KokkosLinearFVDiffusion::computeInternalFaceContribution(const FaceDatum & datum) const
 {
-  const auto diffusivity = _diffusion_coeff->value(_t, datum.faceCentroid());
+  const auto diffusivity = _diffusion_coeff.face(datum.face());
   const auto conductance = faceConductance(datum, diffusivity);
   if (!_use_nonorthogonal_correction)
     return {conductance, -conductance, 0, 0};
@@ -82,7 +81,7 @@ KokkosLinearFVDiffusion::computeBoundaryFaceContribution(
     const FaceDatum & datum, const int bc_index, const MOOSE_KOKKOS_INDEX_TYPE bc_face_index) const
 {
   // A boundary condition prescribing a diffusive flux already includes the diffusion coefficient
-  const auto diffusivity = _diffusion_coeff->value(_t, datum.faceCentroid());
+  const auto diffusivity = _diffusion_coeff.face(datum.face());
   const auto face_flux_coefficient = boundaryIncludesMaterialPropertyMultiplier(bc_index)
                                          ? datum.faceArea()
                                          : diffusivity * datum.faceArea();

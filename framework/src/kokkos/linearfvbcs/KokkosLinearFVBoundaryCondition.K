@@ -26,6 +26,12 @@ LinearFVBoundaryCondition::validParams()
   params += BoundaryRestrictableRequired::validParams();
 
   params.addPrivateParam<bool>(MooseBase::kokkos_object_param, true);
+  // The objects read the cell values of variables on the one-layer ghost cells, including those of
+  // auxiliary variables, whose system has no matrix coupling that would ghost them
+  params.addRelationshipManager("ElementSideNeighborLayers",
+                                Moose::RelationshipManagerType::ALGEBRAIC,
+                                [](const InputParameters &, InputParameters & rm_params)
+                                { rm_params.set<unsigned short>("layers") = 1; });
   params.addRequiredParam<LinearVariableName>(
       "variable", "The name of the variable this boundary condition supplies data for");
   params.declareControllable("enable");
@@ -52,6 +58,7 @@ LinearFVBoundaryCondition::LinearFVBoundaryCondition(const InputParameters & par
     LinearFVVariableInterface(*this,
                               *getParam<FEProblemBase *>("_fe_problem_base"),
                               getCheckedPointerParam<SystemBase *>("_sys")->number()),
+    LinearFVPropertyInterface(*this, *getParam<FEProblemBase *>("_fe_problem_base"), *this),
     _fe_problem(*getParam<FEProblemBase *>("_fe_problem_base")),
     _t(TransientInterface::_t),
     _t_old(TransientInterface::_t_old),
@@ -82,6 +89,7 @@ LinearFVBoundaryCondition::LinearFVBoundaryCondition(const LinearFVBoundaryCondi
     FVMeshHolder(object),
     SystemHolder(object),
     LinearFVVariableInterface(object),
+    LinearFVPropertyInterface(object),
     _fe_problem(object._fe_problem),
     _var(object._var),
     _boundary_data(object._boundary_data),
@@ -99,6 +107,7 @@ void
 LinearFVBoundaryCondition::initialSetup()
 {
   setupFaces();
+  setupLinearFVProperties();
 }
 
 void
@@ -124,8 +133,8 @@ LinearFVBoundaryCondition::setupFaces()
     if (on_elem == on_neighbor || !(on_elem ? range.elem_owned : range.neighbor_owned))
       continue;
 
-    // The boundary IDs of the side where the variable lives
-    const auto & range_boundaries = fv_mesh.getFaceRangeBoundaryIDs(r, on_neighbor);
+    // The boundary IDs that select the variable's boundary condition
+    const auto & range_boundaries = fv_mesh.getFaceRangeVariableBoundaryIDs(r, on_neighbor);
     if (range_boundaries.size() != 1 || !bc_boundaries.count(range_boundaries.front()))
       continue;
 
@@ -135,6 +144,7 @@ LinearFVBoundaryCondition::setupFaces()
   }
 
   _faces.create(ranges);
+  _host_face_range_flips = flips;
   _face_range_flips.create(flips.size());
   for (const auto i : index_range(flips))
     _face_range_flips[i] = flips[i];
@@ -186,6 +196,7 @@ LinearFVBoundaryCondition::computeBoundaryValueData()
                "') was asked to compute boundary values, but it does not override "
                "computeBoundaryValue().");
 
+  updateLinearFVProperties(_t, nullptr, &_faces, _host_face_range_flips);
   Policy policy(0, numBoundaryFaces());
   if (!_boundary_value_dispatcher)
     _boundary_value_dispatcher = DispatcherRegistry::build<BoundaryValueLoop>(this, type());
@@ -203,6 +214,7 @@ LinearFVBoundaryCondition::computeBoundaryNormalGradientData()
                "') was asked to compute boundary normal gradients, but it does not override "
                "computeBoundaryNormalGradient().");
 
+  updateLinearFVProperties(_t, nullptr, &_faces, _host_face_range_flips);
   Policy policy(0, numBoundaryFaces());
   if (!_boundary_normal_gradient_dispatcher)
     _boundary_normal_gradient_dispatcher =

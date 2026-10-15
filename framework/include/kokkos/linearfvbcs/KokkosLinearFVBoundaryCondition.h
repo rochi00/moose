@@ -11,6 +11,7 @@
 
 #include "KokkosDispatcher.h"
 #include "KokkosFVDatum.h"
+#include "KokkosLinearFVPropertyInterface.h"
 #include "KokkosLinearFVVariableInterface.h"
 #include "KokkosMesh.h"
 #include "KokkosSystem.h"
@@ -54,7 +55,8 @@ class LinearFVBoundaryCondition : public MooseObject,
                                   public MeshHolder,
                                   public FVMeshHolder,
                                   public SystemHolder,
-                                  public LinearFVVariableInterface
+                                  public LinearFVVariableInterface,
+                                  public LinearFVPropertyInterface
 {
 public:
   static InputParameters validParams();
@@ -235,6 +237,8 @@ protected:
   FaceRangeList _faces;
   /// Whether the variable lives on the neighbor side of the faces of each range of _faces
   Array<bool> _face_range_flips;
+  /// _face_range_flips on host, for the properties (host only)
+  std::vector<bool> _host_face_range_flips;
   /// Index in _faces of each face range of the Kokkos finite volume mesh this boundary condition
   /// covers (host only)
   std::map<unsigned int, unsigned int> _mesh_range_to_range;

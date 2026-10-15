@@ -1,0 +1,36 @@
+[Tests]
+  design = 'KokkosLinearFVDiffusion.md KokkosLinearFVSource.md KokkosLinearFVFunctorDirichletBC.md KokkosLinearFVFunctorNeumannBC.md KokkosParsedFunctorMaterial.md'
+  issues = '#30655'
+  [properties]
+    requirement = 'The system shall evaluate the properties of Kokkos linear finite volume kernels and boundary conditions where the host objects evaluate their functors, interpolate the diffusion coefficient to faces with the geometric and harmonic averages, and apply boundary conditions on a block interface sideset to the variables on both sides, as the host objects, with properties given by'
+    [functions]
+      type = Exodiff
+      input = properties.i
+      exodiff = properties_out.e
+      detail = 'numbers and Kokkos functions,'
+      capabilities = 'kokkos'
+      compute_devices = 'cpu cuda xpu'
+      max_threads = 1 # linear FV doesn't support threading
+    []
+    [functor_material]
+      type = Exodiff
+      input = properties.i
+      exodiff = properties_material.e
+      cli_args = 'LinearFVBCs/interface_v/functor=step_material '
+                 'Outputs/file_base=properties_material'
+      detail = 'a parsed functor material evaluated without a side on a block interface, and'
+      capabilities = 'kokkos'
+      compute_devices = 'cpu cuda xpu'
+      max_threads = 1 # linear FV doesn't support threading
+    []
+    [variables]
+      type = Exodiff
+      input = variable-properties.i
+      exodiff = variable-properties_out.e
+      detail = 'linear finite volume variables of other systems with boundary conditions, auxiliary linear finite volume variables, and parsed functor materials of them.'
+      capabilities = 'kokkos'
+      compute_devices = 'cpu cuda xpu'
+      max_threads = 1 # linear FV doesn't support threading
+    []
+  []
+[]

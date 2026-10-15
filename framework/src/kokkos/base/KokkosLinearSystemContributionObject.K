@@ -22,6 +22,12 @@ LinearSystemContributionObject::validParams()
 {
   auto params = ::LinearSystemContributionObject::validParams();
   params.addPrivateParam<bool>(MooseBase::kokkos_object_param, true);
+  // The objects read the cell values of variables on the one-layer ghost cells, including those of
+  // auxiliary variables, whose system has no matrix coupling that would ghost them
+  params.addRelationshipManager("ElementSideNeighborLayers",
+                                Moose::RelationshipManagerType::ALGEBRAIC,
+                                [](const InputParameters &, InputParameters & rm_params)
+                                { rm_params.set<unsigned short>("layers") = 1; });
   return params;
 }
 
@@ -42,6 +48,7 @@ LinearSystemContributionObject::LinearSystemContributionObject(const InputParame
     LinearFVVariableInterface(*this,
                               *getParam<FEProblemBase *>("_fe_problem_base"),
                               getCheckedPointerParam<SystemBase *>("_sys")->number()),
+    LinearFVPropertyInterface(*this, *getParam<FEProblemBase *>("_fe_problem_base"), *this),
     _fe_problem(*getParam<FEProblemBase *>("_fe_problem_base")),
     _t(TransientInterface::_t)
 {
@@ -69,6 +76,7 @@ LinearSystemContributionObject::LinearSystemContributionObject(
     FVMeshHolder(object),
     SystemHolder(object),
     LinearFVVariableInterface(object),
+    LinearFVPropertyInterface(object),
     _fe_problem(object._fe_problem),
     _var(object._var),
     _assemble_matrix(object._assemble_matrix),

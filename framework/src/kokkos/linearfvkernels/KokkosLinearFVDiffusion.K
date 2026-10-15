@@ -9,13 +9,19 @@
 
 #include "KokkosLinearFVDiffusion.h"
 
+#include "FEProblemBase.h"
+
 registerKokkosLinearFVKernel("MooseApp", KokkosLinearFVDiffusion);
 
 InputParameters
 KokkosLinearFVDiffusion::validParams()
 {
   InputParameters params = Moose::Kokkos::LinearFVFluxKernel::validParams();
-  params.addRequiredParam<FunctionName>("diffusion_coeff", "The diffusion coefficient.");
+  params.addParam<MooseFunctorName>("diffusion_coeff", 1.0, "The diffusion coefficient.");
+  params.addParam<InterpolationMethodName>(
+      "coeff_interp_method",
+      "Optional finite volume interpolation method used to compute a face-centered diffusion "
+      "coefficient. If omitted, the functor is evaluated directly on the face.");
   params.addParam<bool>(
       "use_nonorthogonal_correction",
       true,
@@ -26,9 +32,16 @@ KokkosLinearFVDiffusion::validParams()
 
 KokkosLinearFVDiffusion::KokkosLinearFVDiffusion(const InputParameters & parameters)
   : Moose::Kokkos::LinearFVFluxKernel(parameters),
-    _diffusion_coeff(getKokkosFunction<KokkosParsedFunction>("diffusion_coeff")),
     _use_nonorthogonal_correction(getParam<bool>("use_nonorthogonal_correction"))
 {
+  PropertyUse use;
+  use.internal_faces = true;
+  use.boundary_faces = true;
+  if (isParamValid("coeff_interp_method"))
+    use.interpolation = &_fe_problem.getFVFaceInterpolationMethod(
+        getParam<InterpolationMethodName>("coeff_interp_method"));
+  requestLinearFVProperty("diffusion_coeff", _diffusion_coeff, use);
+
   if (_use_nonorthogonal_correction)
     requestLinearFVCellGradient(getParam<LinearVariableName>("variable"), _gradient);
 }

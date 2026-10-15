@@ -10,7 +10,6 @@
 #pragma once
 
 #include "KokkosLinearFVElementalKernel.h"
-#include "KokkosParsedFunction.h"
 
 /**
  * Kokkos linear finite volume elemental kernel that adds a scaled volumetric source to the
@@ -28,15 +27,15 @@ public:
 
 private:
   /// The source density
-  const Moose::Kokkos::ReferenceWrapper<const KokkosParsedFunction> _source_density;
-  /// Coefficient for multiplying the surface density
-  const Moose::Kokkos::ReferenceWrapper<const KokkosParsedFunction> _scale;
+  Moose::Kokkos::LinearFVProperty _source_density;
+  /// Coefficient for multiplying the source density
+  Moose::Kokkos::LinearFVProperty _scale;
 };
 
 template <typename Derived>
 KOKKOS_FUNCTION inline KokkosLinearFVSource::CellContribution
 KokkosLinearFVSource::computeCellContribution(const CellDatum & datum) const
 {
-  const auto centroid = datum.elemCentroid();
-  return {0, _scale->value(_t, centroid) * _source_density->value(_t, centroid) * datum.elemVolume()};
+  const auto elem = datum.elem();
+  return {0, _scale.cell(elem) * _source_density.cell(elem) * datum.elemVolume()};
 }

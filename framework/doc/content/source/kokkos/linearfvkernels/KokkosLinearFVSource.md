@@ -2,7 +2,10 @@
 
 !if! function=hasCapability('kokkos')
 
-This is the Kokkos version of [LinearFVSource.md].
+This is the Kokkos version of [LinearFVSource.md]. Its properties are numbers,
+[KokkosConstantFunction.md] or [KokkosParsedFunction.md] objects, linear finite volume variables
+or [KokkosParsedFunctorMaterial.md] properties, evaluated on the cells as the host object evaluates
+its functors.
 
 ## Example Syntax
 

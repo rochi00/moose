@@ -117,7 +117,8 @@ public:
 
   /**
    * Point the gradient handles of this object at the current gradients, before dispatching work
-   * that reads them. releaseGradients() must follow once that work has finished.
+   * that reads them. releaseGradients() must follow once that work has finished. Calls nest: only
+   * the outermost pair acquires and releases.
    */
   void acquireGradients();
   /// Release the gradient arrays acquired by acquireGradients()
@@ -165,6 +166,10 @@ private:
   };
   /// Gradient handles of this object (host only)
   std::vector<GradientAccess> _gradients;
+  /// Depth of nested acquireGradients() calls (host only)
+  unsigned int _gradient_acquisitions = 0;
+
+  friend class LinearFVPropertyInterface;
 };
 
 } // namespace Moose::Kokkos

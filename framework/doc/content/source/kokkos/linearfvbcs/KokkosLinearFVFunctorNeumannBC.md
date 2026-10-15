@@ -3,8 +3,11 @@
 !if! function=hasCapability('kokkos')
 
 This is the Kokkos version of [LinearFVAdvectionDiffusionFunctorNeumannBC.md]. It prescribes the
-outward diffusive flux $q$, supplied through a [KokkosParsedFunction.md] via the
-[!param](/LinearFVBCs/KokkosLinearFVFunctorNeumannBC/functor) parameter. Diffusion kernels add
+outward diffusive flux $q$, supplied as a number, a [KokkosConstantFunction.md], a
+[KokkosParsedFunction.md], a linear finite volume variable or a [KokkosParsedFunctorMaterial.md]
+property via the [!param](/LinearFVBCs/KokkosLinearFVFunctorNeumannBC/functor) parameter. The
+flux and the diffusion coefficient are evaluated from the variable's side of the face, as on the
+host. Diffusion kernels add
 $q$ times the face area to the right-hand side, without their own diffusion coefficient.
 
 For kernels that need a boundary value, such as advection, and for the Green-Gauss gradient, it

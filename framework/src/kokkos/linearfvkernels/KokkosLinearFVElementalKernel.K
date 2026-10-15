@@ -34,6 +34,7 @@ void
 LinearFVElementalKernel::initialSetup()
 {
   LinearFVKernel::initialSetup();
+  setupLinearFVProperties();
 
   const auto & sys = kokkosSystem(_var.sys());
   const auto var_num = _var.var();
@@ -54,6 +55,8 @@ LinearFVElementalKernel::initialSetup()
 void
 LinearFVElementalKernel::dispatchContributions()
 {
+  updateLinearFVProperties(_t, nullptr, nullptr, {});
+
   Policy policy(0, numKokkosBlockElements());
   if (!_cell_dispatcher)
     _cell_dispatcher = DispatcherRegistry::build<CellLoop>(this, type());

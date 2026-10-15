@@ -32,6 +32,7 @@ FVMesh::update()
   _num_local_elems = kokkos_mesh.getNumLocalElements();
   _max_sides = _mesh.getMaxSidesPerElem();
   const auto num_elems = kokkos_mesh.getNumLocalAndPossiblyOneNeighborLayerGhostElements();
+  _num_elems = num_elems;
 
   _host_maps = std::make_shared<HostMaps>();
   auto & maps = *_host_maps;
@@ -317,6 +318,12 @@ MOOSE_KOKKOS_INDEX_TYPE
 FaceRangeList::offset(const unsigned int range) const
 {
   return _offset[range];
+}
+
+ContiguousFaceID
+FaceRangeList::begin(const unsigned int range) const
+{
+  return _begin[range];
 }
 
 } // namespace Moose::Kokkos
