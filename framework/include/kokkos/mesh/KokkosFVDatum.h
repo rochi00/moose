@@ -65,6 +65,11 @@ public:
     return _flip ? -_mesh.getNormal(_face) : _mesh.getNormal(_face);
   }
   /**
+   * Get the unit normal of the FaceInfo, which points out of its elem cell whichever cell this face
+   * is evaluated for
+   */
+  KOKKOS_FUNCTION Real3 faceInfoNormal() const { return _mesh.getNormal(_face); }
+  /**
    * Get the face centroid
    */
   KOKKOS_FUNCTION Real3 faceCentroid() const { return _mesh.getCentroid(_face); }

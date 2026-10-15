@@ -1,0 +1,28 @@
+[Tests]
+  design = 'KokkosLinearFVFunctorRobinBC.md KokkosLinearFVOutflowBC.md KokkosLinearFVScalarSymmetryBC.md KokkosLinearFVExtrapolatedBC.md'
+  issues = '#30655'
+  [framework_bcs]
+    requirement = 'The system shall apply the Kokkos linear finite volume Robin, outflow, scalar symmetry and extrapolated boundary conditions to an advection-diffusion problem on a skewed mesh as the host boundary conditions, with'
+    [one_term]
+      type = Exodiff
+      input = framework-bcs.i
+      exodiff = framework-bcs_one.e
+      cli_args = 'Outputs/file_base=framework-bcs_one'
+      detail = 'the boundary values extrapolated from the cell values, and'
+      capabilities = 'kokkos'
+      compute_devices = 'cpu cuda xpu'
+      max_threads = 1 # linear FV doesn't support threading
+    []
+    [two_term]
+      type = Exodiff
+      input = framework-bcs.i
+      exodiff = framework-bcs_two.e
+      cli_args = 'two_term=true LinearFVBCs/active="robin outflow symmetry extrapolated" '
+                 'Outputs/file_base=framework-bcs_two'
+      detail = 'the boundary values extrapolated with the cell gradients.'
+      capabilities = 'kokkos'
+      compute_devices = 'cpu cuda xpu'
+      max_threads = 1 # linear FV doesn't support threading
+    []
+  []
+[]
