@@ -266,13 +266,16 @@ ReducedPressurePIMPLESolve::diffuseInterfaceVOFCorrector(const SolverSystemName 
 void
 ReducedPressurePIMPLESolve::initializeSolveLoop(const SolverParams & solver_params)
 {
+
   if (shouldRunStartupInitialization())
     initializeConsistentStartupState();
 
   if (_should_solve_pressure)
   {
     initializeStartupPressureField(solver_params);
-    commitAcceptedVOFTransportHistoryIfNeeded();
+    // Only the first solve of the run seeds the transport history. Every later write happens on
+    // step acceptance, so a step that is solved twice keeps the history of the last accepted one.
+    seedVOFTransportHistoryIfNeeded();
   }
 }
 
@@ -299,11 +302,11 @@ ReducedPressurePIMPLESolve::initializeConsistentStartupState()
 }
 
 void
-ReducedPressurePIMPLESolve::commitAcceptedVOFTransportHistoryIfNeeded() const
+ReducedPressurePIMPLESolve::seedVOFTransportHistoryIfNeeded() const
 {
   if (solvesVolumeFraction())
     if (auto * diffuse_rc = diffuseInterfaceRC())
-      diffuse_rc->commitAcceptedTimestepTransportHistory();
+      diffuse_rc->seedTransportHistoryOnce();
 }
 
 void
@@ -333,6 +336,7 @@ ReducedPressurePIMPLESolve::solveVolumeFractionBeforeFlowCorrection(
   prepareLaggedCorrectedFaceFluxForOuterIteration();
 
   _problem.execute(EXEC_NONLINEAR);
+
   Moose::PetscSupport::petscSetOptions(_active_scalar_petsc_options, solver_params);
   const auto vf_residuals = solveVolumeFractionSystems();
 
@@ -343,8 +347,11 @@ ReducedPressurePIMPLESolve::solveVolumeFractionBeforeFlowCorrection(
 void
 ReducedPressurePIMPLESolve::prepareLaggedCorrectedFaceFluxForOuterIteration() const
 {
-  const bool use_previous_timestep_transport_flux =
-      _problem.timeStep() == 1 && _current_outer_iteration == 1;
+  // The first outer iteration of every step starts from the flux of the last accepted step, which
+  // the provider commits on acceptance and seeds before the first solve. Freezing the current
+  // derived flux instead reads the same values on a straight run, but on a step that is solved
+  // again it reads the attempt that was rejected.
+  const bool use_previous_timestep_transport_flux = _current_outer_iteration == 1;
 
   if (auto * diffuse_rc = diffuseInterfaceRC())
   {
@@ -384,6 +391,12 @@ ReducedPressurePIMPLESolve::commitAcceptedTimestepTransportHistory() const
 {
   if (auto * diffuse_rc = diffuseInterfaceRC())
     diffuse_rc->commitAcceptedTimestepTransportHistory();
+
+  // The transported fluxes the momentum equation reads at the next step's start belong to the
+  // accepted step as well.
+  for (const auto & system_name : _active_scalar_system_names)
+    if (auto * corrector = diffuseInterfaceVOFCorrector(system_name))
+      corrector->commitAcceptedTimestepFluxes();
 }
 
 void

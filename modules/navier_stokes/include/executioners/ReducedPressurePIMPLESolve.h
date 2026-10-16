@@ -47,7 +47,7 @@ private:
   bool solvesVolumeFraction() const;
   void initializeStartupPressureField(const SolverParams & solver_params);
   void initializeConsistentStartupState();
-  void commitAcceptedVOFTransportHistoryIfNeeded() const;
+  void seedVOFTransportHistoryIfNeeded() const;
   void advanceOuterIterationHistories();
   void solveVolumeFractionBeforeFlowCorrection(ResidualStorage & residual_storage,
                                                const SolverParams & solver_params);

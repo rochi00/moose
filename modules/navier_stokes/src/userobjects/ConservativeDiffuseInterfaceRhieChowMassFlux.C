@@ -776,7 +776,11 @@ ConservativeDiffuseInterfaceRhieChowMassFlux::ConservativeDiffuseInterfaceRhieCh
                         "corrected_face_phi",
                         [this](const FaceInfo & fi) { return correctedTransportPhi(fi); }),
     _previous_timestep_corrected_face_phi(
-        _moose_mesh, blockIDs(), "previous_timestep_corrected_face_phi"),
+        declareRestartableData<FaceScalarField>("previous_timestep_corrected_face_phi",
+                                                _moose_mesh,
+                                                blockIDs(),
+                                                "previous_timestep_corrected_face_phi")),
+    _transport_history_seeded(declareRestartableData<bool>("transport_history_seeded", false)),
     _lagged_corrected_face_phi(_moose_mesh, blockIDs(), "lagged_corrected_face_phi"),
     _pressure_coupled_cell_reconstruction_scalar(
         _moose_mesh, blockIDs(), "pressure_coupled_cell_reconstruction_scalar"),
@@ -823,6 +827,21 @@ ConservativeDiffuseInterfaceRhieChowMassFlux::commitAcceptedTimestepTransportHis
 {
   for (const auto * fi : _flow_face_info)
     _previous_timestep_corrected_face_phi[fi->id()] = _corrected_face_phi.evaluate(fi);
+  _transport_history_seeded = true;
+}
+
+void
+ConservativeDiffuseInterfaceRhieChowMassFlux::seedTransportHistoryOnce()
+{
+  if (!_transport_history_seeded)
+    commitAcceptedTimestepTransportHistory();
+}
+
+void
+ConservativeDiffuseInterfaceRhieChowMassFlux::timestepSetup()
+{
+  RhieChowMassFlux::timestepSetup();
+  initializeAdditionalPressureFluxStorage();
 }
 
 Real
@@ -885,7 +904,12 @@ ConservativeDiffuseInterfaceRhieChowMassFlux::initializeAdditionalPressureFluxSt
   // are still the only ones computed here, and synchronizeHaloFaceFlux() brings the rest over.
   for (const auto & fi : _fe_problem.mesh().allFaceInfo())
   {
-    _previous_timestep_corrected_face_phi[fi.id()] = 0.0;
+    // The accepted-step history is written once per accepted step; it is only zeroed while it
+    // still holds nothing, and otherwise merely kept keyed.
+    if (!_transport_history_seeded)
+      _previous_timestep_corrected_face_phi[fi.id()] = 0.0;
+    else
+      _previous_timestep_corrected_face_phi.try_emplace(fi.id(), 0.0);
     _lagged_corrected_face_phi[fi.id()] = 0.0;
     _pressure_coupled_cell_reconstruction_scalar[fi.id()] = 0.0;
     _phig_flux[fi.id()] = 0.0;
@@ -1176,7 +1200,6 @@ ConservativeDiffuseInterfaceRhieChowMassFlux::initialize()
   RhieChowMassFlux::initialize();
 
   initializeAdditionalPressureFluxStorage();
-  commitAcceptedTimestepTransportHistory();
 }
 
 void

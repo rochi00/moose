@@ -43,6 +43,14 @@ public:
   void finalize() override {}
 
   void resetSubcycleFluxes();
+  /**
+   * Keep the transported fluxes of the step that was just accepted. The momentum equation reads
+   * them at the start of the next step, so an attempt at a step that is solved again must read
+   * the fluxes of the last accepted step, not those of the attempt that was rejected.
+   */
+  void commitAcceptedTimestepFluxes();
+  /// Start every attempt at a step from the accepted fluxes.
+  void timestepSetup() override;
   void refreshPublishedRhoPhi();
   void applyCorrection(const Real dt, const Real subcycle_fraction = 1.0);
 
@@ -123,6 +131,13 @@ private:
 
   FaceCenteredMapFunctor<Real, std::unordered_map<dof_id_type, Real>> _alpha_phi_limited;
   FaceCenteredMapFunctor<Real, std::unordered_map<dof_id_type, Real>> _rho_phi;
+
+  /// Transported fluxes of the last accepted step. Restartable, so a recovered run continues
+  /// from the step the checkpoint was written on.
+  std::unordered_map<dof_id_type, Real> & _accepted_alpha_phi_limited;
+  std::unordered_map<dof_id_type, Real> & _accepted_rho_phi;
+  /// Whether a step has been accepted yet.
+  bool & _accepted_fluxes_valid;
 
   MooseLinearVariableFVReal * _alpha_var = nullptr;
   LinearSystem * _system = nullptr;

@@ -68,6 +68,17 @@ public:
   Real getVolumetricFaceFlux(const FaceInfo & fi) const override;
   void commitAcceptedTimestepTransportHistory();
   /**
+   * Seed the accepted-step transport history from the current corrected flux, only if it has
+   * never been written. It is otherwise written once per accepted step, so a step solved again
+   * and a recovered run both keep the history of the last step that was actually accepted.
+   */
+  void seedTransportHistoryOnce();
+  /**
+   * Discard the face state derived from the last solve. Every attempt at a timestep must start
+   * from state rebuilt out of the restored solution, not from the attempt that was rejected.
+   */
+  virtual void timestepSetup() override;
+  /**
    * Whether this process holds the cell behind \p fi without owning it. The flux on such a face
    * cannot be formed here: the face value a boundary condition needs there is defined through the
    * very flux being formed, so recomputing it locally closes a cycle that the lagged flux exists
@@ -225,7 +236,12 @@ protected:
   bool _pressure_predictor_face_state_valid = false;
 
   DerivedFaceFunctor<Real> _corrected_face_phi;
-  FaceScalarField _previous_timestep_corrected_face_phi;
+  /// The corrected face flux of the last accepted step. Restartable, so a recovered run continues
+  /// from the history of the step the checkpoint was written on rather than re-deriving it.
+  FaceScalarField & _previous_timestep_corrected_face_phi;
+  /// Whether the history has ever been written. Restartable with it.
+  bool & _transport_history_seeded;
+
   FaceScalarField _lagged_corrected_face_phi;
   FaceScalarField _pressure_coupled_cell_reconstruction_scalar;
 

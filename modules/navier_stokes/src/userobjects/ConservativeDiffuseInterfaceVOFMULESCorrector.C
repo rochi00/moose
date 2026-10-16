@@ -99,13 +99,28 @@ ConservativeDiffuseInterfaceVOFMULESCorrector::ConservativeDiffuseInterfaceVOFMU
     _num_alpha_corrections(getParam<unsigned int>("n_alpha_corrections")),
     _num_limiter_iterations(getParam<unsigned int>("n_limiter_iterations")),
     _alpha_phi_limited(_fe_problem.mesh(), blockIDs(), "alpha_phi_limited"),
-    _rho_phi(_fe_problem.mesh(), blockIDs(), "rho_phi")
+    _rho_phi(_fe_problem.mesh(), blockIDs(), "rho_phi"),
+    _accepted_alpha_phi_limited(declareRestartableData<std::unordered_map<dof_id_type, Real>>(
+        "accepted_alpha_phi_limited")),
+    _accepted_rho_phi(
+        declareRestartableData<std::unordered_map<dof_id_type, Real>>("accepted_rho_phi")),
+    _accepted_fluxes_valid(declareRestartableData<bool>("accepted_fluxes_valid", false))
 {
   for (const auto tid : make_range(libMesh::n_threads()))
   {
     UserObject::_subproblem.addFunctor("alpha_phi_limited", _alpha_phi_limited, tid);
     UserObject::_subproblem.addFunctor("rho_phi", _rho_phi, tid);
   }
+
+  // The volume fraction's cell gradient is state, not a function of the field: the outflow
+  // boundary's two-term expansion reads it, and the Green-Gauss gradient's boundary faces read
+  // that boundary value back, so each gradient depends on the one before. Keeping one old gradient
+  // state lets the framework restore it when a step is solved again and carry it through a
+  // checkpoint, the same way it does for the solution. Old states can only be requested during
+  // setup, hence here rather than in initialSetup().
+  if (auto * alpha_var =
+          dynamic_cast<MooseLinearVariableFVReal *>(&_fe_problem.getVariable(_tid, _variable_name)))
+    alpha_var->requestCellGradients(/*oldest_state=*/1);
 }
 
 void
@@ -162,6 +177,28 @@ Real
 ConservativeDiffuseInterfaceVOFMULESCorrector::boundedAlpha(const Real value) const
 {
   return std::min(alpha_max, std::max(alpha_min, value));
+}
+
+void
+ConservativeDiffuseInterfaceVOFMULESCorrector::commitAcceptedTimestepFluxes()
+{
+  _accepted_alpha_phi_limited.clear();
+  _accepted_rho_phi.clear();
+  _accepted_alpha_phi_limited.insert(_alpha_phi_limited.begin(), _alpha_phi_limited.end());
+  _accepted_rho_phi.insert(_rho_phi.begin(), _rho_phi.end());
+  _accepted_fluxes_valid = true;
+}
+
+void
+ConservativeDiffuseInterfaceVOFMULESCorrector::timestepSetup()
+{
+  if (!_accepted_fluxes_valid)
+    return;
+
+  for (const auto & [face_id, value] : _accepted_alpha_phi_limited)
+    _alpha_phi_limited[face_id] = value;
+  for (const auto & [face_id, value] : _accepted_rho_phi)
+    _rho_phi[face_id] = value;
 }
 
 void
