@@ -647,6 +647,10 @@ ConservativeDiffuseInterfaceRhieChowMassFlux::validParams()
       Point(0, 0, 0),
       "Reference point used to compute the reduced-pressure head gh = g.(x-x_ref).");
   params.addParam<MooseFunctorName>(
+      "buoyancy_density",
+      "The density in the gravity force, such as a Boussinesq density that varies with "
+      "temperature. Defaults to the density.");
+  params.addParam<MooseFunctorName>(
       "surface_tension_force_density_functor",
       "",
       "Optional surface tension force density functor sigma*kappa*grad(alpha), as published by "
@@ -701,6 +705,7 @@ ConservativeDiffuseInterfaceRhieChowMassFlux::ConservativeDiffuseInterfaceRhieCh
         _moose_mesh, blockIDs(), "pressure_coupled_cell_reconstruction_scalar"),
     _gravity(getParam<RealVectorValue>("gravity")),
     _reference_pressure_point(getParam<Point>("reference_pressure_point")),
+    _buoyancy_rho(isParamValid("buoyancy_density") ? getFunctor<Real>("buoyancy_density") : _rho),
     _vof_rho_phi_name(getParam<MooseFunctorName>("vof_rho_phi_functor")),
     _surface_tension_force_name(
         getParam<MooseFunctorName>("surface_tension_force_density_functor")),
@@ -1334,7 +1339,7 @@ ConservativeDiffuseInterfaceRhieChowMassFlux::evaluateFaceNormalDensityGradient(
 {
   const bool internal = _vel[0]->isInternalFace(*fi);
   return NS::faceNormalScalarGradient(
-      _rho, *fi, internal ? nullptr : boundaryElemInfo(fi).elem(), internal, time_arg);
+      _buoyancy_rho, *fi, internal ? nullptr : boundaryElemInfo(fi).elem(), internal, time_arg);
 }
 
 void
@@ -1347,11 +1352,11 @@ ConservativeDiffuseInterfaceRhieChowMassFlux::updateFaceNormalDensityGradients()
   {
     auto it = cell_gradients.find(elem);
     if (it == cell_gradients.end())
-      it =
-          cell_gradients
-              .emplace(elem,
-                       MetaPhysicL::raw_value(_rho.gradient(Moose::ElemArg{elem, false}, time_arg)))
-              .first;
+      it = cell_gradients
+               .emplace(elem,
+                        MetaPhysicL::raw_value(
+                            _buoyancy_rho.gradient(Moose::ElemArg{elem, false}, time_arg)))
+               .first;
     return it->second;
   };
   static const RealVectorValue zero_gradient;
@@ -1360,9 +1365,13 @@ ConservativeDiffuseInterfaceRhieChowMassFlux::updateFaceNormalDensityGradients()
         !_vel[0]->isInternalFace(*fi) ? evaluateFaceNormalDensityGradient(fi, time_arg)
         // On an orthogonal face the cell gradients multiply a zero correction: skip them.
         : NS::faceNonOrthogonalCorrection(*fi).norm_sq() == 0.0
-            ? NS::faceNormalScalarGradient(_rho, *fi, time_arg, zero_gradient, zero_gradient)
-            : NS::faceNormalScalarGradient(
-                  _rho, *fi, time_arg, gradient_of(fi->elemPtr()), gradient_of(fi->neighborPtr()));
+            ? NS::faceNormalScalarGradient(
+                  _buoyancy_rho, *fi, time_arg, zero_gradient, zero_gradient)
+            : NS::faceNormalScalarGradient(_buoyancy_rho,
+                                           *fi,
+                                           time_arg,
+                                           gradient_of(fi->elemPtr()),
+                                           gradient_of(fi->neighborPtr()));
   _face_normal_density_gradient_valid = true;
 }
 

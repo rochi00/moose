@@ -270,6 +270,8 @@ protected:
 
   const RealVectorValue _gravity;
   const Point _reference_pressure_point;
+  /// The density in the gravity force
+  const Moose::Functor<Real> & _buoyancy_rho;
 
   const MooseFunctorName _vof_rho_phi_name;
   const MooseFunctorName _surface_tension_force_name;

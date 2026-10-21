@@ -42,6 +42,8 @@ protected:
   const unsigned int _dim;
   const NS::LinearFVVelocityVariableArray _velocity_vars;
   const Moose::Functor<Real> & _density;
+  /// The density in the hydrostatic offset
+  const Moose::Functor<Real> & _buoyancy_density;
   const Moose::Functor<Real> & _face_flux;
   const RealVectorValue _gravity;
   const Point _reference_pressure_point;

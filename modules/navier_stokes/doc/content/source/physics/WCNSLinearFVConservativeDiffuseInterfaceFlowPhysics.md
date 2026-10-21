@@ -27,7 +27,12 @@ It extends [WCNSLinearFVFlowPhysics](WCNSLinearFVFlowPhysics.md) and differs fro
   [LinearFVPressureCorrectionDiffusion](LinearFVPressureCorrectionDiffusion.md) with the face
   $1/A$ published by the Rhie-Chow object, and a [LinearFVDivergence](LinearFVDivergence.md) of
   the predictor flux less the explicit face forces.
-- Gravity acts through the face-normal gradient of the density.
+- Gravity acts through the face-normal gradient of the density. When
+  [!param](/Physics/NavierStokes/ConservativeDiffuseInterfaceFlowSegregated/WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics/buoyancy_density)
+  is set, that functor replaces the density in the gravity force and in the hydrostatic part of
+  the outlet pressure. A
+  [WCNSLinearFVConservativeDiffuseInterfaceHeatTransferPhysics](WCNSLinearFVConservativeDiffuseInterfaceHeatTransferPhysics.md)
+  publishes a Boussinesq density for this purpose.
 
 ## Boundary conditions
 

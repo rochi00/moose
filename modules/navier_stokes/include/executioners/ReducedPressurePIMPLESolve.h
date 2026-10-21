@@ -19,6 +19,7 @@
 
 class ConservativeDiffuseInterfaceRhieChowMassFlux;
 class ConservativeDiffuseInterfaceVOFMULESCorrector;
+class ConservativeDiffuseInterfaceMixtureEnthalpy;
 
 /**
  * PIMPLE solve object with explicit hooks for additional reduced-pressure /
@@ -41,6 +42,15 @@ protected:
   bool shouldSolveActiveScalarsAfterFlowLoop() const override;
   void postPreparePressureCorrectorState() override;
   void postPublishPressureCorrectedState() override;
+  /// Recovers the temperature from the solved conserved mixture enthalpy
+  void postEnergySolve() override;
+  /**
+   * The conserved-enthalpy energy matrix is the temperature system, an M-matrix, with its columns
+   * scaled by 1 / (d(rho*h)/dT) > 0. It is not diagonally dominant where the heat capacity jumps
+   * across the interface, and enforcing dominance would lag the solve by a correction of the size
+   * of rho*h itself.
+   */
+  bool enforceEnergyDiagonalDominance() const override { return mixtureEnthalpies().empty(); }
 
 private:
   bool shouldRunStartupInitialization() const;
@@ -83,6 +93,8 @@ private:
   std::pair<unsigned int, Real> correctStartupContinuityOnce(const SolverParams & solver_params);
 
   ConservativeDiffuseInterfaceRhieChowMassFlux * diffuseInterfaceRC() const;
+  /// The objects relating a conserved mixture enthalpy to its temperature
+  std::vector<ConservativeDiffuseInterfaceMixtureEnthalpy *> mixtureEnthalpies() const;
 
   const unsigned int _volume_fraction_subcycles;
   const Real _volume_fraction_max_courant;

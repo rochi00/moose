@@ -718,7 +718,8 @@ LinearAssemblySegregatedSolve::solveAdvectedSystem(const unsigned int system_num
                                                    const Real absolute_tol,
                                                    const bool reuse_pc,
                                                    const Real field_relaxation,
-                                                   const Real min_value_limiter)
+                                                   const Real min_value_limiter,
+                                                   const bool enforce_diagonal_dominance)
 {
   _problem.setCurrentLinearSystem(system_num);
 
@@ -741,7 +742,7 @@ LinearAssemblySegregatedSolve::solveAdvectedSystem(const unsigned int system_num
   _problem.computeLinearSystemSys(li_system, mmat, rhs, true);
 
   // Go and relax the system matrix and the right hand side
-  NS::FV::relaxMatrix(mmat, relaxation_factor, *diff_diagonal);
+  NS::FV::relaxMatrix(mmat, relaxation_factor, *diff_diagonal, enforce_diagonal_dominance);
   NS::FV::relaxRightHandSide(rhs, solution, *diff_diagonal);
 
   if (_print_fields)
@@ -953,7 +954,10 @@ LinearAssemblySegregatedSolve::solve()
                                 _energy_linear_control,
                                 _energy_l_abs_tol,
                                 (_energy_pc_solve_counter++ % _energy_pc_recompute_frequency) != 0,
-                                _energy_field_relaxation);
+                                _energy_field_relaxation,
+                                std::numeric_limits<Real>::min(),
+                                enforceEnergyDiagonalDominance());
+        postEnergySolve();
 
         if (_has_pm_radiation_systems && _should_solve_pm_radiation)
         {

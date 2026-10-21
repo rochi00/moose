@@ -25,6 +25,42 @@
     min_parallel = 3
     max_threads = 1 # see libmesh issue #3808
   []
+  [uniform_temperature_advection]
+    type = CSVDiff
+    input = 'uniform_temperature_advection.i'
+    csvdiff = 'uniform_temperature_advection_csv.csv'
+    requirement = 'The system shall keep a uniform temperature uniform while transporting the '
+                  'conserved mixture enthalpy across a moving diffuse interface between phases '
+                  'whose enthalpies differ and depend nonlinearly on temperature, and conserve the '
+                  'total enthalpy.'
+    max_threads = 1 # see libmesh issue #3808
+  []
+  [two_layer_conduction]
+    type = CSVDiff
+    input = 'two_layer_conduction.i'
+    csvdiff = 'two_layer_conduction_csv.csv'
+    # Once converged, the pure-cell error is rounding of ~1e-10 K on a 100 K span that moves with
+    # the partitioning; the 1e-7 K floor asserts it stays there
+    override_columns = 'max_pure_cell_T_error'
+    override_rel_err = '5.5e-6'
+    override_abs_zero = '1e-7'
+    requirement = 'The system shall reproduce the sharp-interface steady temperature outside a '
+                  'diffuse interface for conduction through a liquid layer under a gas layer with '
+                  'a different conductivity, between walls held at fixed temperatures, when the '
+                  'conserved mixture enthalpy is solved with temperature-dependent heat '
+                  'capacities.'
+    max_threads = 1 # see libmesh issue #3808
+  []
+  [differentially_heated_cavity]
+    type = CSVDiff
+    input = 'differentially_heated_cavity.i'
+    csvdiff = 'differentially_heated_cavity_csv.csv'
+    requirement = 'The system shall reproduce the average Nusselt number of the de Vahl Davis '
+                  'differentially heated cavity at a Rayleigh number of 1e3 to within 1.2% on a '
+                  '32 x 32 mesh, with the buoyancy entering through a Boussinesq density and the '
+                  'reduced pressure pinned in the closed cavity.'
+    max_threads = 1 # see libmesh issue #3808
+  []
   [hydrostatic_interface]
     type = CSVDiff
     input = 'hydrostatic_interface.i'
@@ -42,6 +78,25 @@
                   'under gravity, so that the reduced-pressure coupling cancels the buoyancy '
                   'source, the volume fraction stays bounded and conserved, and the spurious '
                   'velocity stays at its residual floor.'
+    max_threads = 1 # see libmesh issue #3808
+  []
+  [oil_water_tub]
+    type = CSVDiff
+    input = 'oil_water_tub.i'
+    csvdiff = 'oil_water_tub_csv.csv'
+    # The velocities, the heat fluxes and the minimum reduced pressure are rounding, ~1e-8 and
+    # below, that moves between compilers and partitionings; the 1e-6 floor asserts they stay
+    # there. The rest keep tight tolerances of their own.
+    rel_err = 0.1
+    abs_zero = 1e-6
+    override_columns = 'total_alpha interface_measure max_p T_min T_max max_pure_cell_T_error'
+    override_rel_err = '1e-10 1e-8 1e-6 1e-10 1e-10 1e-10'
+    override_abs_zero = '1e-12 1e-12 1e-10 1e-10 1e-10 1e-9'
+    requirement = 'The system shall hold a layer of oil over a layer of water at rest and at '
+                  'uniform temperature in a closed tub with the conserved mixture enthalpy and a '
+                  'Boussinesq buoyancy density coupled to the flow, keeping the reduced pressure '
+                  'jump across the diffuse interface, the volume fraction conserved, and the '
+                  'spurious velocity at its residual floor.'
     max_threads = 1 # see libmesh issue #3808
   []
 []

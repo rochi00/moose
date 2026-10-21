@@ -26,7 +26,7 @@ Each outer iteration of a time step:
    a system without exactly one such corrector is an error.
 3. Solves the momentum predictor and the reduced-pressure correction, with
    [!param](/Executioner/ReducedPressurePIMPLE/num_piso_iterations) additional PISO stages.
-4. Solves the energy system, when there is one.
+4. Solves the energy system, when there is one, and then recovers the temperature from it.
 
 The outer loop stops once the momentum and pressure residuals and the largest change of each volume
 fraction since the previous outer iteration are all below their absolute tolerances, or after

@@ -12,6 +12,7 @@
 #include "LinearSystem.h"
 #include "ConservativeDiffuseInterfaceRhieChowMassFlux.h"
 #include "ConservativeDiffuseInterfaceVOFMULESCorrector.h"
+#include "ConservativeDiffuseInterfaceMixtureEnthalpy.h"
 #include "FEProblemBase.h"
 #include "TheWarehouse.h"
 
@@ -683,4 +684,31 @@ ReducedPressurePIMPLESolve::postPublishPressureCorrectedState()
 {
   if (auto * diffuse_rc = diffuseInterfaceRC())
     diffuse_rc->updateVelocityBoundaryState();
+}
+
+void
+ReducedPressurePIMPLESolve::postEnergySolve()
+{
+  // The temperature has to follow rho*h right away: the volume fraction changes before the next
+  // energy solve, and a temperature recovered from the old rho*h with the new volume fraction
+  // would be wrong.
+  for (auto * mixture : mixtureEnthalpies())
+    mixture->recoverTemperature();
+}
+
+std::vector<ConservativeDiffuseInterfaceMixtureEnthalpy *>
+ReducedPressurePIMPLESolve::mixtureEnthalpies() const
+{
+  std::vector<UserObject *> objs;
+  _problem.theWarehouse()
+      .query()
+      .condition<AttribSystem>("UserObject")
+      .condition<AttribThread>(0)
+      .queryInto(objs);
+
+  std::vector<ConservativeDiffuseInterfaceMixtureEnthalpy *> mixtures;
+  for (auto * obj : objs)
+    if (auto * mixture = dynamic_cast<ConservativeDiffuseInterfaceMixtureEnthalpy *>(obj))
+      mixtures.push_back(mixture);
+  return mixtures;
 }

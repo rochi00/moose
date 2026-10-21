@@ -25,6 +25,10 @@ LinearFVPrghTotalPressureBC::validParams()
       "backflow it also subtracts the incoming dynamic pressure.");
   params.addRequiredParam<MooseFunctorName>(NS::density, "The density functor.");
   params.addParam<MooseFunctorName>(
+      "buoyancy_density",
+      "The density in the hydrostatic offset, such as a Boussinesq density that varies with "
+      "temperature. Defaults to the density.");
+  params.addParam<MooseFunctorName>(
       "face_flux",
       "corrected_face_phi",
       "The corrected face-flux functor used for the backflow dynamic-pressure switch.");
@@ -41,6 +45,8 @@ LinearFVPrghTotalPressureBC::LinearFVPrghTotalPressureBC(const InputParameters &
     _dim(_subproblem.mesh().dimension()),
     _velocity_vars(NS::getLinearFVVelocityVariables(*this, _fv_problem, _tid, _dim)),
     _density(getFunctor<Real>(NS::density)),
+    _buoyancy_density(isParamValid("buoyancy_density") ? getFunctor<Real>("buoyancy_density")
+                                                       : _density),
     _face_flux(getFunctor<Real>("face_flux")),
     _gravity(getParam<RealVectorValue>("gravity")),
     _reference_pressure_point(getParam<Point>("reference_pressure_point"))
@@ -88,7 +94,7 @@ Real
 LinearFVPrghTotalPressureBC::hydrostaticPressureOffset() const
 {
   const auto state = determineState();
-  const Real rho = _density(functorFaceArg(_density, *_current_face_info), state);
+  const Real rho = _buoyancy_density(functorFaceArg(_buoyancy_density, *_current_face_info), state);
   const Real gh = _gravity * (_current_face_info->faceCentroid() - _reference_pressure_point);
   return rho * gh;
 }

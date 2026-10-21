@@ -59,6 +59,10 @@ WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::validParams()
       1e-8,
       "Regularization used in the geometry material when constructing interface unit normals.");
   params.addParam<MooseFunctorName>(
+      "buoyancy_density",
+      "The density in the gravity force, such as the Boussinesq density published by a "
+      "ConservativeDiffuseInterfaceHeatTransferSegregated physics. Defaults to the density.");
+  params.addParam<MooseFunctorName>(
       "surface_tension_coefficient",
       "",
       "Surface-tension coefficient functor. Leave empty to disable capillary forcing.");
@@ -166,6 +170,9 @@ WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::addOutletBC()
       params.set<MooseFunctorName>("functor") = libmesh_map_find(_pressure_functors, outlet_bdy);
       params.set<std::vector<BoundaryName>>("boundary") = {outlet_bdy};
       params.set<MooseFunctorName>(NS::density) = _density_name;
+      if (isParamValid("buoyancy_density"))
+        params.set<MooseFunctorName>("buoyancy_density") =
+            getParam<MooseFunctorName>("buoyancy_density");
       params.set<RealVectorValue>("gravity") = getParam<RealVectorValue>("gravity");
       params.set<Point>("reference_pressure_point") = getParam<Point>("reference_pressure_point");
       for (unsigned int d = 0; d < dimension(); ++d)
@@ -307,6 +314,9 @@ WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::addRhieChowUserObjects()
   if (parameters().isParamValid("gravity"))
     params.set<RealVectorValue>("gravity") = getParam<RealVectorValue>("gravity");
   params.set<Point>("reference_pressure_point") = getParam<Point>("reference_pressure_point");
+  if (isParamValid("buoyancy_density"))
+    params.set<MooseFunctorName>("buoyancy_density") =
+        getParam<MooseFunctorName>("buoyancy_density");
   params.set<MooseFunctorName>("vof_rho_phi_functor") =
       getParam<MooseFunctorName>("vof_rho_phi_functor");
 
