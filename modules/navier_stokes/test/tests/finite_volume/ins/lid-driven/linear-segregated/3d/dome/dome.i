@@ -84,6 +84,13 @@ ahu_heating = '${fparse 2*450 * 10^3}' # Watts
 [GlobalParams]
   rhie_chow_user_object = 'rc'
   advected_interp_method = 'upwind'
+  advected_interp_method_name = 'upwind'
+[]
+
+[FVInterpolationMethods]
+  [upwind]
+    type = FVAdvectedUpwind
+  []
 []
 
 [Mesh]
@@ -202,7 +209,6 @@ ahu_heating = '${fparse 2*450 * 10^3}' # Watts
     pressure = pressure
     rho = ${rho}
     p_diffusion_kernel = p_diffusion
-    body_force_kernel_names = "; ; w_buoyancy w_fan"
     pressure_projection_method = consistent
   []
 []
@@ -337,7 +343,7 @@ ahu_heating = '${fparse 2*450 * 10^3}' # Watts
   []
 
   [p_diffusion]
-    type = LinearFVAnisotropicDiffusion
+    type = LinearFVPressureCorrectionDiffusion
     variable = pressure
     diffusion_tensor = Ainv
     use_nonorthogonal_correction = true
@@ -618,6 +624,10 @@ ahu_heating = '${fparse 2*450 * 10^3}' # Watts
     variable = pressure
     HbyA_flux = HbyA
     Ainv = Ainv
+    u = vel_x
+    v = vel_y
+    w = vel_z
+    rho = ${rho}
   []
 
   [T_floor]
@@ -673,6 +683,10 @@ ahu_heating = '${fparse 2*450 * 10^3}' # Watts
     variable = pressure
     HbyA_flux = HbyA
     Ainv = Ainv
+    u = vel_x
+    v = vel_y
+    w = vel_z
+    rho = ${rho}
     enable = true
   []
   # ahu on. Note that this is outflow from the simulation boundary so sign should be positive
