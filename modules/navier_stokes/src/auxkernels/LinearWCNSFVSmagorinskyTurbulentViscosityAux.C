@@ -67,16 +67,16 @@ LinearWCNSFVSmagorinskyTurbulentViscosityAux::computeValue()
 {
   const auto & elem_info = _mesh.elemInfo(_current_elem->id());
 
-  const auto grad_u = _u_var->gradSln(elem_info);
+  const auto grad_u = _u_var->gradSln(elem_info, determineState());
   Real symmetric_strain_tensor_norm = 2.0 * Utility::pow<2>(grad_u(0));
   if (_dim >= 2)
   {
-    const auto grad_v = _v_var->gradSln(elem_info);
+    const auto grad_v = _v_var->gradSln(elem_info, determineState());
     symmetric_strain_tensor_norm +=
         2.0 * Utility::pow<2>(grad_v(1)) + Utility::pow<2>(grad_v(0) + grad_u(1));
     if (_dim >= 3)
     {
-      const auto grad_w = _w_var->gradSln(elem_info);
+      const auto grad_w = _w_var->gradSln(elem_info, determineState());
       symmetric_strain_tensor_norm += 2.0 * Utility::pow<2>(grad_w(2)) +
                                       Utility::pow<2>(grad_u(2) + grad_w(0)) +
                                       Utility::pow<2>(grad_v(2) + grad_w(1));
