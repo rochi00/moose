@@ -94,6 +94,8 @@ ahu_heating = '${fparse 2*450 * 10^3}' # Watts
 []
 
 [Mesh]
+  # Each rank only stores its own part of the 400k-cell mesh
+  parallel_type = distributed
   [file]
     type = FileMeshGenerator
     file = zach-mesh_in.e
@@ -188,7 +190,8 @@ ahu_heating = '${fparse 2*450 * 10^3}' # Watts
     w = vel_z
     walls = ${walls}
     wall_treatment = ${wall_treatment}
-    execute_on = 'NONLINEAR'
+    # yplus is output only; the wall functions compute their own y+
+    execute_on = 'TIMESTEP_END'
   []
   [compute_kt]
     type = TurbulentConductivityAux
@@ -802,14 +805,19 @@ ahu_heating = '${fparse 2*450 * 10^3}' # Watts
   momentum_absolute_tolerance = 1e-4
   turbulence_absolute_tolerance = '1e-6 1e-6'
   energy_absolute_tolerance = 1e-4
-  momentum_petsc_options_iname = '-pc_type -pc_hypre_type -pc_hypre_boomeramg_agg_nl -pc_hypre_boomeramg_agg_num_paths -pc_hypre_boomeramg_truncfactor -pc_hypre_boomeramg_strong_threshold -pc_hypre_boomeramg_coarsen_type -pc_hypre_boomeramg_interp_type'
-  momentum_petsc_options_value = 'hypre boomeramg 4 1 0.1 0.6 HMIS ext+i'
+  # The momentum, energy and turbulence systems converge in a few Krylov iterations, so block
+  # Jacobi/ILU is cheaper than setting up algebraic multigrid every iteration
+  momentum_petsc_options_iname = '-pc_type -sub_pc_type'
+  momentum_petsc_options_value = 'bjacobi ilu'
   pressure_petsc_options_iname = '-pc_type -pc_hypre_type -pc_hypre_boomeramg_agg_nl -pc_hypre_boomeramg_agg_num_paths -pc_hypre_boomeramg_truncfactor -pc_hypre_boomeramg_strong_threshold -pc_hypre_boomeramg_coarsen_type -pc_hypre_boomeramg_interp_type'
   pressure_petsc_options_value = 'hypre boomeramg 2 1 0.1 0.6 HMIS ext+i'
-  turbulence_petsc_options_iname = '-pc_type -pc_hypre_type'
-  turbulence_petsc_options_value = 'hypre boomeramg'
-  energy_petsc_options_iname = '-pc_type -pc_hypre_type -pc_hypre_boomeramg_agg_nl -pc_hypre_boomeramg_agg_num_paths -pc_hypre_boomeramg_truncfactor -pc_hypre_boomeramg_strong_threshold -pc_hypre_boomeramg_coarsen_type -pc_hypre_boomeramg_interp_type'
-  energy_petsc_options_value = 'hypre boomeramg 4 1 0.1 0.6 HMIS ext+i'
+  # The pressure matrix changes slowly between iterations, so its multigrid preconditioner is only
+  # rebuilt every 10 iterations (fastest of 1, 3, 10 and once per time step in profiling)
+  pressure_pc_recompute_frequency = 10
+  turbulence_petsc_options_iname = '-pc_type -sub_pc_type'
+  turbulence_petsc_options_value = 'bjacobi ilu'
+  energy_petsc_options_iname = '-pc_type -sub_pc_type'
+  energy_petsc_options_value = 'bjacobi ilu'
   print_fields = false
 
   num_steps = 10000
@@ -834,8 +842,13 @@ ahu_heating = '${fparse 2*450 * 10^3}' # Watts
     type = Nemesis
     time_step_interval = 100
   []
+  [checkpoint]
+    type = Checkpoint
+    time_step_interval = 100
+    # FINAL keeps the state at termination for the restarted response-time inputs
+    execute_on = 'TIMESTEP_END FINAL'
+  []
   csv = true
-  checkpoint = true
   perf_graph = true
   print_nonlinear_residuals = false
   print_linear_residuals = true
