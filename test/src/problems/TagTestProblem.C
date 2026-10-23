@@ -111,7 +111,8 @@ void
 TagTestProblem::computeLinearSystemSys(LinearImplicitSystem & sys,
                                        SparseMatrix<Number> & system_matrix,
                                        NumericVector<Number> & rhs,
-                                       const bool compute_gradients)
+                                       const bool compute_gradients,
+                                       const bool compute_aux)
 {
   const auto linear_sys_num = linearSysNum(sys.name());
   auto & linear_sys = getLinearSystem(linear_sys_num);
@@ -143,6 +144,9 @@ TagTestProblem::computeLinearSystemSys(LinearImplicitSystem & sys,
   std::set<TagID> selected_mtags;
   selectMatrixTagsFromSystem(linear_sys, matrix_tags, selected_mtags);
 
-  computeLinearSystemTags(
-      *(_current_linear_sys->currentSolution()), selected_vtags, selected_mtags, compute_gradients);
+  computeLinearSystemTags(*(_current_linear_sys->currentSolution()),
+                          selected_vtags,
+                          selected_mtags,
+                          compute_gradients,
+                          compute_aux);
 }

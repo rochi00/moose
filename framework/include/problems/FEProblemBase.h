@@ -1930,11 +1930,14 @@ public:
    * @param rhs The vector which should hold the right hand side
    * @param compute_gradients A flag to disable the computation of new gradients during the
    * assembly, can be used to lag gradients
+   * @param compute_aux A flag to disable the EXEC_NONLINEAR auxiliary kernel execution before the
+   * assembly, for callers that keep the auxiliary variables up to date themselves
    */
   virtual void computeLinearSystemSys(libMesh::LinearImplicitSystem & sys,
                                       libMesh::SparseMatrix<libMesh::Number> & system_matrix,
                                       NumericVector<libMesh::Number> & rhs,
-                                      const bool compute_gradients = true);
+                                      const bool compute_gradients = true,
+                                      const bool compute_aux = true);
 
   /**
    * Assemble the current linear system given a set of vector and matrix tags.
@@ -1944,11 +1947,14 @@ public:
    * @param matrix_tags The matrix tags for the matrix
    * @param compute_gradients A flag to disable the computation of new gradients during the
    * assembly, can be used to lag gradients
+   * @param compute_aux A flag to disable the EXEC_NONLINEAR auxiliary kernel execution before the
+   * assembly, for callers that keep the auxiliary variables up to date themselves
    */
   void computeLinearSystemTags(const NumericVector<libMesh::Number> & soln,
                                const std::set<TagID> & vector_tags,
                                const std::set<TagID> & matrix_tags,
-                               const bool compute_gradients = true);
+                               const bool compute_gradients = true,
+                               const bool compute_aux = true);
 
   virtual Real computeDamping(const NumericVector<libMesh::Number> & soln,
                               const NumericVector<libMesh::Number> & update);

@@ -381,8 +381,10 @@ LinearAssemblySegregatedSolve::solveMomentumPredictor()
 
     auto diff_diagonal = solution.zero_clone();
 
-    // We assemble the matrix and the right hand side
-    _problem.computeLinearSystemSys(momentum_system, mmat, rhs, /*compute_grads*/ true);
+    // We assemble the matrix and the right hand side. The auxiliary variables are updated at the
+    // start of the solve and at the end of every iteration, so they are not recomputed here.
+    _problem.computeLinearSystemSys(
+        momentum_system, mmat, rhs, /*compute_grads*/ true, /*compute_aux*/ false);
 
     // Still need to relax the right hand side with the same vector
     NS::FV::relaxMatrix(mmat, _momentum_equation_relaxation, *diff_diagonal);
@@ -485,7 +487,9 @@ LinearAssemblySegregatedSolve::solvePressureCorrector()
   libMesh::PetscLinearSolver<Real> & pressure_solver =
       cast_ref<libMesh::PetscLinearSolver<Real> &>(*pressure_system.get_linear_solver());
 
-  _problem.computeLinearSystemSys(pressure_system, mmat, rhs, false);
+  // The auxiliary variables are up to date from the start of the solve or the end of the previous
+  // iteration and the momentum predictor does not recompute them either
+  _problem.computeLinearSystemSys(pressure_system, mmat, rhs, false, /*compute_aux*/ false);
 
   if (_print_fields)
   {
@@ -779,6 +783,10 @@ LinearAssemblySegregatedSolve::solve()
   const auto & pm_radiation_indices = residual_storage.pm_radiation_indices;
 
   bool converged = residual_storage.converged;
+
+  // The momentum and pressure assemblies skip the auxiliary kernels, so we update the auxiliary
+  // variables (e.g. time-dependent ones) once here before the first iteration
+  _problem.execute(EXEC_NONLINEAR);
 
   // Loop until converged or hit the maximum allowed iteration number
   if (_cht.enabled() && _should_solve_energy)

@@ -8568,7 +8568,8 @@ void
 FEProblemBase::computeLinearSystemSys(LinearImplicitSystem & sys,
                                       SparseMatrix<Number> & system_matrix,
                                       NumericVector<Number> & rhs,
-                                      const bool compute_gradients)
+                                      const bool compute_gradients,
+                                      const bool compute_aux)
 {
   TIME_SECTION("computeLinearSystemSys", 5);
 
@@ -8588,7 +8589,8 @@ FEProblemBase::computeLinearSystemSys(LinearImplicitSystem & sys,
   computeLinearSystemTags(*(_current_linear_sys->currentSolution()),
                           _linear_vector_tags,
                           _linear_matrix_tags,
-                          compute_gradients);
+                          compute_gradients,
+                          compute_aux);
 
   _current_linear_sys->disassociateMatrixFromTag(system_matrix,
                                                  _current_linear_sys->systemMatrixTag());
@@ -8605,7 +8607,8 @@ void
 FEProblemBase::computeLinearSystemTags(const NumericVector<Number> & soln,
                                        const std::set<TagID> & vector_tags,
                                        const std::set<TagID> & matrix_tags,
-                                       const bool compute_gradients)
+                                       const bool compute_gradients,
+                                       const bool compute_aux)
 {
   TIME_SECTION("computeLinearSystemTags", 5, "Computing Linear System");
 
@@ -8642,7 +8645,13 @@ FEProblemBase::computeLinearSystemTags(const NumericVector<Number> & soln,
 
   try
   {
-    computeSystems(EXEC_NONLINEAR);
+    if (compute_aux)
+      computeSystems(EXEC_NONLINEAR);
+    else
+      // Only the solver systems are computed here, which performs the time integrator setup
+      // (e.g. the BDF2 weights) needed by the assembly
+      for (auto & solver_sys : _solver_systems)
+        solver_sys->compute(EXEC_NONLINEAR);
   }
   catch (MooseException & e)
   {

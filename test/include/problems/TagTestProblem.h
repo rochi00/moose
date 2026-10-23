@@ -31,7 +31,8 @@ public:
   virtual void computeLinearSystemSys(libMesh::LinearImplicitSystem & sys,
                                       libMesh::SparseMatrix<libMesh::Number> & system_matrix,
                                       NumericVector<libMesh::Number> & rhs,
-                                      const bool compute_gradients = true) override;
+                                      const bool compute_gradients = true,
+                                      const bool compute_aux = true) override;
 
 protected:
   std::set<std::string> _vtags;
