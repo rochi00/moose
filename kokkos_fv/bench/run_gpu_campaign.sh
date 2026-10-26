@@ -6,8 +6,10 @@
 #   - the probe tools/petsc_kokkos_probe.cpp (see its header) as tools/petsc_kokkos_probe,
 #   - the event counter tools/kokkos_event_counter.cpp as tools/libkec.so.
 #
-# Usage: ./run_gpu_campaign.sh [section ...]   (default: all sections, in order)
-# Sections: miniapp overhead types q4 q8 coefficients solvers ranks
+# Usage: ./run_gpu_campaign.sh [section ...]   (default: all sections except miniapp_gradients,
+#                                               in order)
+# Sections: correctness determinism miniapp miniapp_gradients overhead phase1 types q4 q8
+#           coefficients solvers ranks
 #
 # Environment:
 #   BENCH_EXE      MOOSE executable (default ../../test/moose_test-opt)
@@ -29,15 +31,43 @@ LOGDIR="$HERE/results/gpu_campaign_$STAMP"
 mkdir -p "$LOGDIR"
 HOST_TYPES="-vec_type standard -u_sys_mat_type aij"
 DEVICE_TYPES="-vec_type kokkos -u_sys_mat_type aijkokkos"
+GATHER="Problem/kokkos_linear_fv_assembly=gather"
+# Linear FV variables default to the host 'green-gauss' gradient method; the Kokkos one must be
+# selected. Command-line blocks are merged into the input, so it needs no input change.
+KOKKOS_GRADIENT="FVGradientMethods/kgg/type=KokkosFVGreenGaussGradient Variables/u/gradient_method=kgg"
 
 log() { echo "=== $*" | tee -a "$LOGDIR/campaign.log"; }
 
-# Layout, gradient and launch questions (Q11-Q14) with the standalone mini-app
+# Kokkos assembly against the host assembly, entry by entry: hex, tet and prism, orthogonal and
+# skewed, with and without non-orthogonal correction, every advection interpolation, 1 and 3
+# ranks (240 cases). On the CPU build every case matches.
+correctness() {
+  log "Parity of the Kokkos and host assembled systems"
+  python3 bench.py parity --interp upwind average minmod vanleer muscl 2>&1 \
+    | tee "$LOGDIR/parity.txt"
+}
+
+# Run-to-run reproducibility of the assembled system: atomic (default) and gather modes on a
+# skewed tet mesh, where atomic assembly differed between runs on the CPU
+determinism() {
+  log "Determinism, atomic assembly (differing runs expected)"
+  python3 bench.py determinism --elem TET4 --n 24 --runs 5 --set skew=0.3 \
+    | tee "$LOGDIR/determinism_atomic.txt" || true
+  log "Determinism, gather assembly (one distinct system expected)"
+  python3 bench.py determinism --elem TET4 --n 24 --runs 5 --set skew=0.3 "$GATHER" \
+    | tee "$LOGDIR/determinism_gather.txt" || true
+}
+
+# Launch cost (Q14) and the fused face pass (Q13) with the standalone mini-app
 miniapp() {
   log "mini-app: launch cost (Q14)"
   miniapp/build/fv_layout_bench --launch-bench | tee "$LOGDIR/launch.csv"
   log "mini-app: assembly layouts incl. fused V2F (Q13)"
   SCALING_THREADS="" miniapp/run_layout_bench.sh 20 | tee -a "$LOGDIR/campaign.log"
+}
+
+# Gradient layouts (Q11, Q12, Q18), answered on an A100; rerun only on a different GPU
+miniapp_gradients() {
   log "mini-app: gradient layouts G0-G3, G0C, G1C, G1CS (Q11, Q12)"
   THREADS=1 miniapp/run_gradient_bench.sh 20 3 | tee -a "$LOGDIR/campaign.log"
 }
@@ -58,6 +88,32 @@ overhead() {
     --set "Executioner/petsc_options_value=bcgs jacobi" --label gpu_device_bcgs
   python3 bench.py transient --variants kokkos --n 64 --steps 20 --repeats 3 \
     --petsc-args "$HOST_TYPES" --label gpu_host_gmres
+  log "Steady sweep, gather assembly"
+  python3 bench.py sweep --impl kokkos --n 64 128 --repeats 3 --label gpu_gather --set "$GATHER"
+}
+
+# Phase 1 numerics on a skewed hex mesh: gradients (column cpu_gradients, which times every
+# gradient method, host or Kokkos), non-orthogonal correction, limited advection and a property
+# from a KokkosParsedFunctorMaterial. Minmod and Van Leer always request the host 'green-gauss'
+# gradient; MUSCL takes a gradient method, here the Kokkos one with the Venkatakrishnan limiter.
+phase1() {
+  local skewed="skew=0.3"
+  local sweep="python3 bench.py sweep --impl kokkos --n 64 128 --repeats 3"
+  log "Phase 1: skewed baseline (no gradients)"
+  $sweep --label p1_base --set $skewed
+  log "Phase 1: non-orthogonal correction, host and Kokkos gradients"
+  $sweep --label p1_noc_host_grad --set $skewed noc=true
+  $sweep --label p1_noc_kokkos_grad --set $skewed noc=true $KOKKOS_GRADIENT
+  log "Phase 1: Van Leer (host gradient) and MUSCL (limited Kokkos gradient)"
+  $sweep --label p1_vanleer_host_grad --set $skewed interp=vanleer
+  $sweep --label p1_muscl_kokkos_grad --set $skewed interp=muscl \
+    FVGradientMethods/kggv/type=KokkosFVGreenGaussGradient \
+    FVGradientMethods/kggv/limiter=venkatakrishnan FVInterpolationMethods/muscl/gradient_method=kggv
+  log "Phase 1: diffusion coefficient from a parsed functor material of u"
+  $sweep --label p1_functor_material --set $skewed \
+    FunctorMaterials/kmat/type=KokkosParsedFunctorMaterial \
+    "FunctorMaterials/kmat/expression=1+0.5*x+0.1*u" FunctorMaterials/kmat/functor_names=u \
+    FunctorMaterials/kmat/property_name=k_mat LinearFVKernels/diffusion/diffusion_coeff=k_mat
 }
 
 # The default device-type selection (section 5 of findings_2026-10-14.md)
@@ -126,7 +182,8 @@ ranks() {
 }
 
 sections=("$@")
-[ ${#sections[@]} -eq 0 ] && sections=(miniapp overhead types q4 q8 coefficients solvers ranks)
+[ ${#sections[@]} -eq 0 ] &&
+  sections=(correctness determinism miniapp overhead phase1 types q4 q8 coefficients solvers ranks)
 for s in "${sections[@]}"; do
   "$s"
 done

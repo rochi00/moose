@@ -281,6 +281,7 @@ def cmd_determinism(args):
     for i in range(args.runs):
         d = tempfile.mkdtemp(prefix="det_", dir=args.workroot)
         ov = {"n": args.n, "elem_type": args.elem, "steps": 1}
+        ov.update(parse_sets(args.set))
         rc, out = run_moose(args, "kokkos", ov, args.np, d, threads=args.threads, extra=dump_options(d))
         check(rc, out, f"determinism run {i}")
         h = hashlib.sha256()
@@ -623,6 +624,7 @@ def main():
     pd.add_argument("--np", type=int, default=1)
     pd.add_argument("--threads", type=int, default=None)
     pd.add_argument("--runs", type=int, default=10)
+    pd.add_argument("--set", nargs="*", default=[], help="extra input overrides key=value")
 
     ps = sub.add_parser("sweep")
     ps.add_argument("--impl", nargs="+", default=["kokkos", "cpu"], choices=["kokkos", "cpu"])
