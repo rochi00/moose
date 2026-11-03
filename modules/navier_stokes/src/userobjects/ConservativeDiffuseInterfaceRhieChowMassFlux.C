@@ -88,24 +88,26 @@ reconstructCellVectorFromFaceNormalScalars(const MooseMesh & moose_mesh,
     }
   }
 
-  bool singular = false;
+  Real det = 0.0;
   if (dim == 1)
-    singular = std::abs(normal_matrix(0, 0)) <= libMesh::TOLERANCE;
+    det = normal_matrix(0, 0);
   else if (dim == 2)
-    singular = std::abs(normal_matrix(0, 0) * normal_matrix(1, 1) -
-                        normal_matrix(0, 1) * normal_matrix(1, 0)) <= libMesh::TOLERANCE;
+    det = normal_matrix(0, 0) * normal_matrix(1, 1) - normal_matrix(0, 1) * normal_matrix(1, 0);
   else if (dim == 3)
-  {
-    const Real det = normal_matrix(0, 0) * (normal_matrix(1, 1) * normal_matrix(2, 2) -
-                                            normal_matrix(1, 2) * normal_matrix(2, 1)) -
-                     normal_matrix(0, 1) * (normal_matrix(1, 0) * normal_matrix(2, 2) -
-                                            normal_matrix(1, 2) * normal_matrix(2, 0)) +
-                     normal_matrix(0, 2) * (normal_matrix(1, 0) * normal_matrix(2, 1) -
-                                            normal_matrix(1, 1) * normal_matrix(2, 0));
-    singular = std::abs(det) <= libMesh::TOLERANCE;
-  }
+    det = normal_matrix(0, 0) * (normal_matrix(1, 1) * normal_matrix(2, 2) -
+                                 normal_matrix(1, 2) * normal_matrix(2, 1)) -
+          normal_matrix(0, 1) * (normal_matrix(1, 0) * normal_matrix(2, 2) -
+                                 normal_matrix(1, 2) * normal_matrix(2, 0)) +
+          normal_matrix(0, 2) * (normal_matrix(1, 0) * normal_matrix(2, 1) -
+                                 normal_matrix(1, 1) * normal_matrix(2, 0));
 
-  if (singular)
+  // The determinant scales as (face measure)^dim, which depends on the cell size and, in RZ, on
+  // the radius, so it is compared with the same power of the mean diagonal entry. The ratio is one
+  // for a Cartesian cell and vanishes only when the face normals fail to span the space.
+  Real trace = 0.0;
+  for (const auto i : make_range(dim))
+    trace += normal_matrix(i, i);
+  if (!(trace > 0.0) || std::abs(det) <= libMesh::TOLERANCE * std::pow(trace / dim, dim))
     return RealVectorValue();
 
   normal_matrix.lu_solve(rhs, solution);

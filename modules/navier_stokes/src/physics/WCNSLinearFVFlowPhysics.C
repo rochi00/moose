@@ -204,6 +204,7 @@ WCNSLinearFVFlowPhysics::addFVKernels()
 
   // Momentum equation: flux terms
   addMomentumFluxKernels();
+  addAxisymmetricViscousSource();
 
   // Momentum equation: pressure term, unless the Rhie-Chow object assembles the predictor without
   // it and supplies that force itself
@@ -309,6 +310,27 @@ WCNSLinearFVFlowPhysics::addMomentumFluxKernels()
 
     getProblem().addLinearFVKernel(kernel_type, kernel_name + NS::directions[d], params);
   }
+}
+
+void
+WCNSLinearFVFlowPhysics::addAxisymmetricViscousSourceKernel(
+    const std::vector<SubdomainName> & rz_blocks, const unsigned int radial_index)
+{
+  const std::string u_names[2] = {"u", "v"};
+  InputParameters params = getFactory().getValidParams("LinearFVRZViscousSource");
+  assignBlocks(params, rz_blocks);
+  // The same viscosity and stress form as the momentum flux kernels
+  params.set<MooseFunctorName>(NS::mu) = _turbulence_physics ? NS::mu_eff : _dynamic_viscosity_name;
+  params.set<bool>("use_deviatoric_terms") = includeSymmetrizedViscousStress();
+  for (const auto i : make_range(dimension()))
+    params.set<SolverVariableName>(u_names[i]) = _velocity_names[i];
+  params.set<LinearVariableName>("variable") = _velocity_names[radial_index];
+  params.set<MooseEnum>("momentum_component") = NS::directions[radial_index];
+
+  getProblem().addLinearFVKernel("LinearFVRZViscousSource",
+                                 prefix() + "ins_momentum_viscous_source_rz_" +
+                                     NS::directions[radial_index],
+                                 params);
 }
 
 void

@@ -65,6 +65,8 @@ private:
    */
   void addMomentumTimeKernels() override;
   void addMomentumFluxKernels();
+  virtual void addAxisymmetricViscousSourceKernel(const std::vector<SubdomainName> & rz_blocks,
+                                                  unsigned int radial_index) override;
   virtual void addMomentumPressureKernels() override;
   virtual void addMomentumGravityKernels() override;
   virtual void addMomentumFrictionKernels() override;

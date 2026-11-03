@@ -93,7 +93,7 @@ ConservativeDiffuseInterfaceSurfaceTensionFunctorMaterial::cellCurvature(
     return 0.0;
 
   const Real cell_volume = elem_info.volume() * elem_info.coordFactor();
-  if (cell_volume <= libMesh::TOLERANCE)
+  if (cell_volume <= 0.0)
     return 0.0;
 
   const auto is_internal = [this](const FaceInfo & fi) { return isInternalFace(fi); };

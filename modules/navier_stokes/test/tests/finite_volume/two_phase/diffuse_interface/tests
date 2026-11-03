@@ -12,6 +12,19 @@
                   'conservative diffuse-interface volume-of-fluid formulation.'
     max_threads = 1 # see libmesh issue #3808
   []
+  [static_droplet_laplace_pressure_rz]
+    type = CSVDiff
+    input = 'static_droplet_laplace_pressure_rz.i'
+    csvdiff = 'static_droplet_laplace_pressure_rz_csv.csv'
+    heavy = true
+    requirement = 'The system shall reproduce the Young-Laplace pressure jump across a static '
+                  'spherical diffuse interface in axisymmetric coordinates to within 0.3% when the '
+                  'interface width is resolved by four cells and the step is iterated to '
+                  'convergence, hold the volume fraction within its physical bounds, and keep the '
+                  'parasitic velocity small, using the conservative diffuse-interface '
+                  'volume-of-fluid formulation.'
+    max_threads = 1 # see libmesh issue #3808
+  []
   [vof_advection]
     type = CSVDiff
     input = 'vof_advection.i'
