@@ -810,11 +810,10 @@ ConservativeDiffuseInterfaceRhieChowMassFlux::reducedPressureMomentumPredictorFo
         if (useExplicitHydrostaticPredictorForce())
           normal_force_density +=
               computeDiscreteHydrostaticPredictorFaceNormalForceDensity(&fi_loc, time_arg);
+        normal_force_density += surfaceTensionFaceNormalForceDensity(&fi_loc, time_arg);
 
         return true;
       });
-
-  force_density += surfaceTensionForceDensity(elem_info, time_arg);
 
   return force_density;
 }
@@ -1455,18 +1454,6 @@ bool
 ConservativeDiffuseInterfaceRhieChowMassFlux::surfaceTensionEnabled() const
 {
   return _surface_tension_force;
-}
-
-RealVectorValue
-ConservativeDiffuseInterfaceRhieChowMassFlux::surfaceTensionForceDensity(
-    const ElemInfo & elem_info, const Moose::StateArg & time_arg) const
-{
-  // The force itself belongs to a functor material. What belongs here is only whether this
-  // corrector may use it, which is startup projection state no material can see.
-  if (!surfaceTensionEnabled() || _startup_projection_active || !elem_info.elem())
-    return RealVectorValue();
-
-  return (*_surface_tension_force)(makeElemArg(elem_info.elem()), time_arg);
 }
 
 Real

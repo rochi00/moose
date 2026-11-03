@@ -194,7 +194,8 @@ interface_width = 0.015625
   pressure_variable_relaxation = 1.0
   active_scalar_equation_relaxation = '1.0'
 
-  num_iterations = 10
+  # The residuals reach the 1e-6 tolerances in 12 outer iterations
+  num_iterations = 15
   num_piso_iterations = 0
   continue_on_max_its = true
   print_fields = false

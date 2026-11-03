@@ -197,9 +197,6 @@ protected:
   computeDiscreteHydrostaticPredictorFaceNormalForceDensity(const FaceInfo * fi,
                                                             const Moose::StateArg & time_arg) const;
   bool surfaceTensionEnabled() const;
-  /// The published capillary force, zeroed while the startup projection suppresses flux sources.
-  RealVectorValue surfaceTensionForceDensity(const ElemInfo & elem_info,
-                                             const Moose::StateArg & time_arg) const;
   Real surfaceTensionFaceNormalForceDensity(const FaceInfo * fi,
                                             const Moose::StateArg & time_arg) const;
   void updatePressureCoupledVelocityCorrectionFaceField(const Moose::StateArg & time_arg);
