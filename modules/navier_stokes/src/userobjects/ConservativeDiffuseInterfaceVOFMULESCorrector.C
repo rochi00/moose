@@ -41,6 +41,11 @@ namespace
 constexpr Real alpha_min = 0.0;
 constexpr Real alpha_max = 1.0;
 constexpr Real later_correction_relaxation = 0.5;
+/// A face flux or flux correction below this fraction of the largest face flux of the step
+/// counts as zero. The floor has to scale with the problem: an absolute cutoff switched the
+/// high-order, compression and limiter corrections off entirely in a millimeter-scale problem,
+/// whose face fluxes are all far below any fixed number.
+constexpr Real flux_floor_relative = 1e-10;
 }
 
 InputParameters
@@ -271,6 +276,20 @@ ConservativeDiffuseInterfaceVOFMULESCorrector::faceTransportData(const FaceInfo 
   return data;
 }
 
+Real
+ConservativeDiffuseInterfaceVOFMULESCorrector::fluxScale() const
+{
+  Real scale = 0.0;
+  for (const auto * fi : _fe_problem.mesh().faceInfo())
+    if (transportFaceType(*fi) != FaceInfo::VarFaceNeighbors::NEITHER)
+      scale = std::max(scale,
+                       std::abs(_face_flux(functorFaceArg(_face_flux, *fi), Moose::currentState()) *
+                                NS::faceMeasure(*fi)));
+  // The floor must agree on every rank, as the limiter iteration does
+  _communicator.max(scale);
+  return scale;
+}
+
 bool
 ConservativeDiffuseInterfaceVOFMULESCorrector::hasFaceSide(const FaceInfo & fi,
                                                            const bool fi_elem_side) const
@@ -325,7 +344,7 @@ ConservativeDiffuseInterfaceVOFMULESCorrector::highOrderFaceValue(
            dynamic_cast<LinearFVAdvectionDiffusionExtrapolatedBC *>(face_data.boundary_condition))
     high_order_alpha = boundaryValue(fi, face_data);
   else
-    return std::abs(face_data.volumetric_flux) > libMesh::TOLERANCE
+    return std::abs(face_data.integrated_flux) > _flux_floor
                ? donorFlux(fi, face_data, elem_alpha) / face_data.integrated_flux
                : elem_alpha;
 
@@ -353,7 +372,7 @@ ConservativeDiffuseInterfaceVOFMULESCorrector::classifyBoundaryFace(
   if (fi.neighborPtr() && face_type == FaceInfo::VarFaceNeighbors::BOTH)
     return BoundaryFaceKind::Internal;
 
-  if (std::abs(volumetric_flux) <= libMesh::TOLERANCE)
+  if (std::abs(volumetric_flux * NS::faceMeasure(fi)) <= _flux_floor)
     return BoundaryFaceKind::Closed;
 
   if (!bc)
@@ -440,7 +459,7 @@ ConservativeDiffuseInterfaceVOFMULESCorrector::buildFaceCorrectionData(const Fac
       MetaPhysicL::raw_value(_interface_normal(face_arg, state));
   const Real interface_normal_alignment = interface_normal * face_unit_normal;
 
-  if (std::abs(integrated_phi) > libMesh::TOLERANCE)
+  if (std::abs(integrated_phi) > _flux_floor)
   {
     const Real bounded_elem_alpha = boundedAlpha(data.elem_alpha);
     const Real bounded_neighbor_alpha = boundedAlpha(data.neighbor_alpha);
@@ -553,6 +572,8 @@ ConservativeDiffuseInterfaceVOFMULESCorrector::applyCorrection(const Real dt,
   if (!_system || !_alpha_var || dt <= 0.0)
     return;
 
+  _flux_floor = flux_floor_relative * fluxScale();
+
   std::unordered_map<dof_id_type, Real> working_alpha_flux;
 
   // Without a correction sweep the donor flux is the published flux.
@@ -594,7 +615,7 @@ ConservativeDiffuseInterfaceVOFMULESCorrector::applyCorrection(const Real dt,
 
       const Real target_alpha_flux = data.donor_flux + data.correction_flux;
       raw_correction_flux[i] = target_alpha_flux - libmesh_map_find(working_alpha_flux, face_id);
-      accepted_lambda[i] = std::abs(raw_correction_flux[i]) > libMesh::TOLERANCE ? 1.0 : 0.0;
+      accepted_lambda[i] = std::abs(raw_correction_flux[i]) > _flux_floor ? 1.0 : 0.0;
       if (const auto it = lambda_bound.find(face_id); it != lambda_bound.end())
         accepted_lambda[i] = std::min(accepted_lambda[i], it->second);
     }
@@ -677,7 +698,7 @@ ConservativeDiffuseInterfaceVOFMULESCorrector::applyCorrection(const Real dt,
       {
         const auto & data = face_corrections[i];
         const Real phi_corr_f = correction_flux(i);
-        if (std::abs(phi_corr_f) < libMesh::TOLERANCE)
+        if (std::abs(phi_corr_f) <= _flux_floor)
           continue;
 
         if (phi_corr_f > 0.0)
@@ -738,7 +759,7 @@ ConservativeDiffuseInterfaceVOFMULESCorrector::applyCorrection(const Real dt,
       {
         const auto & data = face_corrections[i];
         const Real phi_corr_f = raw_correction_flux[i];
-        if (std::abs(phi_corr_f) < libMesh::TOLERANCE || accepted_lambda[i] <= 0.0)
+        if (std::abs(phi_corr_f) <= _flux_floor || accepted_lambda[i] <= 0.0)
           continue;
 
         Real lambda = accepted_lambda[i];
@@ -757,7 +778,7 @@ ConservativeDiffuseInterfaceVOFMULESCorrector::applyCorrection(const Real dt,
         else
         {
           const Real corrected_boundary_flux = data.donor_flux + data.correction_flux + phi_corr_f;
-          if (corrected_boundary_flux > libMesh::TOLERANCE * libMesh::TOLERANCE)
+          if (corrected_boundary_flux > _flux_floor)
           {
             if (phi_corr_f > 0.0)
               lambda = std::min(lambda, libmesh_map_find(lambda_plus, data.elem_dof));
@@ -780,7 +801,7 @@ ConservativeDiffuseInterfaceVOFMULESCorrector::applyCorrection(const Real dt,
     for (const auto i : index_range(face_corrections))
       lambda_bound[face_corrections[i].face->id()] = accepted_lambda[i];
     for (const auto i : index_range(face_corrections))
-      if (std::abs(raw_correction_flux[i]) > libMesh::TOLERANCE)
+      if (std::abs(raw_correction_flux[i]) > _flux_floor)
       {
         const Real correction_weight = correction_it == 0 ? 1.0 : later_correction_relaxation;
         limited_correction_flux[i] =

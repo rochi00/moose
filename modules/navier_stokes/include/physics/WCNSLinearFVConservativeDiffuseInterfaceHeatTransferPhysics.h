@@ -19,6 +19,8 @@ class WCNSLinearFVConservativeDiffuseInterfaceVOFPhysics;
  * mixture enthalpy density rho*h = sum_k alpha_k rho_k h_k(T) with the temperature recovered from
  * it after each energy solve. Each phase is advected with the volume-fraction and mass fluxes of
  * the coupled volume-fraction physics, so that rho*h stays consistent with the volume fraction.
+ * With a latent heat the liquid phase melts and solidifies, and its liquid fraction is recovered
+ * from rho*h together with the temperature.
  */
 class WCNSLinearFVConservativeDiffuseInterfaceHeatTransferPhysics final
   : public NavierStokesPhysicsBase,
@@ -54,6 +56,10 @@ private:
   const WCNSLinearFVConservativeDiffuseInterfaceVOFPhysics * const _vof_physics;
   const VariableName _enthalpy_name;
   const VariableName _temperature_name;
+  /// Whether the liquid phase melts and solidifies
+  const bool _has_phase_change;
+  /// Name of the liquid fraction auxiliary variable, created with phase change
+  const VariableName _liquid_fraction_name;
   /// Name of the volume-fraction variable of the coupled physics
   const VariableName _alpha_name;
   /// Name of the user object relating rho*h and T

@@ -111,6 +111,8 @@ private:
                                      std::unordered_map<dof_id_type, Real> & lambda_minus) const;
   FaceInfo::VarFaceNeighbors transportFaceType(const FaceInfo & fi) const;
   FaceTransportData faceTransportData(const FaceInfo & fi) const;
+  /// The largest face flux of the variable, area-integrated, over the whole mesh
+  Real fluxScale() const;
   Real boundaryValue(const FaceInfo & fi, const FaceTransportData & face_data) const;
   bool hasFaceSide(const FaceInfo & fi, bool fi_elem_side) const override;
   Real cellVolume(const ElemInfo & elem_info) const;
@@ -133,6 +135,9 @@ private:
   const VariableName _variable_name;
   const Moose::Functor<Real> & _face_flux;
   const Moose::Functor<Real> & _compression_factor;
+  /// A face flux or flux correction at or below this counts as zero; set from the largest face
+  /// flux at the start of each correction
+  Real _flux_floor = 0.0;
   const Moose::Functor<RealVectorValue> & _interface_normal;
   const Moose::Functor<Real> & _liquid_density;
   const Moose::Functor<Real> & _gas_density;

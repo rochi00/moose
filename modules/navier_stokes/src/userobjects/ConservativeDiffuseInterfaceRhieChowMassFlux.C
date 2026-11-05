@@ -423,7 +423,7 @@ ConservativeDiffuseInterfaceRhieChowMassFlux::maxCourant(const Real dt) const
       continue;
 
     const Real volume = elem_info->volume() * elem_info->coordFactor();
-    if (volume <= libMesh::TOLERANCE)
+    if (volume <= 0.0)
       continue;
 
     const auto it = cell_flux_sum.find(elem_info->elem()->id());

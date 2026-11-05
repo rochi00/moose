@@ -75,9 +75,9 @@ LinearFVConservativeDiffuseInterfaceEnthalpyDiffusion::setupFaceData(const FaceI
                          true);
   const Real conductance = face_conductivity / face_info->dCNMag();
 
-  // -k (T_N - T_P) / d with T = rho*h / C + offset in each cell
-  _elem_coeff = conductance / elem_lin.heat_capacity;
-  _neighbor_coeff = -conductance / neighbor_lin.heat_capacity;
+  // -k (T_N - T_P) / d with T = rho*h dT/d(rho*h) + offset in each cell
+  _elem_coeff = conductance * elem_lin.temperature_derivative;
+  _neighbor_coeff = -conductance * neighbor_lin.temperature_derivative;
   _flux_constant =
       conductance * (ConservativeDiffuseInterfaceMixtureEnthalpy::temperatureOffset(elem_lin) -
                      ConservativeDiffuseInterfaceMixtureEnthalpy::temperatureOffset(neighbor_lin));
@@ -107,7 +107,7 @@ LinearFVConservativeDiffuseInterfaceEnthalpyDiffusion::computeBoundaryRHSContrib
       const auto lin = _mixture.cellLinearization(cell);
       const Real conductance = lin.conductivity / enthalpy_bc.cellToFaceDistance();
       // -k (T_b - T_P) / d
-      _elem_coeff = conductance / lin.heat_capacity;
+      _elem_coeff = conductance * lin.temperature_derivative;
       _flux_constant =
           conductance * (ConservativeDiffuseInterfaceMixtureEnthalpy::temperatureOffset(lin) -
                          enthalpy_bc.boundaryTemperature());

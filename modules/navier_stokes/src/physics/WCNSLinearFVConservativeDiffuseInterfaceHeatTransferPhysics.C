@@ -10,6 +10,7 @@
 #include "WCNSLinearFVConservativeDiffuseInterfaceHeatTransferPhysics.h"
 #include "WCNSLinearFVConservativeDiffuseInterfaceVOFPhysics.h"
 #include "LinearFVConservativeDiffuseInterfaceEnthalpyDiffusion.h"
+#include "ConservativeDiffuseInterfaceMixtureEnthalpy.h"
 #include "WCNSFVFlowPhysicsBase.h"
 #include "NS.h"
 
@@ -101,6 +102,19 @@ WCNSLinearFVConservativeDiffuseInterfaceHeatTransferPhysics::validParams()
       LinearFVConservativeDiffuseInterfaceEnthalpyDiffusion::validParams(),
       "conductivity_interpolation");
 
+  const auto mixture_params = ConservativeDiffuseInterfaceMixtureEnthalpy::validParams();
+  params.transferParam<Real>(mixture_params, "latent_heat");
+  params.transferParam<Real>(mixture_params, "solidus_temperature");
+  params.transferParam<Real>(mixture_params, "liquidus_temperature");
+  params.transferParam<MooseEnum>(mixture_params, "liquid_fraction_shape");
+  params.transferParam<UserObjectName>(mixture_params, "solid_fluid_properties");
+  params.transferParam<MooseFunctorName>(mixture_params, "solid_density");
+  params.transferParam<MooseEnum>(mixture_params, "conductivity_mixing");
+  params.addParam<VariableName>("liquid_fraction_variable",
+                                "liquid_fraction",
+                                "Name of the liquid fraction auxiliary variable recovered from "
+                                "rho*h, created when there is latent heat.");
+
   params.addParamNamesToGroup("coupled_vof_physics", "Coupled Physics");
   params.addParamNamesToGroup("liquid_fluid_properties gas_fluid_properties thermodynamic_pressure",
                               "Material properties");
@@ -109,8 +123,12 @@ WCNSLinearFVConservativeDiffuseInterfaceHeatTransferPhysics::validParams()
                               "Buoyancy");
   params.addParamNamesToGroup("energy_inlet_types energy_inlet_functors",
                               "Inlet boundary conditions");
+  params.addParamNamesToGroup("latent_heat solidus_temperature liquidus_temperature "
+                              "liquid_fraction_shape liquid_fraction_variable "
+                              "solid_fluid_properties solid_density",
+                              "Phase change");
   params.addParamNamesToGroup("energy_wall_types energy_wall_functors", "Wall boundary conditions");
-  params.addParamNamesToGroup("conductivity_interpolation", "Numerical scheme");
+  params.addParamNamesToGroup("conductivity_interpolation conductivity_mixing", "Numerical scheme");
 
   params.suppressParameter<MooseEnum>("preconditioning");
   return params;
@@ -124,6 +142,8 @@ WCNSLinearFVConservativeDiffuseInterfaceHeatTransferPhysics::
         getParam<PhysicsName>("coupled_vof_physics"))),
     _enthalpy_name(getParam<VariableName>("conserved_enthalpy_variable")),
     _temperature_name(getParam<VariableName>("temperature_variable")),
+    _has_phase_change(getParam<Real>("latent_heat") > 0),
+    _liquid_fraction_name(getParam<VariableName>("liquid_fraction_variable")),
     _alpha_name(
         _vof_physics->getParam<std::vector<NonlinearVariableName>>("passive_scalar_names")[0]),
     _mixture_enthalpy_name(prefix() + "mixture_enthalpy")
@@ -166,6 +186,8 @@ WCNSLinearFVConservativeDiffuseInterfaceHeatTransferPhysics::addAuxiliaryVariabl
   auto params = getFactory().getValidParams(var_type);
   assignBlocks(params, _blocks);
   getProblem().addAuxVariable(var_type, _temperature_name, params);
+  if (_has_phase_change)
+    getProblem().addAuxVariable(var_type, _liquid_fraction_name, params);
 }
 
 void
@@ -225,6 +247,18 @@ WCNSLinearFVConservativeDiffuseInterfaceHeatTransferPhysics::addUserObjects()
   params.set<UserObjectName>("gas_fluid_properties") =
       getParam<UserObjectName>("gas_fluid_properties");
   params.set<Real>("thermodynamic_pressure") = getParam<Real>("thermodynamic_pressure");
+  params.set<MooseEnum>("conductivity_mixing") = getParam<MooseEnum>("conductivity_mixing");
+  if (_has_phase_change)
+  {
+    params.applySpecificParameters(parameters(),
+                                   {"latent_heat",
+                                    "solidus_temperature",
+                                    "liquidus_temperature",
+                                    "liquid_fraction_shape",
+                                    "solid_fluid_properties",
+                                    "solid_density"});
+    params.set<VariableName>("liquid_fraction") = _liquid_fraction_name;
+  }
   getProblem().addUserObject(object_type, _mixture_enthalpy_name, params);
 }
 

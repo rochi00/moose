@@ -35,6 +35,17 @@ ConservativeDiffuseInterfaceSurfaceTensionFunctorMaterial::validParams()
                         1e-14,
                         "Added to |grad(alpha)| when forming the interface unit normal, so that a "
                         "vanishing gradient gives a finite normal rather than a division by zero.");
+  params.addRangeCheckedParam<Real>(
+      "contact_angle",
+      90,
+      "contact_angle >= 0 & contact_angle <= 180",
+      "Static contact angle of the interface on the contact_angle_boundaries, measured through "
+      "the phase the volume fraction counts [degrees].");
+  params.addParam<std::vector<BoundaryName>>(
+      "contact_angle_boundaries",
+      {},
+      "Boundaries on which the interface meets the wall at the contact angle. Elsewhere a "
+      "boundary face carries the normal of its cell.");
   params.addParam<MooseFunctorName>("interface_curvature_name",
                                     "interface_curvature",
                                     "Output name for the interface curvature functor.");
@@ -50,11 +61,19 @@ ConservativeDiffuseInterfaceSurfaceTensionFunctorMaterial::
     _volume_fraction(getFunctor<Real>("volume_fraction_functor")),
     _surface_tension_coefficient(getFunctor<Real>("surface_tension_coefficient")),
     _normal_regularization(getParam<Real>("normal_regularization")),
+    _cos_contact_angle(std::cos(getParam<Real>("contact_angle") * libMesh::pi / 180)),
+    _sin_contact_angle(std::sin(getParam<Real>("contact_angle") * libMesh::pi / 180)),
     _moose_mesh(_subproblem.mesh()),
     _dim(_subproblem.mesh().dimension())
 {
   if (_normal_regularization <= 0.0)
     paramError("normal_regularization", "The regularization must be positive.");
+
+  const auto & boundary_names = getParam<std::vector<BoundaryName>>("contact_angle_boundaries");
+  if (isParamSetByUser("contact_angle") && boundary_names.empty())
+    paramError("contact_angle", "Only used on contact_angle_boundaries.");
+  for (const auto & boundary_name : boundary_names)
+    _contact_angle_boundaries.insert(_moose_mesh.getBoundaryID(boundary_name));
 
   const std::set<ExecFlagType> clearance_schedule(_execute_enum.begin(), _execute_enum.end());
 
@@ -82,6 +101,33 @@ ConservativeDiffuseInterfaceSurfaceTensionFunctorMaterial::boundaryElemInfo(
 {
   // On a face the volume fraction only lives on one side of, that side owns the cell quantity.
   return _volume_fraction.hasBlocks(fi.elemSubdomainID()) ? *fi.elemInfo() : *fi.neighborInfo();
+}
+
+bool
+ConservativeDiffuseInterfaceSurfaceTensionFunctorMaterial::onContactAngleBoundary(
+    const FaceInfo & fi) const
+{
+  for (const auto boundary_id : fi.boundaryIDs())
+    if (_contact_angle_boundaries.count(boundary_id))
+      return true;
+  return false;
+}
+
+RealVectorValue
+ConservativeDiffuseInterfaceSurfaceTensionFunctorMaterial::contactAngleNormal(
+    const RealVectorValue & cell_normal, const RealVectorValue & wall_normal) const
+{
+  // Brackbill, Kothe and Zemach (1992): n = n_w cos(theta) + t_w sin(theta), with t_w the unit
+  // vector in the wall along the cell normal's projection. The cell normal's magnitude is kept, so
+  // that a cell without interface keeps its vanishing normal.
+  const RealVectorValue tangent = cell_normal - (cell_normal * wall_normal) * wall_normal;
+  const Real tangent_norm = tangent.norm();
+  const Real magnitude = cell_normal.norm();
+  // A normal along the wall normal has no tangent to lean towards; only its wall component remains
+  if (tangent_norm <= _normal_regularization)
+    return magnitude * _cos_contact_angle * wall_normal;
+  return magnitude *
+         (_cos_contact_angle * wall_normal + _sin_contact_angle * tangent / tangent_norm);
 }
 
 Real
@@ -123,11 +169,13 @@ ConservativeDiffuseInterfaceSurfaceTensionFunctorMaterial::cellCurvature(
                              fi_loc->elemPtr() == elem);
     }
 
-    const RealVectorValue interface_normal =
+    RealVectorValue interface_normal =
         face_gradient / (face_gradient.norm() + _normal_regularization);
     const Real orientation = fi_loc->elemPtr() == elem ? 1.0 : -1.0;
-    interface_normal_flux +=
-        NS::faceMeasure(*fi_loc) * (interface_normal * (orientation * fi_loc->normal()));
+    const RealVectorValue outward_normal = orientation * fi_loc->normal();
+    if (!isInternalFace(*fi_loc) && onContactAngleBoundary(*fi_loc))
+      interface_normal = contactAngleNormal(interface_normal, outward_normal);
+    interface_normal_flux += NS::faceMeasure(*fi_loc) * (interface_normal * outward_normal);
   }
 
   return -interface_normal_flux / cell_volume;

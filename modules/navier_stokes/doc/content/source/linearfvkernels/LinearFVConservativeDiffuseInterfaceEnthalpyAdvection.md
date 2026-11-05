@@ -22,10 +22,11 @@ Both fluxes are published by the volume-fraction corrector of the coupled diffus
 physics, so the energy moves with exactly the mass of each phase that advanced the volume
 fraction.
 
-The phase enthalpy is linearized in $\rho h$ through the cell linearization of the
+The phase enthalpy, which for a melting liquid includes its latent heat, is linearized in
+$\rho h$ through the cell linearization of the
 [!param](/LinearFVKernels/LinearFVConservativeDiffuseInterfaceEnthalpyAdvection/mixture_enthalpy)
-object, $T = T^* + \left( \rho h - (\rho h)^* \right) / C$, which makes the term a deferred
-correction that is exact once the outer iterations converge.
+object, $h_k = h_k^* + \frac{dh_k}{d(\rho h)} \left( \rho h - (\rho h)^* \right)$, which makes the
+term a deferred correction that is exact once the outer iterations converge.
 
 On boundaries, fluid leaving the domain carries the enthalpy of the cell. Fluid entering through
 a boundary with a prescribed temperature carries the enthalpy of that temperature; otherwise it

@@ -112,4 +112,55 @@
                   'spurious velocity at its residual floor.'
     max_threads = 1 # see libmesh issue #3808
   []
+  [stefan]
+    requirement = 'The system shall melt a semi-infinite solid from a hot wall with the latent heat '
+                  'carried by the conserved mixture enthalpy, and reproduce the exact similarity '
+                  'solution'
+    design = 'ConservativeDiffuseInterfaceMixtureEnthalpy.md'
+    # One-dimensional runs of about a second on 200 cells, too small for parallel or restart runs
+    max_parallel = 1
+    recover = false
+    [three_region]
+      type = CSVDiff
+      input = 'stefan_three_region.i'
+      csvdiff = 'stefan_three_region_csv.csv'
+      detail = 'with a linear liquid fraction over a finite melting interval, against the '
+               'three-region solution of Kondrashov, to an L2 temperature error of 5e-4 and a '
+               'melted depth within 0.4% on 100 cells; and'
+      max_threads = 1 # see libmesh issue #3808
+    []
+    [neumann]
+      type = CSVDiff
+      input = 'stefan_neumann.i'
+      csvdiff = 'stefan_neumann_csv.csv'
+      detail = 'with melting at a single temperature, against the two-phase Neumann solution, to '
+               'an L2 temperature error of 2.4e-3 and a melted depth within 0.2% on 100 cells; and'
+      max_threads = 1 # see libmesh issue #3808
+    []
+    [solid_properties]
+      type = CSVDiff
+      input = 'stefan_solid_properties.i'
+      csvdiff = 'stefan_solid_properties_csv.csv'
+      detail = 'with a solid of its own heat capacity and conductivity, given by separate fluid '
+               'properties with a different enthalpy reference, against the two-phase Neumann '
+               'solution with a solid diffusivity four times the liquid one.'
+      max_threads = 1 # see libmesh issue #3808
+    []
+  []
+  [freezing_film]
+    type = CSVDiff
+    input = 'freezing_film.i'
+    csvdiff = 'freezing_film_csv.csv'
+    requirement = 'The system shall freeze a film of water under air from a cold wall with ice '
+                  'less dense than water, the expanding ice pushing the water and the air above '
+                  'it out of the domain, and reproduce the ice front of the similarity solution '
+                  'with density change of Lyu et al. to within 1.7% on 200 cells, the expelled '
+                  'water volume exactly and the volume fraction bounds, with the ice held at rest '
+                  'by a penalty and the volume source of the freezing added in the input.'
+    design = 'ConservativeDiffuseInterfaceMixtureEnthalpy.md'
+    # A one-dimensional run of about fifteen seconds on 400 cells
+    max_parallel = 1
+    recover = false
+    max_threads = 1 # see libmesh issue #3808
+  []
 []

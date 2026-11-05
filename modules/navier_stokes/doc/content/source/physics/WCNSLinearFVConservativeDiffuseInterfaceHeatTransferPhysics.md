@@ -15,7 +15,7 @@ density $\rho h$, which is conserved across the interface:
 + \nabla \cdot \left( \sum_k \dot{m}_k h_k(T) \right)
 - \nabla \cdot \left( k \nabla T \right) = 0,
 \qquad
-\rho h = \sum_k \alpha_k \rho_k h_k(T),
+\rho h = \sum_k \alpha_k \rho_k h_k(T) + \alpha \rho_l L f_l,
 \end{equation}
 
 where:
@@ -33,6 +33,9 @@ where:
   each phase moved
 - $k$ is the mixture thermal conductivity, $1/k = \sum_k \alpha_k / k_k$, so the phases conduct
   in series across the interface
+- $L$ is the latent heat and $f_l$ the liquid fraction of the liquid phase, nonzero only when it
+  melts and solidifies (see [#phase-change]); the liquid mass flux then carries $h_l + L$, the
+  enthalpy of the liquid, as the solid is at rest
 
 The temperature $T$ is an auxiliary variable recovered from $\rho h$ in each cell after every
 energy solve, by Newton iteration on the definition of $\rho h$ above.
@@ -47,7 +50,7 @@ The objects created are:
 - [LinearFVConservativeDiffuseInterfaceEnthalpyBC](LinearFVConservativeDiffuseInterfaceEnthalpyBC.md)
   on every inlet, wall and outlet of the coupled flow
 - [ConservativeDiffuseInterfaceMixtureEnthalpy](ConservativeDiffuseInterfaceMixtureEnthalpy.md),
-  which relates $\rho h$ to $T$, sets the initial $\rho h$ and recovers $T$
+  which relates $\rho h$ to $T$, sets the initial $\rho h$ and recovers $T$ (and $f_l$)
 
 ## Phase properties
 
@@ -62,6 +65,35 @@ The densities are not taken from the fluid properties: they are the constant pha
 the coupled volume-fraction physics. A
 [TemperaturePressureFunctionFluidProperties](TemperaturePressureFunctionFluidProperties.md) object
 gives a heat capacity that varies with temperature.
+
+## Melting and solidification id=phase-change
+
+A positive
+[!param](/Physics/NavierStokes/ConservativeDiffuseInterfaceHeatTransferSegregated/WCNSLinearFVConservativeDiffuseInterfaceHeatTransferPhysics/latent_heat)
+lets the liquid phase melt and solidify between the
+[!param](/Physics/NavierStokes/ConservativeDiffuseInterfaceHeatTransferSegregated/WCNSLinearFVConservativeDiffuseInterfaceHeatTransferPhysics/solidus_temperature)
+and the
+[!param](/Physics/NavierStokes/ConservativeDiffuseInterfaceHeatTransferSegregated/WCNSLinearFVConservativeDiffuseInterfaceHeatTransferPhysics/liquidus_temperature),
+or at a single melting temperature when the two are equal. The volume fraction $\alpha$ then
+counts liquid and solid together, so its transport is unchanged, and the solid fraction of a cell
+is $\alpha (1 - f_l)$. The physics creates the liquid fraction as the auxiliary variable
+[!param](/Physics/NavierStokes/ConservativeDiffuseInterfaceHeatTransferSegregated/WCNSLinearFVConservativeDiffuseInterfaceHeatTransferPhysics/liquid_fraction_variable),
+which [ConservativeDiffuseInterfaceMixtureEnthalpy](ConservativeDiffuseInterfaceMixtureEnthalpy.md)
+recovers from $\rho h$ with the temperature. The solid takes its heat capacity and thermal
+conductivity from
+[!param](/Physics/NavierStokes/ConservativeDiffuseInterfaceHeatTransferSegregated/WCNSLinearFVConservativeDiffuseInterfaceHeatTransferPhysics/solid_fluid_properties)
+and its density from
+[!param](/Physics/NavierStokes/ConservativeDiffuseInterfaceHeatTransferSegregated/WCNSLinearFVConservativeDiffuseInterfaceHeatTransferPhysics/solid_density),
+or the liquid's when these are omitted. A different solid density changes the volume of the
+liquid phase as it freezes or melts; the volume source that goes with it is added to the flow in
+the input, as described in
+[ConservativeDiffuseInterfaceMixtureEnthalpy](ConservativeDiffuseInterfaceMixtureEnthalpy.md).
+
+The energy equation does not hold the solid still. A momentum sink that does, such as a
+Carman-Kozeny drag on the effective liquid fraction $1 - \alpha (1 - f_l)$, is added in the input,
+for example with
+[INSFVMushyPorousFrictionFunctorMaterial](INSFVMushyPorousFrictionFunctorMaterial.md) and a
+[LinearFVReaction](LinearFVReaction.md) on each velocity component.
 
 ## Boussinesq buoyancy
 

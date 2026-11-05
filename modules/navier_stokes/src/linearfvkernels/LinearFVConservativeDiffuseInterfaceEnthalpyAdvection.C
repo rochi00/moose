@@ -63,11 +63,12 @@ LinearFVConservativeDiffuseInterfaceEnthalpyAdvection::addPhaseFlux(const unsign
                                                                     const bool upwind_is_elem)
 {
   const auto lin = _mixture.cellLinearization(upwind);
-  const auto [h, cp] = _mixture.phaseEnthalpy(Phase(phase), lin.temperature);
+  const Real h = lin.phase_enthalpy[phase];
+  const Real dh = lin.phase_enthalpy_derivative[phase];
 
-  // m h(T) with T = T_lag + (rho*h - (rho*h)^*) / C
-  (upwind_is_elem ? _elem_coeff : _neighbor_coeff) += mass_flux * cp / lin.heat_capacity;
-  _flux_constant += mass_flux * (h - cp * lin.enthalpy_density / lin.heat_capacity);
+  // m h_k with h_k = h_k^* + dh_k/d(rho*h) (rho*h - (rho*h)^*)
+  (upwind_is_elem ? _elem_coeff : _neighbor_coeff) += mass_flux * dh;
+  _flux_constant += mass_flux * (h - dh * lin.enthalpy_density);
 }
 
 void
@@ -126,9 +127,8 @@ LinearFVConservativeDiffuseInterfaceEnthalpyAdvection::computeBoundaryRHSContrib
       const Real mass_flux = outward * _phase_mass_flux[phase];
       // Entering fluid carries the prescribed temperature when there is one, else the cell's
       if (mass_flux < 0.0 && enthalpy_bc.hasTemperature())
-        _flux_constant +=
-            mass_flux *
-            _mixture.phaseEnthalpy(Phase(phase), enthalpy_bc.boundaryTemperature()).first;
+        _flux_constant += mass_flux * _mixture.phaseEnthalpyAtTemperature(
+                                          Phase(phase), enthalpy_bc.boundaryTemperature());
       else
         addPhaseFlux(phase, mass_flux, cell, /*upwind_is_elem=*/true);
     }
