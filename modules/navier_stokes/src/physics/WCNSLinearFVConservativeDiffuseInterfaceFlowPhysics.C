@@ -12,6 +12,7 @@
 #include "MooseUtils.h"
 #include "NS.h"
 #include "ConservativeDiffuseInterfaceRhieChowMassFlux.h"
+#include "ConservativeDiffuseInterfaceSurfaceTensionFunctorMaterial.h"
 #include "TheWarehouse.h"
 
 registerWCNSFVFlowPhysicsBaseTasks("NavierStokesApp",
@@ -78,8 +79,14 @@ WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::validParams()
       "surface_tension_coefficient",
       "",
       "Surface-tension coefficient functor. Leave empty to disable capillary forcing.");
+  const auto surface_tension_params =
+      ConservativeDiffuseInterfaceSurfaceTensionFunctorMaterial::validParams();
+  params.transferParam<Real>(surface_tension_params, "contact_angle");
+  params.transferParam<std::vector<BoundaryName>>(surface_tension_params,
+                                                  "contact_angle_boundaries");
   params.addParamNamesToGroup("create_geometry_functors volume_fraction_functor geometry_delta_n "
-                              "surface_tension_coefficient",
+                              "surface_tension_coefficient contact_angle "
+                              "contact_angle_boundaries",
                               "Diffuse Interface Geometry");
   // ConservativeDiffuseInterfaceRhieChowMassFlux supports only the standard projection
   params.suppressParameter<MooseEnum>("pressure_projection_method");
@@ -379,6 +386,7 @@ WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics::addSurfaceTensionFunctorMat
   params.set<MooseFunctorName>("interface_curvature_name") = prefix() + "interface_curvature";
   params.set<MooseFunctorName>("surface_tension_force_density_name") =
       prefix() + "surface_tension_force_density";
+  params.applySpecificParameters(parameters(), {"contact_angle", "contact_angle_boundaries"});
 
   getProblem().addFunctorMaterial(
       class_name, prefix() + "diffuse_interface_surface_tension", params);

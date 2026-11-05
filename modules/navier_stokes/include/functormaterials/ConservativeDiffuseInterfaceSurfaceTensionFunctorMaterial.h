@@ -11,6 +11,8 @@
 
 #include "FunctorMaterial.h"
 
+#include <set>
+
 class MooseMesh;
 class ElemInfo;
 
@@ -26,6 +28,8 @@ class ElemInfo;
  * being differenced. The Rhie-Chow object reads the force density on faces, projects it on the
  * face normal and carries it into the pressure equation as a flux, next to the hydrostatic
  * force, so that at equilibrium the pressure jump balances it face by face.
+ * On the faces of the contact-angle boundaries the normal is the one a static contact angle
+ * prescribes, which is how the contact angle enters the curvature of the wall cells.
  */
 class ConservativeDiffuseInterfaceSurfaceTensionFunctorMaterial : public FunctorMaterial
 {
@@ -86,6 +90,14 @@ protected:
   /// The cell on the side of a face where the volume fraction is defined
   const ElemInfo & boundaryElemInfo(const FaceInfo & fi) const;
 
+  /// Whether a boundary face lies on a contact-angle boundary
+  bool onContactAngleBoundary(const FaceInfo & fi) const;
+  /// The interface normal on a wall face with the static contact angle, from the cell's normal
+  /// (pointing into the liquid, of the magnitude a vanishing gradient regularizes to) and the
+  /// unit wall normal pointing out of the domain
+  RealVectorValue contactAngleNormal(const RealVectorValue & cell_normal,
+                                     const RealVectorValue & wall_normal) const;
+
   /// The volume fraction whose interface this describes
   const Moose::Functor<Real> & _volume_fraction;
 
@@ -94,6 +106,11 @@ protected:
 
   /// Added to |grad(alpha)| when forming the unit normal, so a vanishing gradient is finite
   const Real _normal_regularization;
+
+  /// Cosine and sine of the static contact angle on the contact-angle boundaries
+  const Real _cos_contact_angle;
+  const Real _sin_contact_angle;
+  std::set<BoundaryID> _contact_angle_boundaries;
 
   const MooseMesh & _moose_mesh;
   const unsigned int _dim;

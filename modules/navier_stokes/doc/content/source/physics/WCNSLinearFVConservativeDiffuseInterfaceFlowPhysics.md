@@ -70,7 +70,11 @@ adds a
 [ConservativeDiffuseInterfaceSurfaceTensionFunctorMaterial](ConservativeDiffuseInterfaceSurfaceTensionFunctorMaterial.md)
 and passes its capillary force density to the Rhie-Chow object. Surface tension requires the
 volume-fraction functor. It also widens the algebraic ghosting from two to three layers of cells,
-since the curvature is the divergence of a normal that is itself a gradient.
+since the curvature is the divergence of a normal that is itself a gradient. On the
+[!param](/Physics/NavierStokes/ConservativeDiffuseInterfaceFlowSegregated/WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics/contact_angle_boundaries)
+the interface meets the wall at the static
+[!param](/Physics/NavierStokes/ConservativeDiffuseInterfaceFlowSegregated/WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics/contact_angle),
+measured through the liquid; other walls give 90 degrees.
 
 ## Example Input Syntax
 

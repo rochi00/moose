@@ -20,9 +20,10 @@ The default `harmonic` is the series resistance of the two half cells, which con
 across a face between cells of different conductivity. `average` is the arithmetic mean.
 
 The temperature in each cell is linearized in $\rho h$ as
-$T = T^* + \left( \rho h - (\rho h)^* \right) / C$, about the lagged temperature $T^*$ with the
-mixture heat capacity $C$. The term is therefore a deferred correction that is exact once the
-outer iterations converge. The face gradient uses the cell centers only, with no
+$T = T^* + \frac{dT}{d(\rho h)} \left( \rho h - (\rho h)^* \right)$, about the lagged temperature
+$T^*$, with $dT/d(\rho h) = 1/C$ for the mixture heat capacity $C$ when the cell is not changing
+phase. The term is therefore a deferred correction that is exact once the outer iterations
+converge. The face gradient uses the cell centers only, with no
 non-orthogonal correction.
 
 On a boundary with a prescribed temperature, the conducted flux is
