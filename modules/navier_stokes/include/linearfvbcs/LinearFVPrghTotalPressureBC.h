@@ -41,12 +41,15 @@ protected:
   bool isBackflow() const;
   /// rho (u_P.n)^2 / 2 of the entering fluid on backflow, zero on outflow
   Real dynamicPressureCorrection() const;
-  /// rho g.(x_f - x_ref), the difference between p and p_rgh
+  /// rho g.(x_f - x_ref) with the buoyancy density, the difference between p and p_rgh
   Real hydrostaticPressureOffset() const;
 
   const unsigned int _dim;
   const NS::LinearFVVelocityVariableArray _velocity_vars;
+  /// The density in the backflow dynamic pressure
   const Moose::Functor<Real> & _density;
+  /// The density in the hydrostatic offset
+  const Moose::Functor<Real> & _buoyancy_density;
   /// The face flux whose sign tells outflow from backflow
   const Moose::Functor<Real> & _face_flux;
   const RealVectorValue _gravity;

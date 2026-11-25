@@ -22,14 +22,16 @@ and surface tension. This object adds them explicitly as the force density
 
 \begin{equation}
 \mathbf{f} = -\nabla p_{rgh}
-  - \left( \mathbf{g} \cdot (\mathbf{x} - \mathbf{x}_{ref}) \right) \nabla \rho
+  - \left( \mathbf{g} \cdot (\mathbf{x} - \mathbf{x}_{ref}) \right) \nabla \rho_b
   + \mathbf{f}_{st},
 \end{equation}
 
 reconstructed in each cell from its face-normal components on every face, boundary faces
 included. The same face-normal forces enter the pressure equation as face fluxes, so the predictor
 force, the pressure-equation flux and the corrected velocity are built from the same face
-quantities. $\mathbf{f}_{st}$ is
+quantities. $\rho_b$ is the
+[!param](/UserObjects/ConservativeDiffuseInterfaceRhieChowMassFlux/buoyancy_density), such as a
+Boussinesq density that varies with temperature; it defaults to the density. $\mathbf{f}_{st}$ is
 the surface tension force density of
 [!param](/UserObjects/ConservativeDiffuseInterfaceRhieChowMassFlux/surface_tension_force_density_functor),
 for example from a
@@ -61,7 +63,7 @@ and face $1/A$ of the accepted step, which the first momentum predictor of the n
 
 This object is created by
 [WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics](WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics.md),
-which passes on its gravity, reference point and, when surface tension is
+which passes on its gravity, reference point, buoyancy density and, when surface tension is
 enabled, the generated surface tension force density.
 
 ## Example Input Syntax

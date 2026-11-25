@@ -11,7 +11,7 @@ segregated solve. It imposes a pressure reference given by
 on each boundary face:
 
 \begin{equation}
-p_{rgh,f} = p_{ref,f} - \rho_f \, \mathbf{g} \cdot \left( \mathbf{x}_f - \mathbf{x}_{ref} \right)
+p_{rgh,f} = p_{ref,f} - \rho_{b,f} \, \mathbf{g} \cdot \left( \mathbf{x}_f - \mathbf{x}_{ref} \right)
   - \begin{cases}
       \frac{1}{2} \rho_f \left( \mathbf{u}_P \cdot \mathbf{n}_f \right)^2, & \text{backflow}, \\
       0, & \text{outflow},
@@ -22,6 +22,10 @@ where:
 
 - $p_{ref,f}$ is the value of [!param](/LinearFVBCs/LinearFVPrghTotalPressureBC/functor) on the
   face
+- $\rho_{b,f}$ is [!param](/LinearFVBCs/LinearFVPrghTotalPressureBC/buoyancy_density) on the
+  face, the density of the hydrostatic offset. It defaults to
+  [!param](/LinearFVBCs/LinearFVPrghTotalPressureBC/rho) and can be set to a Boussinesq density
+  that varies with temperature
 - $\mathbf{g}$ is [!param](/LinearFVBCs/LinearFVPrghTotalPressureBC/gravity),
   $\mathbf{x}_f$ the face centroid and $\mathbf{x}_{ref}$ the
   [!param](/LinearFVBCs/LinearFVPrghTotalPressureBC/reference_pressure_point)
@@ -40,7 +44,7 @@ This boundary condition is created by
 [WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics](WCNSLinearFVConservativeDiffuseInterfaceFlowPhysics.md)
 on every outlet whose momentum outlet type is `fixed-pressure` or
 `fixed-pressure-zero-gradient`. The physics passes the outlet's entry of `pressure_functors` as
-the reference, its density, `gravity` and
+the reference, its density, `buoyancy_density` (when set), `gravity` and
 `reference_pressure_point`. It reads the backflow switch from `lagged_corrected_face_phi`, the
 face flux frozen for the current outer iteration, so the boundary value does not depend on the
 pressure equation that evaluates it. See the

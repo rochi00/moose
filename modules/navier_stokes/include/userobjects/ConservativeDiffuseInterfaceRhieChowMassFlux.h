@@ -318,6 +318,8 @@ protected:
   const RealVectorValue _gravity;
   /// x_ref of the reduced pressure p_rgh = p - rho g.(x - x_ref)
   const Point _reference_pressure_point;
+  /// The density in the gravity force
+  const Moose::Functor<Real> & _buoyancy_rho;
 
   /// Name of the face mass flux the volume-fraction corrector publishes
   const MooseFunctorName _vof_rho_phi_name;

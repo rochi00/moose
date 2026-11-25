@@ -15,6 +15,7 @@
 
 class ConservativeDiffuseInterfaceRhieChowMassFlux;
 class ConservativeDiffuseInterfaceVOFMULESCorrector;
+class ConservativeDiffuseInterfaceMixtureEnthalpy;
 
 /**
  * The solve object of the reduced-pressure diffuse-interface PIMPLE algorithm. On top of the
@@ -27,7 +28,8 @@ class ConservativeDiffuseInterfaceVOFMULESCorrector;
  * 3. The momentum predictor is assembled with the mixture density and rho_phi of the new volume
  *    fraction, and the pressure equation is solved as in the parent, with the diffuse-interface
  *    Rhie-Chow object supplying the face forces and the volumetric flux form.
- * 4. The energy equation, when present, is solved.
+ * 4. The energy equation, when present, is solved for the conserved mixture enthalpy and the
+ *    temperature is recovered from it.
  * The outer loop stops once the momentum and pressure residuals and the largest change of the
  * volume fraction between outer iterations are below their tolerances.
  *
@@ -56,6 +58,15 @@ protected:
   bool shouldSolveActiveScalarsAfterFlowLoop() const override { return false; }
   void postPreparePressureCorrectorState() override;
   void postPublishPressureCorrectedState() override;
+  /// Recovers the temperature from the solved conserved mixture enthalpy
+  void postEnergySolve() override;
+  /**
+   * The conserved-enthalpy energy matrix is the temperature system, an M-matrix, with its columns
+   * scaled by 1 / (d(rho*h)/dT) > 0. It is not diagonally dominant where the heat capacity jumps
+   * across the interface, and enforcing dominance would lag the solve by a correction of the size
+   * of rho*h itself.
+   */
+  bool enforceEnergyDiagonalDominance() const override { return mixtureEnthalpies().empty(); }
 
 private:
   /// Whether volume-fraction systems exist and are to be solved
@@ -112,6 +123,8 @@ private:
 
   /// The Rhie-Chow object as the diffuse-interface one, or null with the stock object
   ConservativeDiffuseInterfaceRhieChowMassFlux * diffuseInterfaceRC() const;
+  /// The objects relating a conserved mixture enthalpy to its temperature
+  std::vector<ConservativeDiffuseInterfaceMixtureEnthalpy *> mixtureEnthalpies() const;
 
   /// Requested number of volume-fraction subcycles per step, raised when the Courant limit needs
   const unsigned int _volume_fraction_subcycles;

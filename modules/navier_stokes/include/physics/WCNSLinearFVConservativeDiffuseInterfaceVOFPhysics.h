@@ -21,7 +21,7 @@
  * froze for the current outer iteration, instead of the Rhie-Chow object itself. The matrix is
  * assembled with upwind face values, and the bounded, sharp solution is produced afterwards by
  * the ConservativeDiffuseInterfaceVOFMULESCorrector this physics creates, which also publishes
- * the alpha_phi_limited and rho_phi face fluxes the flow physics advects with.
+ * the alpha_phi_limited and rho_phi face fluxes the flow and energy physics advect with.
  *
  * It also creates the mixture property functors the flow reads, rho_mixture and mu_mixture as
  * alpha-weighted averages of the two phases, and the complementary fraction 1 - alpha. The

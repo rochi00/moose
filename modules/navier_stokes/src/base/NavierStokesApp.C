@@ -61,6 +61,8 @@ NavierStokesApp::registerAll(Factory & f, ActionFactory & af, Syntax & syntax)
                  "Physics/NavierStokes/ConservativeDiffuseInterfaceFlowSegregated/*");
   registerSyntax("WCNSLinearFVConservativeDiffuseInterfaceVOFPhysics",
                  "Physics/NavierStokes/ConservativeDiffuseInterfaceVOFSegregated/*");
+  registerSyntax("WCNSLinearFVConservativeDiffuseInterfaceHeatTransferPhysics",
+                 "Physics/NavierStokes/ConservativeDiffuseInterfaceHeatTransferSegregated/*");
   registerSyntax("WCNSFVFluidHeatTransferPhysics", "Physics/NavierStokes/FluidHeatTransfer/*");
   registerSyntax("WCNSLinearFVFluidHeatTransferPhysics",
                  "Physics/NavierStokes/FluidHeatTransferSegregated/*");
